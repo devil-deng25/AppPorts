@@ -8,6 +8,17 @@ struct TreeCopySnapshot: Codable, Equatable, Sendable {
         let gid: UInt32
     }
 
+    /// `noowners` reports an effective owner, not the stored UID/GID. Keep the
+    /// source and destination contracts separate so a compatible destination
+    /// never weakens verification of an ownership-aware retained original.
+    struct OwnershipCompatibility: Codable, Equatable, Sendable {
+        let sourceIgnoresOwnership: Bool
+        var destinationIgnoresOwnership: Bool
+        /// A source with projected ownership is copied as the current user.
+        /// Store that choice instead of interpreting its observed UID as real.
+        let projectedSourceOwner: Ownership?
+    }
+
     struct Identity: Codable, Equatable, Hashable, Sendable {
         let device: Int32
         let inode: UInt64
@@ -41,8 +52,14 @@ struct TreeCopySnapshot: Codable, Equatable, Sendable {
     /// entries always retain the actual source ownership for unchanged/cleanup checks.
     var restoredRootOwnership: Ownership? = nil
 
+    /// Absent in historical manifests: both sides require real ownership.
+    /// Entries remain observations of the source, including projected IDs.
+    var ownershipCompatibility: OwnershipCompatibility? = nil
+
     func destinationEntry(_ entry: Entry) -> Entry {
-        guard entry.path.isEmpty, let owner = restoredRootOwnership else { return entry }
+        let owner = entry.path.isEmpty ? restoredRootOwnership ?? ownershipCompatibility?.projectedSourceOwner
+                                      : ownershipCompatibility?.projectedSourceOwner
+        guard let owner else { return entry }
         return Entry(path: entry.path, kind: entry.kind, identity: entry.identity, mode: entry.mode,
                      uid: owner.uid, gid: owner.gid, flags: entry.flags, birthTime: entry.birthTime,
                      modificationTime: entry.modificationTime, extendedAttributes: entry.extendedAttributes,

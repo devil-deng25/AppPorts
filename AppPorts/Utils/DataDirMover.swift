@@ -9,6 +9,7 @@ actor DataDirMover {
     private let store: ContainerMountStore
     private let safety: DataOperationSafety
     private let failSymlinkCreation: Bool
+    private var runningMigrations: Set<UUID> = []
     private let managedLinkMarkerFileName = ".appports-link-metadata.plist"
     private let managedLinkMetadataSidecarSuffix = ".appports-link-metadata.plist"
     private let managedLinkIdentifier = "com.shimoko.AppPorts"
@@ -42,16 +43,24 @@ actor DataDirMover {
         guard try !entryExists(destination) else { throw DataDirError.destinationExists(destination) }
         try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
         try await safety.requireNewMigration(at: source, destination: destination, bundleIdentifier: item.associatedBundleIdentifier)
+        // Reject known permission failures before reserving a recovery record.
+        // Directory creation still happens only after the durable intent below.
+        let destinationVolumeUUID = try preflightWritePermission(at: externalBaseURL)
         let id = UUID()
         let backup = source.deletingLastPathComponent().appendingPathComponent(".appports-migration-backup-\(source.lastPathComponent)-\(id)")
         var transfer = DataTransferRecord(operationID: id, mode: .symlink, direction: .migrate, sourceID: item.id,
             appName: item.associatedAppName ?? item.name, bundleIdentifier: item.associatedBundleIdentifier,
             dataDirType: item.type.rawValue, originalPath: source.path, activePath: source.path,
             destinationPath: destination.path, backupPath: backup.path,
-            sourceIdentity: try DataPathIdentity.capture(source))
+            sourceIdentity: try DataPathIdentity.capture(source), destinationVolumeUUID: destinationVolumeUUID)
         try store.beginTransfer(transfer)
+        runningMigrations.insert(id)
+        defer { runningMigrations.remove(id) }
         do {
             try checkWritePermission(at: externalBaseURL)
+            if let destinationVolumeUUID {
+                try requireDestinationVolume(at: externalBaseURL, expected: destinationVolumeUUID)
+            }
             transfer.phase = .copying
             try store.updateTransfer(transfer)
             let baseline = try await copy(from: source, to: destination, final: destination, progress: progressHandler)
@@ -89,7 +98,12 @@ actor DataDirMover {
             try store.commitMigration(record: nil, transfer: transfer)
             invalidateSizeCache(for: source)
             invalidateSizeCache(for: destination)
-        } catch { try recordFailure(&transfer, error: error) }
+        } catch {
+            // A copier preflight can fail before it creates anything. Retrying
+            // such an operation needs no recovery once absence is proven.
+            if removeUnstartedIntentIfSafe(transfer) { throw error }
+            try recordFailure(&transfer, error: error)
+        }
     }
 
     func restore(item: DataDirItem, progressHandler: FileCopier.ProgressHandler?) async throws {
@@ -151,7 +165,7 @@ actor DataDirMover {
             transfer.phase = .switching
             try requireIdentity(copyURL, transfer.destinationIdentity!)
             try switchEntry(local: local, expectedLink: linkIdentity, replacement: copyURL, staging: staging)
-            try TreeCopySession.applyRootMetadata(at: local, from: baseline)
+            try TreeCopySession.applyRootMetadata(at: local, from: baseline, ownershipRole: .destination)
             transfer.activePath = local.path
             try TreeCopySession.verifyUnchanged(at: external, against: baseline)
             try TreeCopySession.verifyCopy(at: local, against: baseline)
@@ -199,7 +213,7 @@ actor DataDirMover {
             destinationIdentity: externalIdentity, appName: appName ?? local.lastPathComponent, bundleIdentifier: bundleIdentifier ?? inferredBundleIdentifier(local), dataDirType: type.rawValue)
         try store.upsertManagedLink(index)
         try fileManager.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try installMarker(source: local, destination: external, type: type, baseline: baseline)
+        try installMarker(source: local, destination: external, type: type, baseline: baseline, ownershipRole: .source)
         try TreeCopySession.verifyUnchanged(at: external, against: baseline)
         if let adoptedEntry {
             try requireIdentity(local, adoptedEntry)
@@ -279,6 +293,20 @@ actor DataDirMover {
             try TreeCopySession.verifyCopy(at: destination, against: baseline)
             try store.commitMigration(record: nil, transfer: transfer)
         } catch { try recordFailure(&transfer, error: error) }
+    }
+
+    /// Release a failed initial migration without deleting or moving any files.
+    /// The caller holds the same outer operation lock used by migration itself.
+    func cancelUnstartedMigration(operationID: UUID) async throws {
+        guard !runningMigrations.contains(operationID) else {
+            throw DataOperationSafety.Failure.occupied(operationID.uuidString)
+        }
+        guard let expected = try store.transfer(operationID: operationID) else {
+            throw ContainerMountStore.StoreError.missingTransfer(operationID)
+        }
+        try store.cancelUnstartedMigration(expected) {
+            try requireUnstartedMigrationFilesystem(expected)
+        }
     }
 
     /// The only operation that removes an original, after an explicit user request.
@@ -364,11 +392,12 @@ actor DataDirMover {
         catch { throw DataDirError.copyFailed(error) }
     }
 
-    private func installMarker(source: URL, destination: URL, type: DataDirType, baseline: TreeCopySnapshot) throws {
+    private func installMarker(source: URL, destination: URL, type: DataDirType, baseline: TreeCopySnapshot,
+                               ownershipRole: TreeCopySession.OwnershipRole = .destination) throws {
         try requireMarker(at: destination, for: source, type: type, allowOwned: true)
         do {
             try writeManagedLinkMetadata(sourcePath: source, destinationPath: destination, type: type)
-            try TreeCopySession.applyRootMetadata(at: destination, from: baseline)
+            try TreeCopySession.applyRootMetadata(at: destination, from: baseline, ownershipRole: ownershipRole)
             try TreeCopySession.verifyCopy(at: destination, against: baseline)
         } catch { throw DataDirError.metadataWriteFailed(error) }
     }
@@ -393,6 +422,78 @@ actor DataDirMover {
         // If this write fails, the previous durable phase still reserves all known copies.
         try store.updateTransfer(transfer)
         throw error
+    }
+
+    private func removeUnstartedIntentIfSafe(_ transfer: DataTransferRecord) -> Bool {
+        guard transfer.isUnstartedSymlinkMigration else { return false }
+        do {
+            try store.cancelUnstartedMigration(transfer) {
+                try requireUnstartedMigrationFilesystem(transfer)
+            }
+            return true
+        } catch { return false }
+    }
+
+    private func requireUnstartedMigrationFilesystem(_ transfer: DataTransferRecord) throws {
+        guard transfer.isUnstartedSymlinkMigration, let backupPath = transfer.backupPath else {
+            throw DataOperationSafety.Failure.inspection(transfer.originalPath)
+        }
+        let source = URL(fileURLWithPath: transfer.originalPath)
+        let destination = URL(fileURLWithPath: transfer.destinationPath)
+        let backup = URL(fileURLWithPath: backupPath)
+        let original = open(source.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard original >= 0 else { throw DataOperationSafety.Failure.inspection(source.path) }
+        defer { close(original) }
+        var originalInfo = stat()
+        guard fstat(original, &originalInfo) == 0 else { throw DataOperationSafety.Failure.inspection(source.path) }
+        let currentSourceIdentity = try DataPathIdentity.capture(source)
+        guard [S_IFDIR, S_IFREG].contains(originalInfo.st_mode & S_IFMT),
+              transfer.sourceIdentity.matchesFilesystemObject(currentSourceIdentity),
+              currentSourceIdentity.device == UInt64(UInt32(bitPattern: originalInfo.st_dev)),
+              currentSourceIdentity.inode == UInt64(originalInfo.st_ino) else {
+            throw DataOperationSafety.Failure.conflict(source.path)
+        }
+
+        // An absent child alone proves nothing about an offline or inaccessible
+        // external volume. Open its existing parent before interpreting ENOENT.
+        let parent = destination.deletingLastPathComponent()
+        let targetParent = open(parent.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard targetParent >= 0 else { throw DataOperationSafety.Failure.inspection(parent.path) }
+        defer { close(targetParent) }
+        var parentInfo = stat()
+        guard fstat(targetParent, &parentInfo) == 0 else { throw DataOperationSafety.Failure.inspection(parent.path) }
+        if let expectedVolume = transfer.destinationVolumeUUID {
+            try requireDestinationVolume(at: parent, expected: expectedVolume)
+        } else {
+            // Historical intents did not record their target volume. Only an
+            // independently identified live volume can distinguish that case
+            // from an unmounted disk's empty directory on the source filesystem.
+            guard let sourceVolume = currentSourceIdentity.volumeUUID,
+                  let destinationVolume = try volumeUUID(at: parent),
+                  !sourceVolume.isEmpty, !destinationVolume.isEmpty,
+                  sourceVolume.caseInsensitiveCompare(destinationVolume) != .orderedSame else {
+                throw DataOperationSafety.Failure.inspection(parent.path)
+            }
+        }
+        var targetInfo = stat()
+        if fstatat(targetParent, destination.lastPathComponent, &targetInfo, AT_SYMLINK_NOFOLLOW) == 0 {
+            throw DataOperationSafety.Failure.conflict(destination.path)
+        }
+        guard errno == ENOENT else { throw DataOperationSafety.Failure.inspection(destination.path) }
+        guard try !entryExists(backup) else { throw DataOperationSafety.Failure.conflict(backup.path) }
+        // A sidecar can outlive its data entry after external changes. Preserve
+        // the record if any marker remains rather than treating it as untouched.
+        let sidecar = parent.appendingPathComponent(".\(destination.lastPathComponent)\(managedLinkMetadataSidecarSuffix)")
+        guard try !entryExists(sidecar) else { throw DataOperationSafety.Failure.conflict(sidecar.path) }
+        guard try !entryExists(markerURL(for: source)) else {
+            throw DataOperationSafety.Failure.conflict(source.path)
+        }
+        var currentParent = stat()
+        guard stat(parent.path, &currentParent) == 0,
+              currentParent.st_dev == parentInfo.st_dev, currentParent.st_ino == parentInfo.st_ino else {
+            throw DataOperationSafety.Failure.inspection(parent.path)
+        }
+        try requireIdentity(source, transfer.sourceIdentity)
     }
 
     private func requireIdentity(_ url: URL, _ identity: DataPathIdentity) throws {
@@ -454,6 +555,28 @@ actor DataDirMover {
     private func checkWritePermission(at url: URL) throws {
         if !fileManager.fileExists(atPath: url.path) { try fileManager.createDirectory(at: url, withIntermediateDirectories: true) }
         guard fileManager.isWritableFile(atPath: url.path) else { throw DataDirError.permissionDenied(url) }
+    }
+
+    /// Inspect the nearest existing directory without creating missing parents.
+    private func preflightWritePermission(at url: URL) throws -> String? {
+        var ancestor = url.standardizedFileURL
+        while try !entryExists(ancestor), ancestor.path != "/" { ancestor.deleteLastPathComponent() }
+        guard existingDirectory(at: ancestor), fileManager.isWritableFile(atPath: ancestor.path),
+              fileManager.isExecutableFile(atPath: ancestor.path) else { throw DataDirError.permissionDenied(ancestor) }
+        return try volumeUUID(at: ancestor)
+    }
+
+    private func volumeUUID(at url: URL) throws -> String? {
+        var actual = url.resolvingSymlinksInPath()
+        actual.removeAllCachedResourceValues()
+        return try actual.resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
+    }
+
+    private func requireDestinationVolume(at url: URL, expected: String) throws {
+        guard let actual = try volumeUUID(at: url), !actual.isEmpty,
+              expected.caseInsensitiveCompare(actual) == .orderedSame else {
+            throw DataOperationSafety.Failure.inspection(url.path)
+        }
     }
 
     private func createSymbolicLink(at localPath: URL, withDestinationURL externalPath: URL) throws {

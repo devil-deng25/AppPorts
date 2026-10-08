@@ -243,7 +243,8 @@ struct DataDirsView: View {
             ReadinessCheckSheet()
         }
         .sheet(item: $selectedTransfer) { transfer in
-            DataTransferReviewView(transfer: transfer, onCleanup: { cleanupTransfer(transfer) })
+            DataTransferReviewView(transfer: transfer, onCleanup: { cleanupTransfer(transfer) },
+                                   onUnlock: { unlockUnstartedTransfer(transfer) })
         }
         // 错误弹窗
         .alert("操作失败".localized, isPresented: $showError) {
@@ -2339,6 +2340,36 @@ struct DataDirsView: View {
         guard let warning else { return }
         cleanupWarning = warning
         showCleanupWarning = true
+    }
+
+    private func unlockUnstartedTransfer(_ transfer: DataTransferRecord) {
+        guard transfer.isUnstartedSymlinkMigration, let token = AppOperationState.shared.begin() else { return }
+        showProgress = true
+        progressTitle = "检查并解除锁定".localized
+        progressBytes = 0
+        progressTotalBytes = 0
+        progressFileName = ""
+        Task { @MainActor in
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
+            defer {
+                showProgress = false
+                AppOperationState.shared.finish(token)
+                if lockAcquired { operationLock.release() }
+                reloadCurrentTab()
+            }
+            guard lockAcquired else {
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
+            }
+            do {
+                try await DataDirMover().cancelUnstartedMigration(operationID: transfer.operationID)
+            } catch {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
     }
 
     private func cleanupTransfer(_ transfer: DataTransferRecord) {

@@ -74,6 +74,9 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     var stagingPath: String?
     var sourceIdentity: DataPathIdentity
     var destinationIdentity: DataPathIdentity?
+    /// Captured before copying so a surviving mount-point directory cannot
+    /// make an offline target volume look like an untouched local destination.
+    var destinationVolumeUUID: String?
     var backupIdentity: DataPathIdentity?
     var createdVolumeUUID: String?
     /// A restore can reference its earlier successful migration without discarding that migration's retained original.
@@ -95,6 +98,7 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
          originalPath: String, activePath: String, destinationPath: String,
          backupPath: String? = nil, stagingPath: String? = nil,
          sourceIdentity: DataPathIdentity, destinationIdentity: DataPathIdentity? = nil,
+         destinationVolumeUUID: String? = nil,
          backupIdentity: DataPathIdentity? = nil, createdVolumeUUID: String? = nil,
          priorOperationID: UUID? = nil, createdAt: Date = Date(), policyVersion: Int = 1,
          phase: Phase = .preparing, baseline: Data? = nil, recoverableReason: String? = nil) {
@@ -112,6 +116,7 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
         self.stagingPath = stagingPath
         self.sourceIdentity = sourceIdentity
         self.destinationIdentity = destinationIdentity
+        self.destinationVolumeUUID = destinationVolumeUUID
         self.backupIdentity = backupIdentity
         self.createdVolumeUUID = createdVolumeUUID
         self.priorOperationID = priorOperationID
@@ -128,6 +133,26 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
             && baseline == nil && createdVolumeUUID == nil
             && activePath == originalPath && destinationPath == originalPath
             && backupPath != nil && stagingPath != nil
+    }
+
+    /// A display candidate only. Execution must also prove that the original
+    /// entry has the same identity and no copy, backup or related operation exists.
+    var isUnstartedSymlinkMigration: Bool {
+        guard mode == .symlink, direction == .migrate,
+              [.preparing, .copying, .needsRecovery].contains(phase),
+              sourceIdentity.isResolved, priorOperationID == nil,
+              activePath == originalPath, destinationPath != originalPath,
+              destinationIdentity == nil, backupIdentity == nil, baseline == nil,
+              createdVolumeUUID == nil, stagingPath == nil,
+              legacyRootOwnership == nil, legacyMountFlags == nil,
+              recoveryMountPointIdentity == nil else { return false }
+        let original = URL(fileURLWithPath: originalPath).standardizedFileURL
+        let destination = URL(fileURLWithPath: destinationPath).standardizedFileURL
+        let expectedBackup = original.deletingLastPathComponent()
+            .appendingPathComponent(".appports-migration-backup-\(original.lastPathComponent)-\(operationID)")
+        return originalPath == original.path && destinationPath == destination.path
+            && destination.lastPathComponent == original.lastPathComponent
+            && backupPath == expectedBackup.path
     }
 
     var topologyEntries: [DataPathTopology.Entry] {

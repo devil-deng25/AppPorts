@@ -45,6 +45,17 @@ final class MigrationSafetyRenderTests: XCTestCase {
         let incomplete = fixtureTransfer(phase: .needsRecovery)
         try await render(DataTransferReviewView(transfer: incomplete, onCleanup: {}), size: NSSize(width: 580, height: 720),
                    to: output.appendingPathComponent("incomplete-copy.png"))
+        var unstarted = incomplete
+        let original = URL(fileURLWithPath: unstarted.originalPath)
+        unstarted.backupPath = original.deletingLastPathComponent()
+            .appendingPathComponent(".appports-migration-backup-\(original.lastPathComponent)-\(unstarted.operationID.uuidString)").path
+        unstarted.destinationIdentity = nil
+        unstarted.backupIdentity = nil
+        unstarted.stagingPath = nil
+        unstarted.recoverableReason = "Synthetic preflight failure before copying; the original folder remains unchanged."
+        XCTAssertTrue(unstarted.isUnstartedSymlinkMigration, "Render the checked unlock action for an unstarted migration")
+        try await render(DataTransferReviewView(transfer: unstarted, onCleanup: {}, onUnlock: {}),
+                         size: NSSize(width: 580, height: 570), to: output.appendingPathComponent("unstarted-migration-unlock.png"))
         let mountRestore = fixtureTransfer(phase: .awaitingUserVerification, mode: .mount, direction: .restore)
         try await render(DataTransferReviewView(transfer: mountRestore, onCleanup: {}), size: NSSize(width: 580, height: 570),
                    to: output.appendingPathComponent("retained-restore-volume.png"))

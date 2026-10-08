@@ -1,14 +1,21 @@
 import SwiftUI
 
 /// A retained copy is ordinary success. Unfinished transactions expose their
-/// recorded locations without offering an unsafe blanket retry or deletion.
+/// recorded locations and offer a checked unlock when copying has not started.
 struct DataTransferReviewView: View {
     let transfer: DataTransferRecord
     let onCleanup: () -> Void
+    let onUnlock: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var verifiedApplication = false
     @State private var confirmCleanup = false
     @State private var contentHeight: CGFloat = 320
+
+    init(transfer: DataTransferRecord, onCleanup: @escaping () -> Void, onUnlock: (() -> Void)? = nil) {
+        self.transfer = transfer
+        self.onCleanup = onCleanup
+        self.onUnlock = onUnlock
+    }
 
     private var canCleanup: Bool {
         [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase) && transfer.baseline != nil
@@ -36,6 +43,9 @@ struct DataTransferReviewView: View {
                 if canCleanup {
                     Button("校验并清理原件".localized, role: .destructive) { confirmCleanup = true }
                         .disabled(!verifiedApplication)
+                } else if transfer.isUnstartedSymlinkMigration, let onUnlock {
+                    Button("检查并解除锁定".localized) { dismiss(); onUnlock() }
+                        .buttonStyle(.borderedProminent)
                 }
             }
         }
@@ -56,8 +66,7 @@ struct DataTransferReviewView: View {
 
     private var reviewContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(canCleanup ? "原件已保留，仍占用存储空间。验证应用与数据正常后，可以校验并清理。".localized
-                            : "操作尚需检查，所有已记录的副本都会保留。请先检查这些位置，不要合并或覆盖数据。".localized)
+            Text(reviewDescription)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             pathRow(title: "当前数据".localized, path: transfer.activePath)
@@ -87,6 +96,16 @@ struct DataTransferReviewView: View {
                     .toggleStyle(.checkbox)
             }
         }
+    }
+
+    private var reviewDescription: String {
+        if canCleanup {
+            return "原件已保留，仍占用存储空间。验证应用与数据正常后，可以校验并清理。".localized
+        }
+        if transfer.isUnstartedSymlinkMigration {
+            return "检查原目录与目标位置；确认尚未生成副本后解除锁定，即可重新迁移。".localized
+        }
+        return "操作尚需检查，所有已记录的副本都会保留。请先检查这些位置，不要合并或覆盖数据。".localized
     }
 
     private func pathRow(title: String, path: String) -> some View {

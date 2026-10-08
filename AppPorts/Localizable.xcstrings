@@ -1,6 +1,280 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "检查并解除锁定" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "التحقق وإلغاء القفل"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠉⠓⠑⠉⠅ ⠁⠝⠙ ⠠⠥⠝⠇⠕⠉⠅"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüfen und entsperren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check and Unlock"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kontroli kaj malŝlosi"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comprobar y desbloquear"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérifier et déverrouiller"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "जाँचें और अनलॉक करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Periksa dan Buka Kunci"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verifica e sblocca"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認してロック解除"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "확인 후 잠금 해제"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Controleren en ontgrendelen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sprawdź i odblokuj"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verificar e desbloquear"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить и разблокировать"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตรวจสอบและปลดล็อก"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kontrol et ve kilidi aç"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kiểm tra và mở khóa"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检查并解除锁定"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢查並解除鎖定"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢查並解除鎖萣"
+          }
+        }
+      }
+    },
+    "检查原目录与目标位置；确认尚未生成副本后解除锁定，即可重新迁移。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "سيتم التحقق من المجلد الأصلي والوجهة. إذا لم يتم إنشاء أي نسخة بعد، فسيتم إلغاء قفل المجلد لتتمكن من إعادة محاولة الترحيل."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑ ⠕⠗⠊⠛⠊⠝⠁⠇ ⠋⠕⠇⠙⠑⠗ ⠁⠝⠙ ⠙⠑⠎⠞⠊⠝⠁⠞⠊⠕⠝ ⠺⠊⠇⠇ ⠃⠑ ⠉⠓⠑⠉⠅⠑⠙⠲ ⠠⠊⠋ ⠝⠕ ⠉⠕⠏⠽ ⠓⠁⠎ ⠃⠑⠑⠝ ⠉⠗⠑⠁⠞⠑⠙ ⠽⠑⠞⠂ ⠞⠓⠑ ⠋⠕⠇⠙⠑⠗ ⠺⠊⠇⠇ ⠃⠑ ⠥⠝⠇⠕⠉⠅⠑⠙ ⠎⠕ ⠽⠕⠥ ⠉⠁⠝ ⠗⠑⠞⠗⠽ ⠍⠊⠛⠗⠁⠞⠊⠕⠝⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der ursprüngliche Ordner und das Ziel werden geprüft. Wenn noch keine Kopie erstellt wurde, wird der Ordner entsperrt, damit Sie die Migration erneut starten können."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The original folder and destination will be checked. If no copy has been created yet, the folder will be unlocked so you can retry migration."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La origina dosierujo kaj la celo estos kontrolitaj. Se ankoraŭ neniu kopio estas kreita, la dosierujo estos malŝlosita, por ke vi povu reprovi la migradon."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se comprobarán la carpeta original y el destino. Si aún no se ha creado ninguna copia, se desbloqueará la carpeta para que puedas volver a intentar la migración."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le dossier d’origine et la destination seront vérifiés. Si aucune copie n’a encore été créée, le dossier sera déverrouillé pour vous permettre de relancer la migration."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "मूल फ़ोल्डर और गंतव्य की जाँच की जाएगी। अगर अभी तक कोई कॉपी नहीं बनी है, तो फ़ोल्डर अनलॉक हो जाएगा ताकि आप माइग्रेशन फिर से आज़मा सकें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Folder asli dan tujuan akan diperiksa. Jika belum ada salinan yang dibuat, kunci folder akan dibuka agar Anda dapat mencoba migrasi lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verranno controllati la cartella originale e la destinazione. Se non è ancora stata creata alcuna copia, la cartella verrà sbloccata per consentire di riprovare la migrazione."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "元のフォルダと保存先を確認します。コピーがまだ作成されていないことを確認できた場合、ロックを解除して移行を再試行できるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원본 폴더와 대상 위치를 확인합니다. 아직 복사본이 생성되지 않았다면 폴더의 잠금을 해제하여 마이그레이션을 다시 시도할 수 있게 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De oorspronkelijke map en de bestemming worden gecontroleerd. Als er nog geen kopie is gemaakt, wordt de map ontgrendeld zodat u de migratie opnieuw kunt proberen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zostaną sprawdzone folder źródłowy i miejsce docelowe. Jeśli kopia nie została jeszcze utworzona, folder zostanie odblokowany, aby można było ponowić migrację."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A pasta original e o destino serão verificados. Se ainda não existir uma cópia, a pasta será desbloqueada para voltar a tentar a migração."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Будут проверены исходная папка и место назначения. Если копия ещё не создана, папка будет разблокирована, и вы сможете повторить перенос."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ระบบจะตรวจสอบโฟลเดอร์ต้นฉบับและตำแหน่งปลายทาง หากยังไม่มีการสร้างสำเนา ระบบจะปลดล็อกโฟลเดอร์เพื่อให้คุณลองย้ายอีกครั้งได้"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kaynak klasör ve hedef konum kontrol edilecek. Henüz bir kopya oluşturulmadıysa, taşımayı yeniden deneyebilmeniz için klasörün kilidi açılacak."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thư mục gốc và vị trí đích sẽ được kiểm tra. Nếu chưa có bản sao nào được tạo, thư mục sẽ được mở khóa để bạn có thể thử di chuyển lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检查原目录与目标位置；确认尚未生成副本后解除锁定，即可重新迁移。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢查原目錄與目標位置；確認尚未產生副本後解除鎖定，即可重新遷移。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢查原目錄與目標位置；確認尚未產甡副本後解除鎖萣，即可重新遷移。"
+          }
+        }
+      }
+    },
     "还原失败，当前本地文件已保留。原入口备份位于：%@" : {
       "extractionState" : "manual",
       "localizations" : {

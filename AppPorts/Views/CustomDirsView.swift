@@ -133,7 +133,8 @@ struct CustomDirsView: View {
             }
         }
         .sheet(item: $selectedTransfer) { transfer in
-            DataTransferReviewView(transfer: transfer, onCleanup: { cleanupTransfer(transfer) })
+            DataTransferReviewView(transfer: transfer, onCleanup: { cleanupTransfer(transfer) },
+                                   onUnlock: { unlockUnstartedTransfer(transfer) })
         }
         .alert("操作失败".localized, isPresented: $showError) {
             Button("好的".localized, role: .cancel) {}
@@ -337,6 +338,32 @@ struct CustomDirsView: View {
     private func invalidateRefresh() {
         refreshRequestID = nil
         isScanning = false
+    }
+
+    private func unlockUnstartedTransfer(_ transfer: DataTransferRecord) {
+        guard transfer.isUnstartedSymlinkMigration, let operationID = beginOperation() else { return }
+        showProgress = true
+        progressTitle = "检查并解除锁定".localized
+        progressBytes = 0
+        progressTotalBytes = 0
+        progressFileName = ""
+        Task { @MainActor in
+            let lock = OperationLock()
+            let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
+            defer {
+                showProgress = false
+                if acquired { lock.release() }
+                operationState.finish(operationID)
+                refresh()
+            }
+            do {
+                guard acquired else { throw DataOperationSafety.Failure.occupied(transfer.originalPath) }
+                try await DataDirMover().cancelUnstartedMigration(operationID: transfer.operationID)
+            } catch {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
     }
 
     private func cleanupTransfer(_ transfer: DataTransferRecord) {

@@ -55,7 +55,7 @@ final class ContainerMountStore: @unchecked Sendable {
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
-            guard (2...4).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
+            guard (2...5).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
             mounts = try values.decode([ContainerMountRecord].self, forKey: .mounts)
             cleanups = try values.decode([ContainerCleanupRecord].self, forKey: .cleanups)
             transfers = schemaVersion == 2 ? [] : try values.decode([DataTransferRecord].self, forKey: .transfers)
@@ -250,6 +250,21 @@ final class ContainerMountStore: @unchecked Sendable {
         try mutate { current in try self.replaceTransfer(transfer, in: &current) }
     }
 
+    /// Only forget an exact unstarted intent. Filesystem verification runs under
+    /// the document's writer lock; this method never removes any data directory.
+    func cancelUnstartedMigration(_ expected: DataTransferRecord, verifyingFilesystem: () throws -> Void) throws {
+        try mutate { current in
+            guard let index = current.transfers.firstIndex(where: { $0.operationID == expected.operationID }),
+                  current.transfers[index] == expected, expected.isUnstartedSymlinkMigration,
+                  !current.transfers.contains(where: { $0.priorOperationID == expected.operationID }),
+                  !current.managedLinks.contains(where: { $0.operationID == expected.operationID }) else {
+                throw StoreError.conflict("Migration intent changed, has related operations or already started")
+            }
+            try verifyingFilesystem()
+            current.transfers.remove(at: index)
+        }
+    }
+
     /// The caller has verified the copy and completed the filesystem switch. Retention is normal success.
     func commitMigration(record: ContainerMountRecord?, transfer: DataTransferRecord) throws {
         try mutate { current in
@@ -375,7 +390,11 @@ final class ContainerMountStore: @unchecked Sendable {
             $0.legacyRootOwnership != nil || $0.legacyMountFlags != nil
         } || document.mounts.contains { $0.ownershipPolicy != nil }
             || document.cleanups.contains { $0.mountRecord.ownershipPolicy != nil }
-        document.schemaVersion = max(document.schemaVersion, needsOwnershipSchema ? 4 : 3)
+        // A schema-4 writer does not understand projected ownership on either
+        // side of an ordinary copy. Keep that contract in its opaque baseline
+        // while preventing older clients from executing against it.
+        let needsCompatibilitySchema = try document.transfers.contains { try self.hasOwnershipCompatibility($0) }
+        document.schemaVersion = max(document.schemaVersion, needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
         // Removing a mount also resolves its remount-only block; transfer recovery remains independent.
         let activeVolumes = Set(document.mounts.map { $0.volumeUUID.uppercased() })
         document.remountInterventions = document.remountInterventions.filter { activeVolumes.contains($0.key) }
@@ -496,6 +515,7 @@ final class ContainerMountStore: @unchecked Sendable {
               old.bundleIdentifier == transfer.bundleIdentifier, old.dataDirType == transfer.dataDirType,
               old.createdVolumeUUID == nil || sameUUID(old.createdVolumeUUID, transfer.createdVolumeUUID),
               old.destinationIdentity == nil || old.destinationIdentity == transfer.destinationIdentity,
+              old.destinationVolumeUUID == nil || sameUUID(old.destinationVolumeUUID, transfer.destinationVolumeUUID),
               old.backupIdentity == nil || old.backupIdentity == transfer.backupIdentity,
               old.baseline == nil || old.baseline == transfer.baseline,
               old.recoveryMountPointIdentity == transfer.recoveryMountPointIdentity
@@ -542,6 +562,23 @@ final class ContainerMountStore: @unchecked Sendable {
     /// Ordinary records need only the exception marker, not a second in-memory copy of every entry.
     private struct LegacyOwnershipMarker: Decodable {
         let restoredRootOwnership: TreeCopySnapshot.Ownership?
+    }
+
+    private struct OwnershipCompatibilityMarker: Decodable {
+        let ownershipCompatibility: TreeCopySnapshot.OwnershipCompatibility
+    }
+
+    /// Older stores accepted opaque baselines. Keep that read compatibility,
+    /// but never silently discard a present, malformed new ownership contract.
+    private func hasOwnershipCompatibility(_ transfer: DataTransferRecord) throws -> Bool {
+        guard let baseline = transfer.baseline else { return false }
+        let object: Any
+        do { object = try PropertyListSerialization.propertyList(from: baseline, format: nil) }
+        catch { return false }
+        guard let dictionary = object as? [String: Any], dictionary["ownershipCompatibility"] != nil else { return false }
+        do { _ = try PropertyListDecoder().decode(OwnershipCompatibilityMarker.self, from: baseline) }
+        catch { throw StoreError.invalidState("Invalid ownership compatibility baseline") }
+        return true
     }
 
     /// The destination-only ownership exception must never leak into source or cleanup metadata.
@@ -623,9 +660,11 @@ final class ContainerMountStore: @unchecked Sendable {
         }
         for transfer in document.transfers {
             try validateLegacyOwnership(transfer)
+            _ = try hasOwnershipCompatibility(transfer)
             guard transfer.policyVersion > 0, validSourceIdentity(transfer),
                   transfer.topologyEntries.allSatisfy({ validPath($0.path) }),
                   transfer.createdVolumeUUID.map({ !$0.isEmpty }) ?? true,
+                  transfer.destinationVolumeUUID.map({ !$0.isEmpty }) ?? true,
                   transfer.destinationIdentity.map({ $0.isResolved }) ?? true,
                   transfer.backupIdentity.map({ $0.isResolved }) ?? true,
                   transfer.priorOperationID != transfer.operationID else { throw StoreError.invalidState("Invalid transfer identity") }

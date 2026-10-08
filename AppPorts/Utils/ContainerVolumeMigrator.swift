@@ -314,7 +314,7 @@ actor ContainerVolumeMigrator {
             try store.updateTransfer(transfer)
             let baseline = try await TreeCopySession().copy(from: source, to: staging,
                 excludingRootEntries: Self.volumeSystemArtifacts, finalDestination: source, progressHandler: progressHandler)
-            try TreeCopySession.applyRootMetadata(at: staging, from: baseline)
+            try TreeCopySession.applyRootMetadata(at: staging, from: baseline, ownershipRole: .destination)
             try TreeCopySession.verifyCopy(at: staging, against: baseline)
             transfer.baseline = try PropertyListEncoder().encode(baseline)
             transfer.destinationIdentity = try DataPathIdentity.capture(staging, volumeUUID: uuid)
