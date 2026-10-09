@@ -2,6 +2,22 @@ import Foundation
 
 /// 已授权的签名属于数据迁移流程：备份完成后才迁移，重签完成后才向调用方返回成功。
 enum DataMigrationWorkflow {
+    enum Stage: Equatable, Sendable {
+        case backingUpApplication
+        case migratingData
+        case resigningApplication
+    }
+
+    /// 隐藏的旧偏好不能在经典模式关闭后继续修改关联应用。
+    /// 确认界面和执行流程共用同一策略；本次选择优先于自动开关。
+    static func shouldResignAssociatedApp(
+        classicModeActive: Bool,
+        autoResignEnabled: Bool,
+        explicitChoice: Bool?
+    ) -> Bool {
+        classicModeActive && (explicitChoice ?? autoResignEnabled)
+    }
+
     /// 确认框对应的真实应用；批准不能沿着后来改变的本地入口传给另一应用。
     struct SigningTarget: Equatable, Sendable {
         let url: URL
@@ -33,15 +49,23 @@ enum DataMigrationWorkflow {
     }
 
     static func run(
-        signingAppURL: URL?,
+        associatedAppURL: URL?,
         classicModeActive: Bool = false,
+        autoResignEnabled: Bool = false,
+        explicitSigningChoice: Bool? = nil,
         approvedSandboxedTarget: SigningTarget? = nil,
         inspectSigningTarget: (URL) async throws -> SigningTarget = { try signingTarget(at: $0) },
         validateBeforeMigration: () async throws -> Void = {},
+        stageChanged: (Stage) async -> Void = { _ in },
         backupSignature: (URL) async throws -> Void,
         migrate: () async throws -> Void,
         resignApp: (URL, Bool) async throws -> Void
     ) async throws {
+        let signingAppURL = shouldResignAssociatedApp(
+            classicModeActive: classicModeActive,
+            autoResignEnabled: autoResignEnabled,
+            explicitChoice: explicitSigningChoice
+        ) ? associatedAppURL : nil
         let target: SigningTarget?
         if let signingAppURL {
             let inspected = try await inspectSigningTarget(signingAppURL)
@@ -54,6 +78,7 @@ enum DataMigrationWorkflow {
                 throw CodeSigner.SigningError.sandboxedApplication(inspected.url)
             }
             target = inspected
+            await stageChanged(.backingUpApplication)
             try await backupSignature(inspected.url)
             // 备份可能耗时很长；入口或沙盒状态改变时，先停下，不搬动任何数据。
             guard try await inspectSigningTarget(signingAppURL) == inspected else {
@@ -64,6 +89,7 @@ enum DataMigrationWorkflow {
         }
 
         try await validateBeforeMigration()
+        await stageChanged(.migratingData)
         try await migrate()
 
         if let signingAppURL, let target {
@@ -73,6 +99,7 @@ enum DataMigrationWorkflow {
                 }
                 let sandboxedAppApproved = target.isSandboxed
                     && classicModeActive && approvedSandboxedTarget == target
+                await stageChanged(.resigningApplication)
                 try await resignApp(target.url, sandboxedAppApproved)
             } catch {
                 // 数据已经成功迁移；不要误报为迁移失败或自动再次搬运数据。

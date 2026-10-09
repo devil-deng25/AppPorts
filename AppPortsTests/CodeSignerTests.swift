@@ -289,8 +289,9 @@ struct CodeSignerTests {
 
         do {
             try await DataMigrationWorkflow.run(
-                signingAppURL: portal,
+                associatedAppURL: portal,
                 classicModeActive: true,
+                explicitSigningChoice: true,
                 backupSignature: { _ in Issue.record("A global setting must not authorize a sandbox backup") },
                 migrate: { Issue.record("Application Support migration must wait for sandbox signing approval") },
                 resignApp: { _, _ in Issue.record("The real sandboxed app must not be signed without approval") }
@@ -827,9 +828,13 @@ struct DataMigrationWorkflowTests {
         let finishSigning = Gate()
         let operation = Task {
             try await DataMigrationWorkflow.run(
-                signingAppURL: appURL,
+                associatedAppURL: appURL,
                 classicModeActive: true,
+                autoResignEnabled: true,
                 inspectSigningTarget: { DataMigrationWorkflow.SigningTarget(url: $0, isSandboxed: false) },
+                stageChanged: { stage in
+                    await events.append("stage-\(stage)")
+                },
                 backupSignature: { _ in
                     await events.append("backup-started")
                     await backupStarted.open()
@@ -850,13 +855,13 @@ struct DataMigrationWorkflowTests {
         }
 
         await backupStarted.wait()
-        #expect(await events.values == ["backup-started"])
+        #expect(await events.values == ["stage-backingUpApplication", "backup-started"])
         await finishBackup.open()
         await signingStarted.wait()
-        #expect(await events.values == ["backup-started", "backup-finished", "migrate", "signing-started"])
+        #expect(await events.values == ["stage-backingUpApplication", "backup-started", "backup-finished", "stage-migratingData", "migrate", "stage-resigningApplication", "signing-started"])
         await finishSigning.open()
         try await operation.value
-        #expect(await events.values == ["backup-started", "backup-finished", "migrate", "signing-started", "signing-finished", "completed"])
+        #expect(await events.values == ["stage-backingUpApplication", "backup-started", "backup-finished", "stage-migratingData", "migrate", "stage-resigningApplication", "signing-started", "signing-finished", "completed"])
     }
 
     enum Stage: CaseIterable { case backup, migration, signing }
@@ -867,7 +872,9 @@ struct DataMigrationWorkflowTests {
         let events = Events()
         do {
             try await DataMigrationWorkflow.run(
-                signingAppURL: appURL,
+                associatedAppURL: appURL,
+                classicModeActive: true,
+                explicitSigningChoice: true,
                 inspectSigningTarget: { DataMigrationWorkflow.SigningTarget(url: $0, isSandboxed: false) },
                 backupSignature: { _ in
                     await events.append("backup")
@@ -902,12 +909,42 @@ struct DataMigrationWorkflowTests {
     func respectsSigningChoice() async throws {
         let events = Events()
         try await DataMigrationWorkflow.run(
-            signingAppURL: nil,
+            associatedAppURL: appURL,
+            classicModeActive: true,
+            autoResignEnabled: true,
+            explicitSigningChoice: false,
+            inspectSigningTarget: { _ in
+                Issue.record("Declining signing must not inspect the app signature")
+                return .init(url: appURL, isSandboxed: false)
+            },
             backupSignature: { _ in Issue.record("Backup must not run when signing is disabled") },
             migrate: { await events.append("migration") },
             resignApp: { _, _ in Issue.record("Signing must not run when disabled") }
         )
         #expect(await events.values == ["migration"])
+    }
+
+    @Test("An old automatic-signing preference cannot affect ordinary data outside classic mode", arguments: [nil, false, true] as [Bool?])
+    func ignoresSigningOutsideClassicMode(explicitChoice: Bool?) async throws {
+        let events = Events()
+        try await DataMigrationWorkflow.run(
+            associatedAppURL: appURL,
+            classicModeActive: false,
+            autoResignEnabled: true,
+            explicitSigningChoice: explicitChoice,
+            inspectSigningTarget: { _ in
+                Issue.record("Ordinary Application Support migration must not query the app signature")
+                return .init(url: appURL, isSandboxed: false)
+            },
+            stageChanged: { stage in
+                #expect(stage == .migratingData)
+                await events.append("migration-stage")
+            },
+            backupSignature: { _ in Issue.record("A hidden old preference must not back up the app") },
+            migrate: { await events.append("migration") },
+            resignApp: { _, _ in Issue.record("A hidden old preference must not re-sign the app") }
+        )
+        #expect(await events.values == ["migration-stage", "migration"])
     }
 
     @Test("A newly running app stops data movement even after a signature backup", arguments: [false, true])
@@ -916,7 +953,9 @@ struct DataMigrationWorkflowTests {
         if !signingEnabled { await events.append("launched") }
         do {
             try await DataMigrationWorkflow.run(
-                signingAppURL: signingEnabled ? appURL : nil,
+                associatedAppURL: appURL,
+                classicModeActive: true,
+                explicitSigningChoice: signingEnabled,
                 inspectSigningTarget: { DataMigrationWorkflow.SigningTarget(url: $0, isSandboxed: false) },
                 validateBeforeMigration: {
                     let launched = await events.values.contains("launched")
@@ -935,21 +974,21 @@ struct DataMigrationWorkflowTests {
         #expect(await events.values == ["launched"])
     }
 
-    @Test("Sandbox signing requires both classic mode and per-app approval", arguments: [false, true])
-    func requiresClassicModeAndApproval(hasApproval: Bool) async throws {
+    @Test("Classic mode still requires per-app approval before signing a sandboxed app")
+    func requiresSandboxApproval() async throws {
         let target = DataMigrationWorkflow.SigningTarget(url: appURL, isSandboxed: true)
         let events = Events()
         do {
             try await DataMigrationWorkflow.run(
-                signingAppURL: appURL,
-                classicModeActive: !hasApproval,
-                approvedSandboxedTarget: hasApproval ? target : nil,
+                associatedAppURL: appURL,
+                classicModeActive: true,
+                explicitSigningChoice: true,
                 inspectSigningTarget: { _ in target },
                 backupSignature: { _ in await events.append("backup") },
                 migrate: { await events.append("migration") },
                 resignApp: { _, _ in await events.append("signing") }
             )
-            Issue.record("Neither classic mode nor per-app approval is sufficient on its own")
+            Issue.record("Classic mode must not replace per-app sandbox signing approval")
         } catch CodeSigner.SigningError.sandboxedApplication(let url) {
             #expect(url == target.url)
         }
@@ -964,8 +1003,9 @@ struct DataMigrationWorkflowTests {
         let inspector = TargetInspector(target)
         let events = Events()
         try await DataMigrationWorkflow.run(
-            signingAppURL: appURL,
+            associatedAppURL: appURL,
             classicModeActive: true,
+            explicitSigningChoice: true,
             approvedSandboxedTarget: target,
             inspectSigningTarget: { await inspector.inspect(at: $0) },
             backupSignature: { url in
@@ -994,8 +1034,9 @@ struct DataMigrationWorkflowTests {
         let events = Events()
         do {
             try await DataMigrationWorkflow.run(
-                signingAppURL: appURL,
+                associatedAppURL: appURL,
                 classicModeActive: true,
+                explicitSigningChoice: true,
                 approvedSandboxedTarget: approved,
                 inspectSigningTarget: { _ in actual },
                 backupSignature: { _ in await events.append("backup") },
@@ -1020,8 +1061,9 @@ struct DataMigrationWorkflowTests {
         let events = Events()
         do {
             try await DataMigrationWorkflow.run(
-                signingAppURL: appURL,
+                associatedAppURL: appURL,
                 classicModeActive: true,
+                explicitSigningChoice: true,
                 inspectSigningTarget: { await inspector.inspect(at: $0) },
                 backupSignature: { _ in
                     await events.append("backup")

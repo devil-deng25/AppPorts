@@ -57,8 +57,17 @@ enum SignatureSnapshot {
                 let input = try FileHandle(forReadingFrom: url)
                 defer { try? input.close() }
                 var contents = SHA256()
-                while let data = try input.read(upToCount: 1024 * 1024), !data.isEmpty {
-                    contents.update(data: data)
+                while true {
+                    // FileHandle 的 NSData 桥接会延迟释放；逐块排空，避免多次应用校验
+                    // 把累计读取的 GB 级数据留在同一个同步 actor 任务的自动释放池中。
+                    let hasData = try autoreleasepool {
+                        guard let data = try input.read(upToCount: 1024 * 1024), !data.isEmpty else {
+                            return false
+                        }
+                        contents.update(data: data)
+                        return true
+                    }
+                    if !hasData { break }
                 }
                 field(Data(contents.finalize()))
             case S_IFLNK:

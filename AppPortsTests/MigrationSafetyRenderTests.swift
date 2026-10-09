@@ -16,6 +16,14 @@ final class MigrationSafetyRenderTests: XCTestCase {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 
         let items = fixtureItems()
+        for (name, title, bytes) in [
+            ("data-backup-progress", "正在备份原始应用".localized, Int64(0)),
+            ("data-signing-progress", "重签名此应用".localized, Int64(1_073_741_824))
+        ] {
+            try await render(DataDirProgressOverlay(title: title, copiedBytes: bytes, totalBytes: bytes,
+                                                    currentFile: "Example.app", showsByteProgress: false),
+                             size: NSSize(width: 420, height: 230), to: output.appendingPathComponent("\(name).png"))
+        }
         for width: CGFloat in [580, 900] {
             for zeros in [false, true] {
                 for locked in [false, true] {

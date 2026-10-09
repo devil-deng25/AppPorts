@@ -1,6 +1,143 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "正在备份原始应用" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "جارٍ نسخ التطبيق الأصلي احتياطيًا"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠃⠁⠉⠅⠊⠝⠛ ⠥⠏ ⠞⠓⠑ ⠕⠗⠊⠛⠊⠝⠁⠇ ⠁⠏⠏"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original-App wird gesichert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backing up the original app"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sekurkopiante la originan aplikaĵon"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Creando copia de seguridad de la app original"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sauvegarde de l’app d’origine"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "मूल ऐप का बैकअप लिया जा रहा है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mencadangkan aplikasi asli"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backup dell’app originale in corso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "元のアプリをバックアップ中"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원본 앱 백업 중"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reservekopie van de oorspronkelijke app maken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tworzenie kopii zapasowej oryginalnej aplikacji"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fazendo backup do app original"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создание резервной копии исходного приложения"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "กำลังสำรองข้อมูลแอปต้นฉบับ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orijinal uygulama yedekleniyor"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đang sao lưu ứng dụng gốc"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在备份原始应用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在備份原始應用程式"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在備份原始應用"
+          }
+        }
+      }
+    },
     "检查并解除锁定" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -113017,139 +113154,139 @@
         }
       }
     },
-    "数据迁移完成后，完整备份并重签关联应用。经典模式可能影响应用启动和登录态，通常不需要开启" : {
+    "仅在经典模式下，先完整备份关联应用，再在数据迁移后重签；通常不需要开启" : {
       "extractionState" : "manual",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "بعد ترحيل البيانات، يُنسخ التطبيق المرتبط احتياطيًا بالكامل ويُعاد توقيعه. قد يؤثر الوضع التقليدي في التشغيل وحالة تسجيل الدخول؛ لا حاجة عادةً لتفعيله"
+            "value" : "في الوضع التقليدي فقط، يُنسخ التطبيق المرتبط كاملًا احتياطيًا قبل ترحيل البيانات، ثم يُعاد توقيعه بعد ذلك. لا حاجة إلى ذلك عادةً."
           }
         },
         "br" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "⠠⠁⠋⠞⠑⠗ ⠙⠁⠞⠁ ⠍⠊⠛⠗⠁⠞⠊⠕⠝⠂ ⠋⠥⠇⠇⠽ ⠃⠁⠉⠅ ⠥⠏ ⠁⠝⠙ ⠗⠑⠤⠎⠊⠛⠝ ⠞⠓⠑ ⠁⠎⠎⠕⠉⠊⠁⠞⠑⠙ ⠁⠏⠏⠲ ⠠⠉⠇⠁⠎⠎⠊⠉ ⠍⠕⠙⠑ ⠍⠁⠽ ⠁⠋⠋⠑⠉⠞ ⠇⠁⠥⠝⠉⠓⠊⠝⠛ ⠁⠝⠙ ⠎⠊⠛⠝⠤⠊⠝ ⠎⠞⠁⠞⠑⠆ ⠞⠓⠊⠎ ⠊⠎ ⠥⠎⠥⠁⠇⠇⠽ ⠝⠕⠞ ⠝⠑⠑⠙⠑⠙"
+            "value" : "⠠⠊⠝ ⠉⠇⠁⠎⠎⠊⠉ ⠍⠕⠙⠑ ⠕⠝⠇⠽⠂ ⠃⠁⠉⠅ ⠥⠏ ⠞⠓⠑ ⠉⠕⠍⠏⠇⠑⠞⠑ ⠁⠎⠎⠕⠉⠊⠁⠞⠑⠙ ⠁⠏⠏ ⠃⠑⠋⠕⠗⠑ ⠙⠁⠞⠁ ⠍⠊⠛⠗⠁⠞⠊⠕⠝⠂ ⠞⠓⠑⠝ ⠗⠑⠤⠎⠊⠛⠝ ⠊⠞ ⠁⠋⠞⠑⠗⠺⠁⠗⠙⠲ ⠠⠥⠎⠥⠁⠇⠇⠽ ⠥⠝⠝⠑⠉⠑⠎⠎⠁⠗⠽⠲"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nach der Datenmigration die zugehörige App vollständig sichern und neu signieren. Der klassische Modus kann den App-Start und den Anmeldestatus beeinträchtigen. Diese Option ist normalerweise nicht nötig"
+            "value" : "Nur im klassischen Modus: Die zugehörige App vor der Datenmigration vollständig sichern und anschließend neu signieren. Normalerweise nicht nötig."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "After data migration, fully back up and re-sign the associated app. Classic mode may affect launching and sign-in state; this is usually not needed"
+            "value" : "In classic mode only, back up the complete associated app before data migration, then re-sign it afterward. Usually unnecessary."
           }
         },
         "eo" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Post datummigrado, faru kompletan sekurkopion de la rilata aplikaĵo kaj resubskribu ĝin. Klasika reĝimo povas influi lanĉadon kaj ensalutan staton; ĝi kutime ne bezonas esti ebligita"
+            "value" : "Nur en klasika reĝimo: sekurkopiu la tutan rilatan aplikaĵon antaŭ datummigrado, poste resubskribu ĝin. Kutime ne necesas."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Después de migrar los datos, crear una copia de seguridad completa de la app asociada y volver a firmarla. El modo clásico puede afectar al inicio de la app y al estado de la sesión. Normalmente no es necesario activar esta opción"
+            "value" : "Solo en el modo clásico: crear una copia completa de la app asociada antes de migrar los datos y volver a firmarla después. Normalmente no es necesario."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Après la migration des données, sauvegarder entièrement l’app associée, puis la re-signer. Le mode classique peut affecter le démarrage et l’état de connexion de l’app. Il n’est généralement pas nécessaire d’activer cette option"
+            "value" : "En mode classique uniquement : sauvegarder l’app associée complète avant la migration des données, puis la signer à nouveau. Généralement inutile."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "डेटा माइग्रेशन पूरा होने के बाद संबंधित ऐप का पूरा बैकअप बनाएँ और पुनः हस्ताक्षर करें। क्लासिक मोड ऐप शुरू होने और लॉगिन स्थिति को प्रभावित कर सकता है; आमतौर पर इसे चालू करने की ज़रूरत नहीं होती"
+            "value" : "केवल क्लासिक मोड में: डेटा माइग्रेशन से पहले संबंधित ऐप का पूरा बैकअप लें, फिर बाद में पुनः हस्ताक्षर करें। आम तौर पर इसकी आवश्यकता नहीं होती।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Setelah migrasi data selesai, cadangkan app terkait secara lengkap dan tandatangani ulang. Mode klasik dapat memengaruhi peluncuran dan status masuk; biasanya tidak perlu diaktifkan"
+            "value" : "Hanya dalam mode klasik: cadangkan seluruh aplikasi terkait sebelum migrasi data, lalu tandatangani ulang setelahnya. Biasanya tidak diperlukan."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dopo la migrazione dei dati, esegue un backup completo e rifirma l’app associata. La modalità classica può influire sull’avvio e sullo stato di accesso all’account; di solito non serve attivarla"
+            "value" : "Solo in modalità classica: eseguire un backup completo dell’app associata prima della migrazione dei dati, poi firmarla nuovamente. In genere non è necessario."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "データの移行後、関連するアプリを完全にバックアップしてから再署名します。クラシックモードはアプリの起動やログイン状態に影響する場合があり、通常はオンにする必要はありません"
+            "value" : "クラシックモードでのみ、データ移行前に関連アプリ全体をバックアップし、移行後に再署名します。通常は不要です。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "데이터 마이그레이션 후 연결된 앱 전체를 백업하고 재서명합니다. 클래식 모드는 앱 실행과 로그인 상태에 영향을 줄 수 있으므로 일반적으로 켤 필요가 없습니다"
+            "value" : "클래식 모드에서만 데이터 이동 전에 관련 앱 전체를 백업하고 이동 후 다시 서명합니다. 일반적으로 필요하지 않습니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Maak na de gegevensmigratie een volledige reservekopie en onderteken de gekoppelde app opnieuw. De klassieke modus kan het starten en de aanmeldstatus beïnvloeden; inschakelen is meestal niet nodig"
+            "value" : "Alleen in klassieke modus: maak vóór de gegevensmigratie een volledige reservekopie van de bijbehorende app en onderteken deze daarna opnieuw. Meestal niet nodig."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Po migracji danych utwórz pełną kopię zapasową i ponownie podpisz powiązaną aplikację. Tryb klasyczny może wpływać na uruchamianie i stan zalogowania; zwykle nie trzeba go włączać"
+            "value" : "Tylko w trybie klasycznym: utwórz pełną kopię powiązanej aplikacji przed migracją danych, a następnie podpisz ją ponownie. Zwykle nie jest to potrzebne."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Após a migração dos dados, faz um backup completo e reassina o app associado. O modo clássico pode afetar a inicialização e o estado de login; geralmente não é necessário ativá-lo"
+            "value" : "Somente no modo clássico: faça um backup completo do app associado antes de migrar os dados e reassine depois. Geralmente desnecessário."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "После переноса данных создать полную резервную копию и переподписать связанное приложение. Классический режим может повлиять на запуск и состояние входа в аккаунт; обычно включать его не нужно"
+            "value" : "Только в классическом режиме: создать полную резервную копию связанного приложения до переноса данных, затем переподписать его. Обычно не требуется."
           }
         },
         "th" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "หลังย้ายข้อมูลเสร็จ จะสำรองแอปที่เกี่ยวข้องทั้งแอปแล้วเซ็นใหม่ โหมดดั้งเดิมอาจกระทบการเริ่มทำงานและสถานะการลงชื่อเข้าใช้ โดยทั่วไปไม่จำเป็นต้องเปิดใช้"
+            "value" : "เฉพาะในโหมดดั้งเดิม: สำรองแอปที่เกี่ยวข้องทั้งแอปก่อนย้ายข้อมูล แล้วจึงเซ็นใหม่หลังย้ายเสร็จ โดยทั่วไปไม่จำเป็น"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Veri taşıma tamamlandıktan sonra ilişkili uygulamanın tam yedeğini alıp yeniden imzalar. Klasik mod, uygulamanın başlamasını ve oturum durumunu etkileyebilir; genellikle açılması gerekmez"
+            "value" : "Yalnızca klasik modda: veri taşımadan önce ilgili uygulamanın tamamını yedekleyin, ardından yeniden imzalayın. Genellikle gerekmez."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sau khi di chuyển dữ liệu, sao lưu đầy đủ và ký lại ứng dụng liên quan. Chế độ cổ điển có thể ảnh hưởng đến việc khởi chạy và trạng thái đăng nhập; thường không cần bật"
+            "value" : "Chỉ trong chế độ cổ điển: sao lưu toàn bộ ứng dụng liên quan trước khi di chuyển dữ liệu, rồi ký lại sau đó. Thường không cần thiết."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "数据迁移完成后，完整备份并重签关联应用。经典模式可能影响应用启动和登录态，通常不需要开启"
+            "value" : "仅在经典模式下，先完整备份关联应用，再在数据迁移后重签；通常不需要开启"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "資料遷移完成後，完整備份並重簽名關聯的應用程式。經典模式可能影響應用程式的啟動和登入狀態，通常不需要開啟"
+            "value" : "僅在經典模式下，先完整備份關聯應用程式，再於資料遷移後重新簽名；通常不需要開啟"
           }
         },
         "zh-martian" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "数据迁移完成后，完整備份并重签关联应用。经典模式可能影响应用啟动和登录態，通常不需要开啟"
+            "value" : "仅在经典模式下，先完整備份关聯應用，再在数據迁移後重签；通常不需要開啟"
           }
         }
       }
@@ -114661,139 +114798,139 @@
         }
       }
     },
-    "**什么是重签名？**\n\n数据目录迁移到外部存储后，macOS 可能认为应用已被修改，在 Finder 中提示「已损坏」或「无法打开」。\n\n开启此选项后，AppPorts 会在数据迁移完成后自动对关联应用执行 **Ad-hoc 自签名**，绕过此限制。\n\n**通常不需要开启。** 重签名会替换应用的开发者签名并移除部分授权。新版会先保存完整原始应用，可用「恢复原始签名」还原，不需要开发者私钥。\n\n**沙盒应用默认不重签名**：经典模式需确认风险，系统升级后应用可能无法启动。恢复签名前应先还原经典模式迁移的容器数据；容器数据请优先使用「挂载迁移」。" : {
+    "**什么是重签名？**\n\n迁移应用包外的数据目录不会修改应用的代码签名，通常不需要重签名。\n\n此选项仅在经典模式下生效。开启后，AppPorts 会先完整备份关联应用，再在数据迁移完成后执行 **Ad-hoc 自签名**，作为用户主动选择的兼容性尝试。\n\n**通常不需要开启。** 重签名会替换应用的开发者签名并移除部分授权。新版会先保存完整原始应用，可用「恢复原始签名」还原，不需要开发者私钥。\n\n**沙盒应用默认不重签名**：经典模式需确认风险，系统升级后应用可能无法启动。恢复签名前应先还原经典模式迁移的容器数据；容器数据请优先使用「挂载迁移」。" : {
       "extractionState" : "manual",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**ما هي إعادة التوقيع؟**\n\nبعد ترحيل مجلد بيانات إلى التخزين الخارجي، قد يعتبر macOS أن التطبيق قد عُدّل ويعرض في Finder رسالة «تالف» أو «لا يمكن فتحه».\n\nعند تفعيل هذا الخيار، يطبّق AppPorts تلقائيًا **توقيعًا ذاتيًا باستخدام Ad-hoc** على التطبيق المرتبط بعد اكتمال ترحيل البيانات لتجاوز هذا القيد.\n\n**لا حاجة عادةً لتفعيله.** تستبدل إعادة التوقيع توقيع مطوّر التطبيق وتزيل بعض الاستحقاقات. يحفظ الإصدار الجديد نسخة كاملة من التطبيق الأصلي أولًا، ويمكن إعادتها باستخدام «استعادة التوقيع الأصلي» دون الحاجة إلى المفتاح الخاص للمطوّر.\n\n**لا يُعاد توقيع التطبيقات المعزولة افتراضيًا**: يتطلب الوضع التقليدي تأكيد المخاطر، وقد يتعذر تشغيل التطبيق بعد ترقية النظام. استعد بيانات الحاوية المُرحّلة بالوضع التقليدي قبل استعادة التوقيع؛ يُفضّل استخدام «الترحيل بالتحميل» لبيانات الحاوية."
+            "value" : "**ما هي إعادة التوقيع؟**\n\nنقل مجلدات البيانات الموجودة خارج حزمة التطبيق لا يغيّر توقيع شيفرة التطبيق، لذا لا تكون إعادة التوقيع ضرورية عادةً.\n\nيسري هذا الخيار في الوضع التقليدي فقط. عند تفعيله، يحفظ AppPorts أولًا نسخة احتياطية كاملة من التطبيق المرتبط، ثم يطبّق **توقيعًا ذاتيًا باستخدام Ad-hoc** بعد ترحيل البيانات، كتجربة توافق يختارها المستخدم صراحةً.\n\n**لا حاجة عادةً لتفعيله.** تستبدل إعادة التوقيع توقيع مطوّر التطبيق وتزيل بعض الاستحقاقات. يحفظ الإصدار الجديد نسخة كاملة من التطبيق الأصلي أولًا، ويمكن إعادتها باستخدام «استعادة التوقيع الأصلي» دون الحاجة إلى المفتاح الخاص للمطوّر.\n\n**لا يُعاد توقيع التطبيقات المعزولة افتراضيًا**: يتطلب الوضع التقليدي تأكيد المخاطر، وقد يتعذر تشغيل التطبيق بعد ترقية النظام. استعد بيانات الحاوية المُرحّلة بالوضع التقليدي قبل استعادة التوقيع؛ يُفضّل استخدام «الترحيل بالتحميل» لبيانات الحاوية."
           }
         },
         "br" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**⠠⠺⠓⠁⠞ ⠊⠎ ⠗⠑⠤⠎⠊⠛⠝⠊⠝⠛⠦**\n\n⠠⠁⠋⠞⠑⠗ ⠁ ⠙⠁⠞⠁ ⠙⠊⠗⠑⠉⠞⠕⠗⠽ ⠊⠎ ⠍⠊⠛⠗⠁⠞⠑⠙ ⠞⠕ ⠑⠭⠞⠑⠗⠝⠁⠇ ⠎⠞⠕⠗⠁⠛⠑⠂ ⠍⠁⠉⠠⠕⠠⠎ ⠍⠁⠽ ⠞⠗⠑⠁⠞ ⠞⠓⠑ ⠁⠏⠏ ⠁⠎ ⠍⠕⠙⠊⠋⠊⠑⠙ ⠁⠝⠙ ⠎⠓⠕⠺ “⠙⠁⠍⠁⠛⠑⠙” ⠕⠗ “⠉⠁⠝⠄⠞ ⠃⠑ ⠕⠏⠑⠝⠑⠙” ⠊⠝ ⠠⠋⠊⠝⠙⠑⠗⠲\n\n⠠⠺⠊⠞⠓ ⠞⠓⠊⠎ ⠕⠏⠞⠊⠕⠝ ⠑⠝⠁⠃⠇⠑⠙⠂ ⠠⠁⠏⠏⠠⠏⠕⠗⠞⠎ ⠁⠏⠏⠇⠊⠑⠎ ⠁⠝ **⠁⠙⠤⠓⠕⠉ ⠎⠊⠛⠝⠁⠞⠥⠗⠑** ⠞⠕ ⠞⠓⠑ ⠁⠎⠎⠕⠉⠊⠁⠞⠑⠙ ⠁⠏⠏ ⠁⠋⠞⠑⠗ ⠙⠁⠞⠁ ⠍⠊⠛⠗⠁⠞⠊⠕⠝ ⠞⠕ ⠃⠽⠏⠁⠎⠎ ⠞⠓⠊⠎ ⠉⠓⠑⠉⠅⠲\n\n**⠠⠥⠎⠥⠁⠇⠇⠽ ⠝⠕⠞ ⠝⠑⠑⠙⠑⠙⠲** ⠠⠗⠑⠤⠎⠊⠛⠝⠊⠝⠛ ⠗⠑⠏⠇⠁⠉⠑⠎ ⠞⠓⠑ ⠙⠑⠧⠑⠇⠕⠏⠑⠗ ⠎⠊⠛⠝⠁⠞⠥⠗⠑ ⠁⠝⠙ ⠗⠑⠍⠕⠧⠑⠎ ⠎⠕⠍⠑ ⠑⠝⠞⠊⠞⠇⠑⠍⠑⠝⠞⠎⠲ ⠠⠞⠓⠊⠎ ⠧⠑⠗⠎⠊⠕⠝ ⠎⠁⠧⠑⠎ ⠁ ⠉⠕⠍⠏⠇⠑⠞⠑ ⠕⠗⠊⠛⠊⠝⠁⠇ ⠉⠕⠏⠽ ⠋⠊⠗⠎⠞⠲ ⠠⠗⠑⠎⠞⠕⠗⠑ ⠠⠕⠗⠊⠛⠊⠝⠁⠇ ⠠⠎⠊⠛⠝⠁⠞⠥⠗⠑ ⠗⠑⠎⠞⠕⠗⠑⠎ ⠊⠞ ⠺⠊⠞⠓⠕⠥⠞ ⠞⠓⠑ ⠙⠑⠧⠑⠇⠕⠏⠑⠗⠄⠎ ⠏⠗⠊⠧⠁⠞⠑ ⠅⠑⠽⠲\n\n**⠠⠎⠁⠝⠙⠃⠕⠭⠑⠙ ⠁⠏⠏⠎ ⠁⠗⠑ ⠝⠕⠞ ⠗⠑⠤⠎⠊⠛⠝⠑⠙ ⠃⠽ ⠙⠑⠋⠁⠥⠇⠞**⠒ ⠉⠇⠁⠎⠎⠊⠉ ⠍⠕⠙⠑ ⠗⠑⠟⠥⠊⠗⠑⠎ ⠉⠕⠝⠋⠊⠗⠍⠁⠞⠊⠕⠝⠂ ⠁⠝⠙ ⠞⠓⠑ ⠁⠏⠏ ⠍⠁⠽ ⠋⠁⠊⠇ ⠞⠕ ⠇⠁⠥⠝⠉⠓ ⠁⠋⠞⠑⠗ ⠁ ⠍⠁⠉⠠⠕⠠⠎ ⠥⠏⠛⠗⠁⠙⠑⠲ ⠠⠗⠑⠎⠞⠕⠗⠑ ⠉⠕⠝⠞⠁⠊⠝⠑⠗ ⠙⠁⠞⠁ ⠍⠊⠛⠗⠁⠞⠑⠙ ⠺⠊⠞⠓ ⠉⠇⠁⠎⠎⠊⠉ ⠍⠕⠙⠑ ⠃⠑⠋⠕⠗⠑ ⠗⠑⠎⠞⠕⠗⠊⠝⠛ ⠊⠞⠎ ⠎⠊⠛⠝⠁⠞⠥⠗⠑⠲ ⠠⠏⠗⠑⠋⠑⠗ ⠠⠍⠕⠥⠝⠞ ⠠⠍⠊⠛⠗⠁⠞⠊⠕⠝ ⠋⠕⠗ ⠉⠕⠝⠞⠁⠊⠝⠑⠗ ⠙⠁⠞⠁⠲"
+            "value" : "**⠠⠺⠓⠁⠞ ⠊⠎ ⠗⠑⠤⠎⠊⠛⠝⠊⠝⠛⠦**\n\n⠠⠍⠕⠧⠊⠝⠛ ⠙⠁⠞⠁ ⠙⠊⠗⠑⠉⠞⠕⠗⠊⠑⠎ ⠕⠥⠞⠎⠊⠙⠑ ⠞⠓⠑ ⠁⠏⠏ ⠃⠥⠝⠙⠇⠑ ⠙⠕⠑⠎ ⠝⠕⠞ ⠉⠓⠁⠝⠛⠑ ⠞⠓⠑ ⠁⠏⠏⠄⠎ ⠉⠕⠙⠑ ⠎⠊⠛⠝⠁⠞⠥⠗⠑⠂ ⠎⠕ ⠗⠑⠤⠎⠊⠛⠝⠊⠝⠛ ⠊⠎ ⠥⠎⠥⠁⠇⠇⠽ ⠥⠝⠝⠑⠉⠑⠎⠎⠁⠗⠽⠲\n\n⠠⠞⠓⠊⠎ ⠕⠏⠞⠊⠕⠝ ⠕⠝⠇⠽ ⠁⠏⠏⠇⠊⠑⠎ ⠊⠝ ⠉⠇⠁⠎⠎⠊⠉ ⠍⠕⠙⠑⠲ ⠠⠺⠓⠑⠝ ⠑⠝⠁⠃⠇⠑⠙⠂ ⠠⠁⠏⠏⠠⠏⠕⠗⠞⠎ ⠋⠊⠗⠎⠞ ⠃⠁⠉⠅⠎ ⠥⠏ ⠞⠓⠑ ⠉⠕⠍⠏⠇⠑⠞⠑ ⠁⠎⠎⠕⠉⠊⠁⠞⠑⠙ ⠁⠏⠏⠂ ⠞⠓⠑⠝ ⠁⠏⠏⠇⠊⠑⠎ ⠁⠝ **⠁⠙⠤⠓⠕⠉ ⠎⠊⠛⠝⠁⠞⠥⠗⠑** ⠁⠋⠞⠑⠗ ⠙⠁⠞⠁ ⠍⠊⠛⠗⠁⠞⠊⠕⠝ ⠁⠎ ⠁ ⠉⠕⠍⠏⠁⠞⠊⠃⠊⠇⠊⠞⠽ ⠍⠑⠁⠎⠥⠗⠑ ⠑⠭⠏⠇⠊⠉⠊⠞⠇⠽ ⠉⠓⠕⠎⠑⠝ ⠃⠽ ⠞⠓⠑ ⠥⠎⠑⠗⠲\n\n**⠠⠥⠎⠥⠁⠇⠇⠽ ⠝⠕⠞ ⠝⠑⠑⠙⠑⠙⠲** ⠠⠗⠑⠤⠎⠊⠛⠝⠊⠝⠛ ⠗⠑⠏⠇⠁⠉⠑⠎ ⠞⠓⠑ ⠙⠑⠧⠑⠇⠕⠏⠑⠗ ⠎⠊⠛⠝⠁⠞⠥⠗⠑ ⠁⠝⠙ ⠗⠑⠍⠕⠧⠑⠎ ⠎⠕⠍⠑ ⠑⠝⠞⠊⠞⠇⠑⠍⠑⠝⠞⠎⠲ ⠠⠞⠓⠊⠎ ⠧⠑⠗⠎⠊⠕⠝ ⠎⠁⠧⠑⠎ ⠁ ⠉⠕⠍⠏⠇⠑⠞⠑ ⠕⠗⠊⠛⠊⠝⠁⠇ ⠉⠕⠏⠽ ⠋⠊⠗⠎⠞⠲ ⠠⠗⠑⠎⠞⠕⠗⠑ ⠠⠕⠗⠊⠛⠊⠝⠁⠇ ⠠⠎⠊⠛⠝⠁⠞⠥⠗⠑ ⠗⠑⠎⠞⠕⠗⠑⠎ ⠊⠞ ⠺⠊⠞⠓⠕⠥⠞ ⠞⠓⠑ ⠙⠑⠧⠑⠇⠕⠏⠑⠗⠄⠎ ⠏⠗⠊⠧⠁⠞⠑ ⠅⠑⠽⠲\n\n**⠠⠎⠁⠝⠙⠃⠕⠭⠑⠙ ⠁⠏⠏⠎ ⠁⠗⠑ ⠝⠕⠞ ⠗⠑⠤⠎⠊⠛⠝⠑⠙ ⠃⠽ ⠙⠑⠋⠁⠥⠇⠞**⠒ ⠉⠇⠁⠎⠎⠊⠉ ⠍⠕⠙⠑ ⠗⠑⠟⠥⠊⠗⠑⠎ ⠉⠕⠝⠋⠊⠗⠍⠁⠞⠊⠕⠝⠂ ⠁⠝⠙ ⠞⠓⠑ ⠁⠏⠏ ⠍⠁⠽ ⠋⠁⠊⠇ ⠞⠕ ⠇⠁⠥⠝⠉⠓ ⠁⠋⠞⠑⠗ ⠁ ⠍⠁⠉⠠⠕⠠⠎ ⠥⠏⠛⠗⠁⠙⠑⠲ ⠠⠗⠑⠎⠞⠕⠗⠑ ⠉⠕⠝⠞⠁⠊⠝⠑⠗ ⠙⠁⠞⠁ ⠍⠊⠛⠗⠁⠞⠑⠙ ⠺⠊⠞⠓ ⠉⠇⠁⠎⠎⠊⠉ ⠍⠕⠙⠑ ⠃⠑⠋⠕⠗⠑ ⠗⠑⠎⠞⠕⠗⠊⠝⠛ ⠊⠞⠎ ⠎⠊⠛⠝⠁⠞⠥⠗⠑⠲ ⠠⠏⠗⠑⠋⠑⠗ ⠠⠍⠕⠥⠝⠞ ⠠⠍⠊⠛⠗⠁⠞⠊⠕⠝ ⠋⠕⠗ ⠉⠕⠝⠞⠁⠊⠝⠑⠗ ⠙⠁⠞⠁⠲"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Was bedeutet erneutes Signieren?**\n\nNach der Migration eines Datenordners auf externen Speicher kann macOS die App als verändert einstufen und im Finder „beschädigt“ oder „kann nicht geöffnet werden“ anzeigen.\n\nWenn diese Option aktiviert ist, versieht AppPorts die zugehörige App nach der Datenmigration automatisch mit einer **Ad-hoc-Selbstsignatur**, um diese Einschränkung zu umgehen.\n\n**Normalerweise nicht erforderlich.** Eine erneute Signierung ersetzt die Entwicklersignatur der App und entfernt einige Berechtigungen. Die neue Version speichert zuerst die vollständige Original-App. Mit „Originalsignatur wiederherstellen“ kannst du sie ohne den privaten Schlüssel des Entwicklers wiederherstellen.\n\n**Sandbox-Apps werden standardmäßig nicht neu signiert.** Im klassischen Modus musst du die Risiken bestätigen; nach einem Systemupgrade startet die App möglicherweise nicht mehr. Stelle vor der Signatur zuerst die im klassischen Modus migrierten Containerdaten wieder her. Verwende für Containerdaten vorzugsweise „Mount-Migration“."
+            "value" : "**Was bedeutet erneutes Signieren?**\n\nDas Verschieben von Datenordnern außerhalb des App-Bundles verändert die Codesignatur der App nicht. Eine erneute Signierung ist daher normalerweise nicht nötig.\n\nDiese Option gilt nur im klassischen Modus. Wenn sie aktiviert ist, sichert AppPorts zuerst die vollständige zugehörige App und versieht sie nach der Datenmigration mit einer **Ad-hoc-Signatur** als vom Benutzer ausdrücklich gewählten Kompatibilitätsversuch.\n\n**Normalerweise nicht erforderlich.** Eine erneute Signierung ersetzt die Entwicklersignatur der App und entfernt einige Berechtigungen. Die neue Version speichert zuerst die vollständige Original-App. Mit „Originalsignatur wiederherstellen“ kannst du sie ohne den privaten Schlüssel des Entwicklers wiederherstellen.\n\n**Sandbox-Apps werden standardmäßig nicht neu signiert.** Im klassischen Modus musst du die Risiken bestätigen; nach einem Systemupgrade startet die App möglicherweise nicht mehr. Stelle vor der Signatur zuerst die im klassischen Modus migrierten Containerdaten wieder her. Verwende für Containerdaten vorzugsweise „Mount-Migration“."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**What is re-signing?**\n\nAfter a data directory is migrated to external storage, macOS may treat the app as modified and show “damaged” or “can't be opened” in Finder.\n\nWith this option enabled, AppPorts applies an **ad-hoc signature** to the associated app after data migration to bypass this check.\n\n**Usually not needed.** Re-signing replaces the developer signature and removes some entitlements. This version saves a complete original copy first. Restore Original Signature restores it without the developer's private key.\n\n**Sandboxed apps are not re-signed by default**: classic mode requires confirmation, and the app may fail to launch after a macOS upgrade. Restore container data migrated with classic mode before restoring its signature. Prefer Mount Migration for container data."
+            "value" : "**What is re-signing?**\n\nMoving data directories outside the app bundle does not change the app's code signature, so re-signing is usually unnecessary.\n\nThis option only applies in classic mode. When enabled, AppPorts first backs up the complete associated app, then applies an **ad-hoc signature** after data migration as a compatibility measure explicitly chosen by the user.\n\n**Usually not needed.** Re-signing replaces the developer signature and removes some entitlements. This version saves a complete original copy first. Restore Original Signature restores it without the developer's private key.\n\n**Sandboxed apps are not re-signed by default**: classic mode requires confirmation, and the app may fail to launch after a macOS upgrade. Restore container data migrated with classic mode before restoring its signature. Prefer Mount Migration for container data."
           }
         },
         "eo" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Kio estas resubskribo?**\n\nPost migrado de datumdosierujo al ekstera konservilo, macOS eble konsideros la aplikaĵon ŝanĝita kaj montros “difektita” aŭ “ne povas esti malfermita” en Finder.\n\nKun ĉi tiu opcio ebligita, AppPorts aŭtomate aplikas **memsubskribon Ad-hoc** al la rilata aplikaĵo post datummigrado por preteriri ĉi tiun limigon.\n\n**Kutime ne necesas ebligi ĝin.** Resubskribo anstataŭigas la programistan subskribon kaj forigas iujn rajtigojn. La nova versio unue konservas la kompletan originan aplikaĵon. “Restaŭri originan subskribon” povas restaŭri ĝin sen la privata ŝlosilo de la programisto.\n\n**Izolitaj aplikaĵoj defaŭlte ne estas resubskribataj**: klasika reĝimo postulas konfirmon de la riskoj, kaj la aplikaĵo eble ne lanĉiĝos post sistemĝisdatigo. Restarigu la ujajn datumojn migrigitajn en klasika reĝimo antaŭ ol restaŭri la subskribon; preferu “Migrado per muntado” por ujaj datumoj."
+            "value" : "**Kio estas resubskribo?**\n\nMigrado de datumdosierujoj ekster la aplikaĵa pakaĵo ne ŝanĝas la kodsubskribon de la aplikaĵo, do resubskribo kutime ne necesas.\n\nĈi tiu opcio efikas nur en klasika reĝimo. Se ĝi estas ebligita, AppPorts unue sekurkopias la tutan rilatan aplikaĵon kaj poste aplikas **memsubskribon Ad-hoc** post datummigrado, kiel kongruecan provon eksplicite elektitan de la uzanto.\n\n**Kutime ne necesas ebligi ĝin.** Resubskribo anstataŭigas la programistan subskribon kaj forigas iujn rajtigojn. La nova versio unue konservas la kompletan originan aplikaĵon. “Restaŭri originan subskribon” povas restaŭri ĝin sen la privata ŝlosilo de la programisto.\n\n**Izolitaj aplikaĵoj defaŭlte ne estas resubskribataj**: klasika reĝimo postulas konfirmon de la riskoj, kaj la aplikaĵo eble ne lanĉiĝos post sistemĝisdatigo. Restarigu la ujajn datumojn migrigitajn en klasika reĝimo antaŭ ol restaŭri la subskribon; preferu “Migrado per muntado” por ujaj datumoj."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**¿Qué significa volver a firmar?**\n\nTras migrar una carpeta de datos al almacenamiento externo, macOS puede considerar que la app se ha modificado y mostrar «está dañada» o «no se puede abrir» en Finder.\n\nSi activas esta opción, AppPorts aplicará automáticamente una **autofirma Ad-hoc** a la app asociada cuando termine la migración de datos para evitar esta restricción.\n\n**Normalmente no es necesario activarla.** Volver a firmar sustituye la firma del desarrollador de la app y elimina algunos permisos. La nueva versión guarda primero la app original completa. Puedes recuperarla con «Restaurar firma original» sin necesidad de la clave privada del desarrollador.\n\n**Las apps aisladas no se vuelven a firmar de forma predeterminada.** El modo clásico requiere confirmar los riesgos y la app podría no iniciarse tras actualizar el sistema. Antes de restaurar la firma, restaura los datos del contenedor migrados en modo clásico. Prioriza «Migración por montaje» para los datos del contenedor."
+            "value" : "**¿Qué significa volver a firmar?**\n\nMover carpetas de datos externas al paquete de la app no modifica su firma de código, por lo que normalmente no es necesario volver a firmarla.\n\nEsta opción solo se aplica en el modo clásico. Al activarla, AppPorts crea primero una copia completa de la app asociada y después aplica una **firma Ad-hoc** al terminar la migración de datos, como una medida de compatibilidad elegida expresamente por el usuario.\n\n**Normalmente no es necesario activarla.** Volver a firmar sustituye la firma del desarrollador de la app y elimina algunos permisos. La nueva versión guarda primero la app original completa. Puedes recuperarla con «Restaurar firma original» sin necesidad de la clave privada del desarrollador.\n\n**Las apps aisladas no se vuelven a firmar de forma predeterminada.** El modo clásico requiere confirmar los riesgos y la app podría no iniciarse tras actualizar el sistema. Antes de restaurar la firma, restaura los datos del contenedor migrados en modo clásico. Prioriza «Migración por montaje» para los datos del contenedor."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Qu’est-ce que la re-signature ?**\n\nAprès la migration d’un dossier de données vers un stockage externe, macOS peut considérer l’app comme modifiée et afficher « endommagée » ou « impossible à ouvrir » dans le Finder.\n\nLorsque cette option est activée, AppPorts applique automatiquement une **autosignature Ad-hoc** à l’app associée après la migration des données pour contourner cette restriction.\n\n**Cette option est généralement inutile.** La re-signature remplace la signature du développeur et supprime certains droits. La nouvelle version enregistre d’abord l’app d’origine complète. « Restaurer la signature originale » permet de la restaurer sans la clé privée du développeur.\n\n**Les apps en bac à sable ne sont pas re-signées par défaut.** Le mode classique exige de confirmer les risques, et l’app peut ne plus démarrer après une mise à niveau du système. Avant de restaurer la signature, restaurez les données du conteneur migrées en mode classique. Privilégiez « Migration par montage » pour les données du conteneur."
+            "value" : "**Qu’est-ce que la re-signature ?**\n\nDéplacer des dossiers de données situés en dehors du paquet de l’app ne modifie pas sa signature de code. Il est donc généralement inutile de la signer à nouveau.\n\nCette option s’applique uniquement en mode classique. Si elle est activée, AppPorts sauvegarde d’abord l’app associée complète, puis applique une **signature Ad-hoc** après la migration des données, comme essai de compatibilité choisi explicitement par l’utilisateur.\n\n**Cette option est généralement inutile.** La re-signature remplace la signature du développeur et supprime certains droits. La nouvelle version enregistre d’abord l’app d’origine complète. « Restaurer la signature originale » permet de la restaurer sans la clé privée du développeur.\n\n**Les apps en bac à sable ne sont pas re-signées par défaut.** Le mode classique exige de confirmer les risques, et l’app peut ne plus démarrer après une mise à niveau du système. Avant de restaurer la signature, restaurez les données du conteneur migrées en mode classique. Privilégiez « Migration par montage » pour les données du conteneur."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**पुनः हस्ताक्षर क्या है?**\n\nडेटा डायरेक्ट्री बाहरी स्टोरेज पर माइग्रेट होने के बाद macOS ऐप को बदला हुआ मान सकता है और Finder में “क्षतिग्रस्त है” या “खोला नहीं जा सकता” दिखा सकता है।\n\nयह विकल्प चालू होने पर डेटा माइग्रेशन पूरा होने के बाद AppPorts संबंधित ऐप पर अपने आप **Ad-hoc स्व-हस्ताक्षर** करता है, ताकि इस प्रतिबंध से बचा जा सके।\n\n**आमतौर पर इसे चालू करने की ज़रूरत नहीं होती।** पुनः हस्ताक्षर से ऐप के डेवलपर के हस्ताक्षर बदल जाते हैं और कुछ अधिकार हट जाते हैं। नया संस्करण पहले पूरा मूल ऐप सहेजता है। “मूल हस्ताक्षर पुनर्स्थापित करें” से उसे बहाल कर सकते हैं; डेवलपर की निजी कुंजी की ज़रूरत नहीं होती।\n\n**डिफ़ॉल्ट रूप से सैंडबॉक्स ऐप को पुनः हस्ताक्षरित नहीं किया जाता**: क्लासिक मोड में जोखिमों की पुष्टि ज़रूरी है और सिस्टम अपग्रेड के बाद शायद ऐप शुरू न हो। हस्ताक्षर पुनर्स्थापित करने से पहले क्लासिक मोड से माइग्रेट किया गया कंटेनर डेटा पुनर्स्थापित करें। कंटेनर डेटा के लिए “माउंट द्वारा माइग्रेशन” को प्राथमिकता दें।"
+            "value" : "**पुनः हस्ताक्षर क्या है?**\n\nऐप बंडल के बाहर मौजूद डेटा डायरेक्ट्री को स्थानांतरित करने से ऐप का कोड हस्ताक्षर नहीं बदलता, इसलिए आम तौर पर पुनः हस्ताक्षर की आवश्यकता नहीं होती।\n\nयह विकल्प केवल क्लासिक मोड में लागू होता है। इसे चालू करने पर AppPorts पहले संबंधित ऐप का पूरा बैकअप लेता है, फिर डेटा माइग्रेशन के बाद **Ad-hoc स्व-हस्ताक्षर** करता है। यह उपयोगकर्ता द्वारा स्पष्ट रूप से चुना गया अनुकूलता का प्रयास है।\n\n**आमतौर पर इसे चालू करने की ज़रूरत नहीं होती।** पुनः हस्ताक्षर से ऐप के डेवलपर के हस्ताक्षर बदल जाते हैं और कुछ अधिकार हट जाते हैं। नया संस्करण पहले पूरा मूल ऐप सहेजता है। “मूल हस्ताक्षर पुनर्स्थापित करें” से उसे बहाल कर सकते हैं; डेवलपर की निजी कुंजी की ज़रूरत नहीं होती।\n\n**डिफ़ॉल्ट रूप से सैंडबॉक्स ऐप को पुनः हस्ताक्षरित नहीं किया जाता**: क्लासिक मोड में जोखिमों की पुष्टि ज़रूरी है और सिस्टम अपग्रेड के बाद शायद ऐप शुरू न हो। हस्ताक्षर पुनर्स्थापित करने से पहले क्लासिक मोड से माइग्रेट किया गया कंटेनर डेटा पुनर्स्थापित करें। कंटेनर डेटा के लिए “माउंट द्वारा माइग्रेशन” को प्राथमिकता दें।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Apa itu penandatanganan ulang?**\n\nSetelah direktori data dimigrasikan ke penyimpanan eksternal, macOS mungkin menganggap app telah diubah dan menampilkan pesan “rusak” atau “tidak dapat dibuka” di Finder.\n\nJika opsi ini diaktifkan, AppPorts akan otomatis menerapkan **tanda tangan mandiri Ad-hoc** ke app terkait setelah migrasi data selesai untuk melewati pembatasan ini.\n\n**Biasanya tidak perlu diaktifkan.** Penandatanganan ulang mengganti tanda tangan pengembang app dan menghapus sebagian hak. Versi baru menyimpan app asli secara lengkap terlebih dahulu; gunakan “Pulihkan tanda tangan asli” untuk memulihkannya tanpa kunci pribadi pengembang.\n\n**App dalam sandbox tidak ditandatangani ulang secara default**: mode klasik memerlukan konfirmasi risiko, dan app mungkin tidak dapat dijalankan setelah peningkatan sistem. Pulihkan data kontainer yang dimigrasikan dengan mode klasik sebelum memulihkan tanda tangan; utamakan “Migrasi dengan pemasangan” untuk data kontainer."
+            "value" : "**Apa itu penandatanganan ulang?**\n\nMemindahkan direktori data di luar bundel aplikasi tidak mengubah tanda tangan kode aplikasi, sehingga penandatanganan ulang biasanya tidak diperlukan.\n\nOpsi ini hanya berlaku dalam mode klasik. Jika diaktifkan, AppPorts terlebih dahulu mencadangkan seluruh aplikasi terkait, lalu menerapkan **tanda tangan Ad-hoc** setelah migrasi data sebagai upaya kompatibilitas yang dipilih secara eksplisit oleh pengguna.\n\n**Biasanya tidak perlu diaktifkan.** Penandatanganan ulang mengganti tanda tangan pengembang app dan menghapus sebagian hak. Versi baru menyimpan app asli secara lengkap terlebih dahulu; gunakan “Pulihkan tanda tangan asli” untuk memulihkannya tanpa kunci pribadi pengembang.\n\n**App dalam sandbox tidak ditandatangani ulang secara default**: mode klasik memerlukan konfirmasi risiko, dan app mungkin tidak dapat dijalankan setelah peningkatan sistem. Pulihkan data kontainer yang dimigrasikan dengan mode klasik sebelum memulihkan tanda tangan; utamakan “Migrasi dengan pemasangan” untuk data kontainer."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Cosa significa rifirmare un’app?**\n\nDopo la migrazione di una cartella dati sull’unità esterna, macOS potrebbe considerare l’app modificata e mostrare “è danneggiata” o “non può essere aperta” nel Finder.\n\nCon questa opzione attiva, AppPorts applica automaticamente una **firma autofirmata Ad-hoc** all’app associata dopo la migrazione dei dati, per aggirare questa limitazione.\n\n**Di solito non serve attivarla.** Rifirmare sostituisce la firma dello sviluppatore e rimuove alcune autorizzazioni. Questa versione salva prima una copia completa dell’app originale, ripristinabile con “Ripristina firma originale” senza la chiave privata dello sviluppatore.\n\n**Le app in sandbox non vengono rifirmate per impostazione predefinita**: in modalità classica occorre accettare i rischi e l’app potrebbe non avviarsi dopo un aggiornamento del sistema. Prima di ripristinare la firma, ripristina i dati dei contenitori migrati in modalità classica. Per i dati dei contenitori, preferisci “Migrazione tramite montaggio”."
+            "value" : "**Cosa significa rifirmare un’app?**\n\nSpostare cartelle di dati esterne al pacchetto dell’app non modifica la firma del codice dell’app, quindi in genere non è necessario firmarla nuovamente.\n\nQuesta opzione si applica solo in modalità classica. Se attivata, AppPorts esegue prima un backup completo dell’app associata, poi applica una **firma Ad-hoc** dopo la migrazione dei dati, come tentativo di compatibilità scelto esplicitamente dall’utente.\n\n**Di solito non serve attivarla.** Rifirmare sostituisce la firma dello sviluppatore e rimuove alcune autorizzazioni. Questa versione salva prima una copia completa dell’app originale, ripristinabile con “Ripristina firma originale” senza la chiave privata dello sviluppatore.\n\n**Le app in sandbox non vengono rifirmate per impostazione predefinita**: in modalità classica occorre accettare i rischi e l’app potrebbe non avviarsi dopo un aggiornamento del sistema. Prima di ripristinare la firma, ripristina i dati dei contenitori migrati in modalità classica. Per i dati dei contenitori, preferisci “Migrazione tramite montaggio”."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**再署名とは？**\n\nデータディレクトリを外部ストレージに移行すると、macOS がアプリを改変されたものと見なし、Finder で「壊れています」や「開けません」と表示することがあります。\n\nこのオプションをオンにすると、AppPorts はデータの移行後に関連するアプリへ自動で **Ad-hoc 自己署名** を行い、この制限を回避します。\n\n**通常はオンにする必要はありません。** 再署名はアプリの開発元の署名を置き換え、一部の権限を削除します。このバージョンでは先に元のアプリ全体を保存するため、「元の署名を復元」で元に戻せます。開発元の秘密鍵は必要ありません。\n\n**サンドボックスアプリはデフォルトでは再署名しません**：クラシックモードではリスクの確認が必要で、システムのアップグレード後にアプリが起動できなくなる場合があります。署名を復元する前に、クラシックモードで移行したコンテナデータを復元してください。コンテナデータには「マウント移行」を優先して使用してください。"
+            "value" : "**再署名とは？**\n\nアプリのバンドル外にあるデータディレクトリを移行しても、アプリのコード署名は変わらないため、通常は再署名は不要です。\n\nこのオプションはクラシックモードでのみ有効です。有効にすると、AppPorts はまず関連アプリ全体をバックアップし、データ移行後に **Ad-hoc 自己署名** を適用します。これはユーザーが明示的に選択する互換性対策です。\n\n**通常はオンにする必要はありません。** 再署名はアプリの開発元の署名を置き換え、一部の権限を削除します。このバージョンでは先に元のアプリ全体を保存するため、「元の署名を復元」で元に戻せます。開発元の秘密鍵は必要ありません。\n\n**サンドボックスアプリはデフォルトでは再署名しません**：クラシックモードではリスクの確認が必要で、システムのアップグレード後にアプリが起動できなくなる場合があります。署名を復元する前に、クラシックモードで移行したコンテナデータを復元してください。コンテナデータには「マウント移行」を優先して使用してください。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**재서명이란?**\n\n데이터 디렉토리를 외장 저장 장치로 마이그레이션하면 macOS가 앱이 수정되었다고 판단하여 Finder에 “손상됨” 또는 “열 수 없음”을 표시할 수 있습니다.\n\n이 옵션을 켜면 AppPorts가 데이터 마이그레이션을 마친 후 연결된 앱에 자동으로 **Ad-hoc 자체 서명**을 적용하여 이 제한을 우회합니다.\n\n**일반적으로 켤 필요가 없습니다.** 재서명은 앱의 개발자 서명을 교체하고 일부 권한을 제거합니다. 새 버전에서는 원본 앱 전체를 먼저 저장하므로 “원본 서명 복원”으로 복원할 수 있으며 개발자의 개인 키가 필요하지 않습니다.\n\n**샌드박스 앱은 기본적으로 재서명하지 않습니다.** 클래식 모드는 위험 확인이 필요하며 시스템 업그레이드 후 앱이 실행되지 않을 수 있습니다. 서명을 복원하기 전에 클래식 모드로 마이그레이션한 컨테이너 데이터를 먼저 복원하세요. 컨테이너 데이터에는 “마운트 마이그레이션”을 우선 사용하세요."
+            "value" : "**재서명이란?**\n\n앱 번들 외부의 데이터 디렉터리를 이동해도 앱의 코드 서명은 변경되지 않으므로 일반적으로 다시 서명할 필요가 없습니다.\n\n이 옵션은 클래식 모드에서만 적용됩니다. 활성화하면 AppPorts가 먼저 관련 앱 전체를 백업한 다음 데이터 이동 후 **Ad-hoc 자체 서명**을 적용합니다. 이는 사용자가 명시적으로 선택하는 호환성 조치입니다.\n\n**일반적으로 켤 필요가 없습니다.** 재서명은 앱의 개발자 서명을 교체하고 일부 권한을 제거합니다. 새 버전에서는 원본 앱 전체를 먼저 저장하므로 “원본 서명 복원”으로 복원할 수 있으며 개발자의 개인 키가 필요하지 않습니다.\n\n**샌드박스 앱은 기본적으로 재서명하지 않습니다.** 클래식 모드는 위험 확인이 필요하며 시스템 업그레이드 후 앱이 실행되지 않을 수 있습니다. 서명을 복원하기 전에 클래식 모드로 마이그레이션한 컨테이너 데이터를 먼저 복원하세요. 컨테이너 데이터에는 “마운트 마이그레이션”을 우선 사용하세요."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Wat is opnieuw ondertekenen?**\n\nNadat een gegevensmap naar externe opslag is gemigreerd, kan macOS de app als gewijzigd beschouwen en in Finder melden dat deze ‘beschadigd is’ of ‘niet kan worden geopend’.\n\nAls deze optie is ingeschakeld, past AppPorts na de gegevensmigratie automatisch een **zelfondertekende Ad-hoc-handtekening** toe op de gekoppelde app om deze beperking te omzeilen.\n\n**Inschakelen is meestal niet nodig.** Opnieuw ondertekenen vervangt de handtekening van de ontwikkelaar en verwijdert bepaalde rechten. Deze versie bewaart eerst een volledige kopie van de oorspronkelijke app. Met ‘Oorspronkelijke handtekening herstellen’ zet je die terug zonder de privésleutel van de ontwikkelaar.\n\n**Sandbox-apps worden standaard niet opnieuw ondertekend**: in de klassieke modus moet je de risico’s bevestigen en kan de app na een systeemupgrade niet meer starten. Herstel vóór de handtekening eerst de containergegevens die in de klassieke modus zijn gemigreerd. Gebruik bij voorkeur ‘Migratie via aankoppelen’ voor containergegevens."
+            "value" : "**Wat is opnieuw ondertekenen?**\n\nHet verplaatsen van gegevensmappen buiten de appbundel verandert de codehandtekening van de app niet. Opnieuw ondertekenen is daarom meestal niet nodig.\n\nDeze optie geldt alleen in de klassieke modus. Als deze is ingeschakeld, maakt AppPorts eerst een volledige reservekopie van de bijbehorende app en past daarna, na de gegevensmigratie, een **ad-hochandtekening** toe als een door de gebruiker uitdrukkelijk gekozen compatibiliteitspoging.\n\n**Inschakelen is meestal niet nodig.** Opnieuw ondertekenen vervangt de handtekening van de ontwikkelaar en verwijdert bepaalde rechten. Deze versie bewaart eerst een volledige kopie van de oorspronkelijke app. Met ‘Oorspronkelijke handtekening herstellen’ zet je die terug zonder de privésleutel van de ontwikkelaar.\n\n**Sandbox-apps worden standaard niet opnieuw ondertekend**: in de klassieke modus moet je de risico’s bevestigen en kan de app na een systeemupgrade niet meer starten. Herstel vóór de handtekening eerst de containergegevens die in de klassieke modus zijn gemigreerd. Gebruik bij voorkeur ‘Migratie via aankoppelen’ voor containergegevens."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Czym jest ponowne podpisywanie?**\n\nPo migracji folderu danych na nośnik zewnętrzny macOS może uznać aplikację za zmodyfikowaną i wyświetlić w aplikacji Finder komunikat „jest uszkodzona” lub „nie można otworzyć”.\n\nGdy ta opcja jest włączona, AppPorts po migracji danych automatycznie stosuje do powiązanej aplikacji **własny podpis Ad-hoc**, aby ominąć to ograniczenie.\n\n**Zwykle nie trzeba włączać tej opcji.** Ponowne podpisanie zastępuje podpis dewelopera i usuwa część uprawnień. Nowa wersja najpierw zachowuje pełną kopię oryginalnej aplikacji. Można ją przywrócić poleceniem „Przywróć oryginalny podpis” bez klucza prywatnego dewelopera.\n\n**Aplikacje w piaskownicy domyślnie nie są podpisywane ponownie**: tryb klasyczny wymaga potwierdzenia zagrożeń, a po aktualizacji systemu aplikacja może się nie uruchamiać. Przed przywróceniem podpisu przywróć dane kontenerów zmigrowane w trybie klasycznym. Dla danych kontenerów zalecamy opcję „Migracja przez montowanie”."
+            "value" : "**Czym jest ponowne podpisywanie?**\n\nPrzenoszenie katalogów danych znajdujących się poza pakietem aplikacji nie zmienia jej podpisu kodu, więc ponowne podpisywanie zwykle nie jest potrzebne.\n\nTa opcja działa tylko w trybie klasycznym. Po jej włączeniu AppPorts najpierw tworzy pełną kopię zapasową powiązanej aplikacji, a po migracji danych stosuje **podpis Ad-hoc** jako próbę zapewnienia zgodności wybraną świadomie przez użytkownika.\n\n**Zwykle nie trzeba włączać tej opcji.** Ponowne podpisanie zastępuje podpis dewelopera i usuwa część uprawnień. Nowa wersja najpierw zachowuje pełną kopię oryginalnej aplikacji. Można ją przywrócić poleceniem „Przywróć oryginalny podpis” bez klucza prywatnego dewelopera.\n\n**Aplikacje w piaskownicy domyślnie nie są podpisywane ponownie**: tryb klasyczny wymaga potwierdzenia zagrożeń, a po aktualizacji systemu aplikacja może się nie uruchamiać. Przed przywróceniem podpisu przywróć dane kontenerów zmigrowane w trybie klasycznym. Dla danych kontenerów zalecamy opcję „Migracja przez montowanie”."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**O que é reassinar?**\n\nApós migrar uma pasta de dados para o armazenamento externo, o macOS pode considerar que o app foi modificado e mostrar “está danificado” ou “não pode ser aberto” no Finder.\n\nCom esta opção ativada, o AppPorts aplica automaticamente uma **assinatura própria Ad-hoc** ao app associado após a migração dos dados para contornar essa restrição.\n\n**Geralmente não é necessário ativar esta opção.** Reassinar substitui a assinatura do desenvolvedor e remove alguns direitos. Esta versão salva primeiro uma cópia completa do app original, que pode ser restaurada com “Restaurar assinatura original”, sem a chave privada do desenvolvedor.\n\n**Apps em sandbox não são reassinados por padrão**: o modo clássico exige confirmação dos riscos, e o app pode não iniciar após uma atualização do sistema. Antes de restaurar a assinatura, restaure os dados de contêineres migrados no modo clássico. Para dados de contêineres, prefira “Migração por montagem”."
+            "value" : "**O que é reassinar?**\n\nMover pastas de dados que ficam fora do pacote do app não altera a assinatura de código do app, por isso geralmente não é necessário reassinar.\n\nEsta opção só se aplica no modo clássico. Quando ativada, o AppPorts primeiro faz um backup completo do app associado e depois aplica uma **assinatura Ad-hoc** após a migração dos dados, como uma tentativa de compatibilidade escolhida explicitamente pelo usuário.\n\n**Geralmente não é necessário ativar esta opção.** Reassinar substitui a assinatura do desenvolvedor e remove alguns direitos. Esta versão salva primeiro uma cópia completa do app original, que pode ser restaurada com “Restaurar assinatura original”, sem a chave privada do desenvolvedor.\n\n**Apps em sandbox não são reassinados por padrão**: o modo clássico exige confirmação dos riscos, e o app pode não iniciar após uma atualização do sistema. Antes de restaurar a assinatura, restaure os dados de contêineres migrados no modo clássico. Para dados de contêineres, prefira “Migração por montagem”."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Что такое переподпись?**\n\nПосле переноса папки данных на внешний накопитель macOS может считать приложение изменённым и показывать в Finder сообщения «повреждено» или «невозможно открыть».\n\nЕсли включить эту опцию, AppPorts после переноса данных автоматически применит к связанному приложению **самоподпись Ad-hoc**, чтобы обойти это ограничение.\n\n**Обычно включать не нужно.** Переподпись заменяет подпись разработчика и удаляет часть прав. Новая версия сначала сохраняет полную копию оригинального приложения. Вернуть её можно с помощью «Восстановить оригинальную подпись» без закрытого ключа разработчика.\n\n**По умолчанию приложения в песочнице не переподписываются**: классический режим требует подтверждения рисков, и после обновления системы приложение может не запускаться. Перед восстановлением подписи восстановите данные контейнера, перенесённые в классическом режиме. Для данных контейнеров предпочтителен «Перенос с монтированием»."
+            "value" : "**Что такое переподпись?**\n\nПеренос каталогов данных вне пакета приложения не изменяет подпись его кода, поэтому переподпись обычно не требуется.\n\nЭтот параметр действует только в классическом режиме. Если он включён, AppPorts сначала создаёт полную резервную копию связанного приложения, а после переноса данных применяет **подпись Ad-hoc** как меру совместимости, явно выбранную пользователем.\n\n**Обычно включать не нужно.** Переподпись заменяет подпись разработчика и удаляет часть прав. Новая версия сначала сохраняет полную копию оригинального приложения. Вернуть её можно с помощью «Восстановить оригинальную подпись» без закрытого ключа разработчика.\n\n**По умолчанию приложения в песочнице не переподписываются**: классический режим требует подтверждения рисков, и после обновления системы приложение может не запускаться. Перед восстановлением подписи восстановите данные контейнера, перенесённые в классическом режиме. Для данных контейнеров предпочтителен «Перенос с монтированием»."
           }
         },
         "th" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**การเซ็นใหม่คืออะไร?**\n\nหลังย้ายไดเรกทอรีข้อมูลไปยังอุปกรณ์จัดเก็บข้อมูลภายนอก macOS อาจมองว่าแอปถูกแก้ไข และแสดงข้อความ “เสียหาย” หรือ “เปิดไม่ได้” ใน Finder\n\nเมื่อเปิดใช้ตัวเลือกนี้ AppPorts จะ **เซ็นด้วยตนเองแบบ Ad-hoc** ให้แอปที่เกี่ยวข้องโดยอัตโนมัติหลังย้ายข้อมูลเสร็จ เพื่อข้ามข้อจำกัดนี้\n\n**โดยทั่วไปไม่จำเป็นต้องเปิดใช้** การเซ็นใหม่จะแทนที่ลายเซ็นของนักพัฒนาและนำสิทธิ์บางส่วนออก เวอร์ชันใหม่จะเก็บแอปต้นฉบับทั้งแอปไว้ก่อน คุณใช้ “คืนค่าลายเซ็นดั้งเดิม” เพื่อกู้คืนได้ โดยไม่ต้องมีคีย์ส่วนตัวของนักพัฒนา\n\n**ตามค่าเริ่มต้นจะไม่เซ็นแอปแซนด์บ็อกซ์ใหม่**: โหมดดั้งเดิมต้องยืนยันความเสี่ยง และแอปอาจเริ่มทำงานไม่ได้หลังอัปเกรดระบบ ควรกู้คืนข้อมูลคอนเทนเนอร์ที่ย้ายด้วยโหมดดั้งเดิมก่อนคืนค่าลายเซ็น แนะนำให้ใช้ “ย้ายแบบต่อเชื่อม” สำหรับข้อมูลคอนเทนเนอร์"
+            "value" : "**การเซ็นใหม่คืออะไร?**\n\nการย้ายไดเรกทอรีข้อมูลที่อยู่นอกชุดแอปจะไม่เปลี่ยนลายเซ็นโค้ดของแอป จึงมักไม่จำเป็นต้องเซ็นใหม่\n\nตัวเลือกนี้มีผลเฉพาะในโหมดดั้งเดิม เมื่อเปิดใช้ AppPorts จะสำรองแอปที่เกี่ยวข้องทั้งแอปก่อน แล้วจึงใช้ **ลายเซ็นแบบ Ad-hoc** หลังย้ายข้อมูลเสร็จ เพื่อทดลองแก้ปัญหาความเข้ากันได้ตามที่ผู้ใช้เลือกอย่างชัดเจน\n\n**โดยทั่วไปไม่จำเป็นต้องเปิดใช้** การเซ็นใหม่จะแทนที่ลายเซ็นของนักพัฒนาและนำสิทธิ์บางส่วนออก เวอร์ชันใหม่จะเก็บแอปต้นฉบับทั้งแอปไว้ก่อน คุณใช้ “คืนค่าลายเซ็นดั้งเดิม” เพื่อกู้คืนได้ โดยไม่ต้องมีคีย์ส่วนตัวของนักพัฒนา\n\n**ตามค่าเริ่มต้นจะไม่เซ็นแอปแซนด์บ็อกซ์ใหม่**: โหมดดั้งเดิมต้องยืนยันความเสี่ยง และแอปอาจเริ่มทำงานไม่ได้หลังอัปเกรดระบบ ควรกู้คืนข้อมูลคอนเทนเนอร์ที่ย้ายด้วยโหมดดั้งเดิมก่อนคืนค่าลายเซ็น แนะนำให้ใช้ “ย้ายแบบต่อเชื่อม” สำหรับข้อมูลคอนเทนเนอร์"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Yeniden imzalama nedir?**\n\nBir veri klasörü harici depolamaya taşındıktan sonra macOS, uygulamanın değiştirilmiş olduğunu düşünebilir ve Finder’da “hasarlı” veya “açılamıyor” uyarısı gösterebilir.\n\nBu seçenek açıldığında AppPorts, veri taşıma tamamlandıktan sonra ilişkili uygulamaya otomatik olarak **Ad-hoc ile kendi kendine imzalama** uygular ve bu kısıtlamayı aşar.\n\n**Genellikle açılması gerekmez.** Yeniden imzalama, uygulamanın geliştirici imzasını değiştirir ve bazı yetkileri kaldırır. Yeni sürüm önce orijinal uygulamanın tam bir kopyasını kaydeder. Geliştiricinin özel anahtarı gerekmeden “Orijinal imzayı geri yükle” ile geri yükleyebilirsiniz.\n\n**Korumalı alan uygulamaları varsayılan olarak yeniden imzalanmaz**: klasik modda riskleri onaylamak gerekir ve sistem yükseltmesinden sonra uygulama başlamayabilir. İmzayı geri yüklemeden önce klasik modla taşınmış kapsayıcı verilerini geri yükleyin. Kapsayıcı verileri için “Bağlayarak Taşıma” seçeneğini tercih edin."
+            "value" : "**Yeniden imzalama nedir?**\n\nUygulama paketinin dışındaki veri klasörlerini taşımak, uygulamanın kod imzasını değiştirmez; bu nedenle yeniden imzalama genellikle gerekmez.\n\nBu seçenek yalnızca klasik modda geçerlidir. Etkinleştirildiğinde AppPorts önce ilgili uygulamanın tamamını yedekler, ardından veri taşıma tamamlandığında kullanıcının açıkça seçtiği bir uyumluluk denemesi olarak **Ad-hoc imza** uygular.\n\n**Genellikle açılması gerekmez.** Yeniden imzalama, uygulamanın geliştirici imzasını değiştirir ve bazı yetkileri kaldırır. Yeni sürüm önce orijinal uygulamanın tam bir kopyasını kaydeder. Geliştiricinin özel anahtarı gerekmeden “Orijinal imzayı geri yükle” ile geri yükleyebilirsiniz.\n\n**Korumalı alan uygulamaları varsayılan olarak yeniden imzalanmaz**: klasik modda riskleri onaylamak gerekir ve sistem yükseltmesinden sonra uygulama başlamayabilir. İmzayı geri yüklemeden önce klasik modla taşınmış kapsayıcı verilerini geri yükleyin. Kapsayıcı verileri için “Bağlayarak Taşıma” seçeneğini tercih edin."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**Ký lại là gì?**\n\nSau khi thư mục dữ liệu được di chuyển lên bộ nhớ ngoài, macOS có thể coi ứng dụng đã bị sửa đổi và hiện thông báo “bị hỏng” hoặc “không thể mở” trong Finder.\n\nKhi bật tùy chọn này, AppPorts sẽ tự động **tự ký bằng Ad-hoc** cho ứng dụng liên quan sau khi di chuyển dữ liệu xong để vượt qua hạn chế này.\n\n**Thường không cần bật.** Ký lại sẽ thay chữ ký nhà phát triển của ứng dụng và loại bỏ một số quyền. Phiên bản mới lưu đầy đủ ứng dụng gốc trước; có thể dùng “Khôi phục chữ ký gốc” để khôi phục mà không cần khóa riêng của nhà phát triển.\n\n**Mặc định không ký lại ứng dụng sandbox**: chế độ cổ điển yêu cầu xác nhận rủi ro, và ứng dụng có thể không khởi chạy sau khi nâng cấp hệ thống. Khôi phục dữ liệu bộ chứa đã di chuyển bằng chế độ cổ điển trước khi khôi phục chữ ký; ưu tiên “Di chuyển bằng gắn kết” cho dữ liệu bộ chứa."
+            "value" : "**Ký lại là gì?**\n\nDi chuyển thư mục dữ liệu nằm ngoài gói ứng dụng không làm thay đổi chữ ký mã của ứng dụng, nên thường không cần ký lại.\n\nTùy chọn này chỉ có hiệu lực trong chế độ cổ điển. Khi bật, AppPorts sao lưu toàn bộ ứng dụng liên quan trước, rồi áp dụng **chữ ký Ad-hoc** sau khi di chuyển dữ liệu, như một biện pháp thử khả năng tương thích do người dùng chủ động lựa chọn.\n\n**Thường không cần bật.** Ký lại sẽ thay chữ ký nhà phát triển của ứng dụng và loại bỏ một số quyền. Phiên bản mới lưu đầy đủ ứng dụng gốc trước; có thể dùng “Khôi phục chữ ký gốc” để khôi phục mà không cần khóa riêng của nhà phát triển.\n\n**Mặc định không ký lại ứng dụng sandbox**: chế độ cổ điển yêu cầu xác nhận rủi ro, và ứng dụng có thể không khởi chạy sau khi nâng cấp hệ thống. Khôi phục dữ liệu bộ chứa đã di chuyển bằng chế độ cổ điển trước khi khôi phục chữ ký; ưu tiên “Di chuyển bằng gắn kết” cho dữ liệu bộ chứa."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**什么是重签名？**\n\n数据目录迁移到外部存储后，macOS 可能认为应用已被修改，在 Finder 中提示「已损坏」或「无法打开」。\n\n开启此选项后，AppPorts 会在数据迁移完成后自动对关联应用执行 **Ad-hoc 自签名**，绕过此限制。\n\n**通常不需要开启。** 重签名会替换应用的开发者签名并移除部分授权。新版会先保存完整原始应用，可用「恢复原始签名」还原，不需要开发者私钥。\n\n**沙盒应用默认不重签名**：经典模式需确认风险，系统升级后应用可能无法启动。恢复签名前应先还原经典模式迁移的容器数据；容器数据请优先使用「挂载迁移」。"
+            "value" : "**什么是重签名？**\n\n迁移应用包外的数据目录不会修改应用的代码签名，通常不需要重签名。\n\n此选项仅在经典模式下生效。开启后，AppPorts 会先完整备份关联应用，再在数据迁移完成后执行 **Ad-hoc 自签名**，作为用户主动选择的兼容性尝试。\n\n**通常不需要开启。** 重签名会替换应用的开发者签名并移除部分授权。新版会先保存完整原始应用，可用「恢复原始签名」还原，不需要开发者私钥。\n\n**沙盒应用默认不重签名**：经典模式需确认风险，系统升级后应用可能无法启动。恢复签名前应先还原经典模式迁移的容器数据；容器数据请优先使用「挂载迁移」。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**什麼是重簽名？**\n\n資料目錄遷移到外接儲存裝置後，macOS 可能認為應用程式已被修改，在 Finder 中提示「已損毀」或「無法打開」。\n\n開啟此選項後，AppPorts 會在資料遷移完成後，自動對關聯的應用程式執行 **Ad-hoc 自我簽名**，以繞過此限制。\n\n**通常不需要開啟。** 重簽名會替換應用程式的開發者簽名並移除部分授權。新版會先保存完整的原始應用程式，可用「恢復原始簽名」還原，不需要開發者私密金鑰。\n\n**沙盒應用程式預設不重簽名**：經典模式需確認風險，系統升級後應用程式可能無法啟動。恢復簽名前應先還原以經典模式遷移的容器資料；容器資料請優先使用「掛載遷移」。"
+            "value" : "**什麼是重簽名？**\n\n遷移應用程式套件外的資料目錄不會修改應用程式的程式碼簽名，通常不需要重新簽名。\n\n此選項僅在經典模式下生效。開啟後，AppPorts 會先完整備份關聯應用程式，再在資料遷移完成後執行 **Ad-hoc 自簽名**，作為使用者主動選擇的相容性嘗試。\n\n**通常不需要開啟。** 重簽名會替換應用程式的開發者簽名並移除部分授權。新版會先保存完整的原始應用程式，可用「恢復原始簽名」還原，不需要開發者私密金鑰。\n\n**沙盒應用程式預設不重簽名**：經典模式需確認風險，系統升級後應用程式可能無法啟動。恢復簽名前應先還原以經典模式遷移的容器資料；容器資料請優先使用「掛載遷移」。"
           }
         },
         "zh-martian" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "**什么是重签名？**\n\n数据目录迁移到外部存储后，macOS 可能认为应用已被修改，在 Finder 中提示「已损坏」或「无法打开」。\n\n开啟此选项后，AppPorts 会在数据迁移完成后自动对关联应用执行 **Ad-hoc 自签名**，绕过此限制。\n\n**通常不需要开啟。** 重签名会替换应用的开發者签名并移除部汾授权。新版会先保存完整原始应用，可用「恢复原始签名」还原，不需要开發者私钥。\n\n**沙盒应用默认不重签名**：经典模式需确认风险，繫統升級后应用可能无法啟动。恢复签名前应先还原经典模式迁移的容器数据；容器数据请优先使用「挂载迁移」。"
+            "value" : "**什么是重签名？**\n\n迁移應用包外的数據目录不會修改應用的代碼签名，通常不需要重签名。\n\n此選項仅在经典模式下生效。開啟後，AppPorts 會先完整備份关聯應用，再在数據迁移完成後执行 **Ad-hoc 自签名**，作為用戶主動選擇的兼容性尝试。\n\n**通常不需要开啟。** 重签名会替换应用的开發者签名并移除部汾授权。新版会先保存完整原始应用，可用「恢复原始签名」还原，不需要开發者私钥。\n\n**沙盒应用默认不重签名**：经典模式需确认风险，繫統升級后应用可能无法啟动。恢复签名前应先还原经典模式迁移的容器数据；容器数据请优先使用「挂载迁移」。"
           }
         }
       }

@@ -37,7 +37,7 @@ struct DataDirsView: View {
     @Binding var selectedApp: AppItem?
     /// 当前扫描状态，由 ContentView 顶部刷新按钮读取。
     @Binding var isScanning: Bool
-    /// 数据迁移完成后自动重签名开关，由 ContentView 顶部工具栏控制。
+    /// 经典模式下，数据迁移完成后自动重签名开关，由 ContentView 顶部工具栏控制。
     @Binding var autoResignEnabled: Bool
     /// 经典数据迁移模式生效：容器目录允许符号链接迁移，沙盒应用允许重签名。
     let classicModeActive: Bool
@@ -85,6 +85,7 @@ struct DataDirsView: View {
     @State private var progressTotalBytes: Int64 = 0
     @State private var progressFileName = ""
     @State private var progressTitle = ""
+    @State private var progressShowsBytes = true
 
     // 确认弹窗
     @State private var confirmRequest: WarningSheetRequest?
@@ -282,7 +283,8 @@ struct DataDirsView: View {
                         title: progressTitle,
                         copiedBytes: progressBytes,
                         totalBytes: progressTotalBytes,
-                        currentFile: progressFileName
+                        currentFile: progressFileName,
+                        showsByteProgress: progressShowsBytes
                     )
                 }
             }
@@ -1530,28 +1532,30 @@ struct DataDirsView: View {
         progressBytes = 0
         progressTotalBytes = 0
         progressFileName = ""
+        progressShowsBytes = false
         showProgress = true
         let operationID = AppLogger.shared.makeOperationID(prefix: "view-data-migrate")
         let capturedApp = associatedApp
-        let requestedSigning = shouldResignAssociatedApp ?? autoResignEnabled
+        let capturedAutoResignEnabled = autoResignEnabled
+        let requestedSigning = DataMigrationWorkflow.shouldResignAssociatedApp(
+            classicModeActive: classicModeActive,
+            autoResignEnabled: capturedAutoResignEnabled,
+            explicitChoice: shouldResignAssociatedApp
+        )
 
         Task { @MainActor in
             defer {
                 showProgress = false
+                progressShowsBytes = true
                 AppOperationState.shared.finish(operationToken)
             }
             let mover = DataDirMover()
             do {
-                let signingAppURL: URL?
                 let signingTarget: DataMigrationWorkflow.SigningTarget?
                 if requestedSigning, let app = capturedApp {
-                    let target = try DataMigrationWorkflow.signingTarget(at: app.displayURL)
-                    signingTarget = target
-                    // 默认模式仍然只迁移数据；经典模式须由工作流核验这个真实应用的批准。
-                    signingAppURL = target.isSandboxed && !classicModeActive ? nil : app.displayURL
+                    signingTarget = try DataMigrationWorkflow.signingTarget(at: app.displayURL)
                 } else {
                     signingTarget = nil
-                    signingAppURL = nil
                 }
                 AppLogger.shared.logContext(
                     "用户确认迁移数据目录",
@@ -1562,18 +1566,36 @@ struct DataDirsView: View {
                         ("source", item.path.path),
                         ("destination_root", dest.path),
                         ("associated_app_sandboxed", signingTarget.map { $0.isSandboxed ? "true" : "false" } ?? "not_checked"),
-                        ("should_resign_associated_app", signingAppURL != nil ? "true" : "false")
+                        ("should_resign_associated_app", signingTarget != nil ? "true" : "false")
                     ] + appContextFields(for: capturedApp)
                 )
 
                 try await DataMigrationWorkflow.run(
-                    signingAppURL: signingAppURL,
+                    associatedAppURL: capturedApp?.displayURL,
                     classicModeActive: classicModeActive,
+                    autoResignEnabled: capturedAutoResignEnabled,
+                    explicitSigningChoice: shouldResignAssociatedApp,
                     approvedSandboxedTarget: approvedSandboxedTarget,
                     validateBeforeMigration: {
                         // 备份原应用可能耗时较长；实际搬数据前重新读取运行状态。
                         if self.runningAssociatedAppName(for: item, associatedApp: capturedApp) != nil {
                             throw AppMoverError.appIsRunning
+                        }
+                    },
+                    stageChanged: { stage in
+                        await MainActor.run {
+                            self.progressShowsBytes = stage == .migratingData
+                            switch stage {
+                            case .backingUpApplication:
+                                self.progressTitle = "正在备份原始应用".localized
+                                self.progressFileName = signingTarget?.url.lastPathComponent ?? ""
+                            case .migratingData:
+                                self.progressTitle = String(format: "正在迁移「%@」".localized, item.name)
+                                self.progressFileName = ""
+                            case .resigningApplication:
+                                self.progressTitle = "重签名此应用".localized
+                                self.progressFileName = signingTarget?.url.lastPathComponent ?? ""
+                            }
                         }
                     },
                     backupSignature: onBackupSignatureForURL,
@@ -1587,12 +1609,6 @@ struct DataDirsView: View {
                         }
                     },
                     resignApp: { url, sandboxedAppApproved in
-                        await MainActor.run {
-                            self.progressTitle = "重签名此应用".localized
-                            self.progressFileName = url.lastPathComponent
-                            self.progressBytes = 0
-                            self.progressTotalBytes = 0
-                        }
                         try await self.onResignAppAtURL(url, sandboxedAppApproved)
                     }
                 )
@@ -1688,14 +1704,15 @@ struct DataDirsView: View {
 
         let offersContainerSigningChoice = shouldAskForContainerDataResign(item)
             && pendingMigrationShouldResign == nil
-        let wantsSigning = pendingMigrationShouldResign ?? autoResignEnabled
+        let wantsSigning = DataMigrationWorkflow.shouldResignAssociatedApp(
+            classicModeActive: classicModeActive,
+            autoResignEnabled: autoResignEnabled,
+            explicitChoice: pendingMigrationShouldResign
+        )
         if (offersContainerSigningChoice || wantsSigning), let app = pendingMigrationApp {
             do {
                 let target = try DataMigrationWorkflow.signingTarget(at: app.displayURL)
-                if target.isSandboxed && !classicModeActive {
-                    pendingMigrationShouldResign = false
-                    pendingApprovedSandboxedTarget = nil
-                } else if offersContainerSigningChoice
+                if offersContainerSigningChoice
                     || (target.isSandboxed && pendingApprovedSandboxedTarget != target) {
                     presentContainerDataResignConfirmation(for: target)
                     return
@@ -1765,7 +1782,8 @@ struct DataDirsView: View {
     }
 
     private func shouldAskForContainerDataResign(_ item: DataDirItem) -> Bool {
-        selectedTab == .appDirs
+        classicModeActive
+            && selectedTab == .appDirs
             && pendingMigrationApp != nil
             && (item.type == .containers || item.type == .groupContainers)
     }
@@ -2679,6 +2697,7 @@ struct DataDirProgressOverlay: View {
     let copiedBytes: Int64
     let totalBytes: Int64
     let currentFile: String
+    var showsByteProgress = true
 
     private var progress: Double {
         totalBytes > 0 ? min(Double(copiedBytes) / Double(totalBytes), 1) : 0
@@ -2690,23 +2709,25 @@ struct DataDirProgressOverlay: View {
                 .font(.headline)
                 .multilineTextAlignment(.center)
 
-            ProgressView(value: totalBytes > 0 ? progress : nil)
+            ProgressView(value: showsByteProgress && totalBytes > 0 ? progress : nil)
                 .progressViewStyle(.linear)
                 .frame(width: 280)
 
-            HStack {
-                Text(formatBytes(copiedBytes))
-                if totalBytes > 0 {
-                    Spacer()
-                    Text("\(Int(progress * 100))%")
-                        .monospacedDigit()
-                    Spacer()
-                    Text(formatBytes(totalBytes))
+            if showsByteProgress {
+                HStack {
+                    Text(formatBytes(copiedBytes))
+                    if totalBytes > 0 {
+                        Spacer()
+                        Text("\(Int(progress * 100))%")
+                            .monospacedDigit()
+                        Spacer()
+                        Text(formatBytes(totalBytes))
+                    }
                 }
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .frame(width: 280)
             }
-            .font(.system(size: 12))
-            .foregroundColor(.secondary)
-            .frame(width: 280)
 
             if !currentFile.isEmpty {
                 Text(currentFile)
