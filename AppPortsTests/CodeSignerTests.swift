@@ -119,7 +119,8 @@ struct CodeSignerTests {
         }
         let executable = portal.appendingPathComponent("Contents/MacOS/Fixture")
         let original = try Data(contentsOf: executable)
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
 
         do {
             try await signer.sign(appURL: portal, bundleIdentifier: nil)
@@ -144,7 +145,8 @@ struct CodeSignerTests {
         try makeBundle(at: portal, identifier: stubIdentifier)
         try realApp.path.write(to: portal.appendingPathComponent("Contents/Resources/real_app_path.txt"), atomically: true, encoding: .utf8)
 
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.backupOriginalSignature(appURL: portal, bundleIdentifier: stubIdentifier)
 
         let backupData = try Data(contentsOf: workspace.backups.appendingPathComponent(identifier + ".plist"))
@@ -171,7 +173,8 @@ struct CodeSignerTests {
         let before = try allFlags(in: app)
         try #require(before[app.path] == 0)
 
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.sign(appURL: app, bundleIdentifier: nil)
 
         #expect(await signer.verify(appURL: app) == .valid)
@@ -205,7 +208,8 @@ struct CodeSignerTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: info.path)
         try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: payload.path)
 
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.sign(appURL: app, bundleIdentifier: nil)
 
         #expect(await signer.verify(appURL: app) == .valid)
@@ -254,7 +258,8 @@ struct CodeSignerTests {
         try realApp.path.write(to: portal.appendingPathComponent("Contents/Resources/real_app_path.txt"), atomically: true, encoding: .utf8)
         let executable = realApp.appendingPathComponent("Contents/MacOS/Fixture")
         let original = try Data(contentsOf: executable)
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
 
         do {
             try await signer.sign(appURL: portal, bundleIdentifier: nil)
@@ -346,7 +351,8 @@ struct CodeSignerTests {
         let sandboxEntitlements = try writeEntitlements(sandbox: true, in: workspace)
         try codesign(["--force", "--sign", "-", "--entitlements", sandboxEntitlements.path, app.path])
         try #require(CodeSigner.isSandboxed(at: app))
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
 
         try await signer.sign(appURL: app, bundleIdentifier: nil, allowSandboxed: true)
 
@@ -372,7 +378,8 @@ struct CodeSignerTests {
         ], format: .xml, options: 0).write(to: backupURL)
         let executable = app.appendingPathComponent("Contents/MacOS/Fixture")
         let original = try Data(contentsOf: executable)
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
 
         do {
             try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier)
@@ -411,7 +418,8 @@ struct CodeSignerTests {
         let before = try allFlags(in: app)
         let outsideBefore = try allFlags(in: outside)
 
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         do {
             try await signer.sign(appURL: app, bundleIdentifier: nil)
             Issue.record("Malformed code must fail signing")
@@ -447,7 +455,8 @@ struct CodeSignerTests {
         if sandboxed { try codesign(["--force", "--sign", "-", "--entitlements", entitlements.path, app.path]) }
         let before = try SignatureSnapshot.fingerprint(of: app)
         let helperBytes = try Data(contentsOf: helper.appendingPathComponent("Contents/MacOS/Fixture"))
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.sign(appURL: app, bundleIdentifier: nil, allowSandboxed: true)
         #expect(CodeSigner.isSandboxed(at: app) == false)
         try await signer.sign(appURL: app, bundleIdentifier: nil, allowSandboxed: true)
@@ -472,7 +481,8 @@ struct CodeSignerTests {
         let app = workspace.root.appendingPathComponent("Vendor.app")
         try SignatureSnapshot.copy(from: source, to: app)
         let identifier = try #require(CodeSigner.bundleIdentifier(at: app))
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         let authority = try #require(await signer.getSigningIdentity(appURL: app))
         try codesign(["--verify", "--deep", app.path])
         let originalVerification = await signer.verify(appURL: app)
@@ -497,7 +507,8 @@ struct CodeSignerTests {
         defer { workspace.cleanup() }
         let app = workspace.root.appendingPathComponent("Chat.app")
         try makeBundle(at: app)
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.sign(appURL: app, bundleIdentifier: nil)
         let changed = app.appendingPathComponent("Contents/Resources/new-version.txt")
         try Data("new app content".utf8).write(to: changed)
@@ -523,6 +534,7 @@ struct CodeSignerTests {
         let original = try SignatureSnapshot.fingerprint(of: app)
         let changed = app.appendingPathComponent("Contents/Resources/update.txt")
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) },
             copyApplication: { source, destination in
                 if destination.deletingLastPathComponent().lastPathComponent.hasPrefix(".AppPorts-signature-") {
                     try Data("updated while preparing signature".utf8).write(to: changed)
@@ -548,7 +560,8 @@ struct CodeSignerTests {
         let attribute = "com.appports.tests.metadata"
         let original = Data("original metadata".utf8)
         try #require(original.withUnsafeBytes { setxattr(app.path, attribute, $0.baseAddress, $0.count, 0, 0) } == 0)
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.backupOriginalSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
         let before = try SignatureSnapshot.fingerprint(of: app)
         try #require(removexattr(app.path, attribute, 0) == 0)
@@ -567,7 +580,8 @@ struct CodeSignerTests {
         let app = workspace.root.appendingPathComponent("Vendor.app")
         try SignatureSnapshot.copy(from: source, to: app)
         let identifier = try #require(CodeSigner.bundleIdentifier(at: app))
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.sign(appURL: app, bundleIdentifier: identifier, allowSandboxed: true)
         var oldRecord = try readBackup(in: workspace, identifier: identifier)
         let oldSnapshot = workspace.backups.appendingPathComponent(try #require(oldRecord["snapshotName"] as? String))
@@ -602,7 +616,8 @@ struct CodeSignerTests {
         defer { workspace.cleanup() }
         let app = workspace.root.appendingPathComponent("Chat.app")
         try makeBundle(at: app)
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.sign(appURL: app, bundleIdentifier: nil)
         let snapshot = try #require(FileManager.default.contentsOfDirectory(at: workspace.backups, includingPropertiesForKeys: nil).first { $0.pathExtension == "app" })
         try Data("corrupt".utf8).write(to: snapshot.appendingPathComponent("Contents/MacOS/Fixture"))
@@ -621,8 +636,10 @@ struct CodeSignerTests {
         defer { workspace.cleanup() }
         let app = workspace.root.appendingPathComponent("Chat.app")
         try makeBundle(at: app)
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         let failing = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) },
             exchangeApplications: { _, _ in throw CodeSigner.SigningError.atomicReplacementUnavailable })
         let original = try SignatureSnapshot.fingerprint(of: app)
         do {
@@ -659,7 +676,8 @@ struct CodeSignerTests {
             "bundleIdentifier": identifier, "signingIdentity": "ad-hoc",
             "originalPath": app.path, "backupDate": Date()
         ], format: .xml, options: 0).write(to: workspace.backups.appendingPathComponent(identifier + ".plist"))
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier, originalApplication: original)
         #expect(try SignatureSnapshot.fingerprint(of: app) == SignatureSnapshot.fingerprint(of: original))
         #expect(CodeSigner.isSandboxed(at: app))
@@ -674,7 +692,8 @@ struct CodeSignerTests {
         let lock = OperationLock(fileURL: workspace.backups.appendingPathComponent("signature-operation.lock"))
         try #require(lock.tryAcquire())
         defer { lock.release() }
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         let before = try SignatureSnapshot.fingerprint(of: app)
         do {
             try await signer.sign(appURL: app, bundleIdentifier: nil)
@@ -690,7 +709,8 @@ struct CodeSignerTests {
         let app = workspace.root.appendingPathComponent("Installed.app")
         let original = workspace.root.appendingPathComponent("Wrong.app")
         try makeBundle(at: app)
-        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false)
+        let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
         try await signer.sign(appURL: app, bundleIdentifier: nil)
         try SignatureSnapshot.copy(from: app, to: original)
         let info = original.appendingPathComponent("Contents/Info.plist")

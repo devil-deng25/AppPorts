@@ -142,6 +142,23 @@ enum SignatureSnapshot {
         try FileManager.default.removeItem(at: root)
     }
 
+    /// Retire a complete original without a partially deleted app remaining in
+    /// signature-backups. Child locks do not prevent renaming their parent.
+    static func trash(_ root: URL) throws {
+        let original = try info(at: root)
+        guard original.st_mode & S_IFMT == S_IFDIR else { throw CodeSigner.SigningError.snapshotInvalid }
+        let wasLocked = original.st_flags & UInt32(UF_IMMUTABLE) != 0
+        if wasLocked, lchflags(root.path, original.st_flags & ~UInt32(UF_IMMUTABLE)) != 0 { throw posixError(at: root) }
+        do {
+            try FileManager.default.trashItem(at: root, resultingItemURL: nil)
+        } catch {
+            if wasLocked, let current = try? info(at: root), current.st_dev == original.st_dev, current.st_ino == original.st_ino {
+                _ = lchflags(root.path, original.st_flags)
+            }
+            throw error
+        }
+    }
+
     private static func posixError(at url: URL) -> NSError {
         NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSFilePathErrorKey: url.path])
     }

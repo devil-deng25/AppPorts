@@ -407,7 +407,10 @@ struct CustomDirsView: View {
                     } else {
                         warning = try await DataDirMover().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
                     }
-                    if let warning { completionWarning = warning; showCompletionWarning = true }
+                    let signatureWarnings = await discardUnusedSignatureBackups(bundleIdentifiers: [transfer.bundleIdentifier])
+                    let warnings = [warning].compactMap { $0 } + signatureWarnings
+                    completionWarning = warnings.joined(separator: "\n\n")
+                    showCompletionWarning = !warnings.isEmpty
                 } else if transfer.isUnstartedSymlinkRestore {
                     try await DataDirMover().cancelUnstartedRestore(operationID: transfer.operationID)
                 } else {
@@ -448,11 +451,29 @@ struct CustomDirsView: View {
                         try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
                     }
                 }
+                let warnings = await discardUnusedSignatureBackups(bundleIdentifiers: group.cleanupTransfers.map(\.bundleIdentifier))
+                completionWarning = warnings.joined(separator: "\n\n")
+                showCompletionWarning = !warnings.isEmpty
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true
             }
         }
+    }
+
+    private func discardUnusedSignatureBackups(bundleIdentifiers: [String?]) async -> [String] {
+        let identifiers = Set(bundleIdentifiers.compactMap { $0 }.filter { !$0.isEmpty }).sorted()
+        guard !identifiers.isEmpty else { return [] }
+        let signer = CodeSigner()
+        var warnings: [String] = []
+        for bundleIdentifier in identifiers {
+            do {
+                _ = try await signer.discardUnusedOriginalBackup(bundleIdentifier: bundleIdentifier)
+            } catch {
+                warnings.append(bundleIdentifier + "\n" + error.localizedDescription)
+            }
+        }
+        return warnings
     }
 
     private func beginOperation() -> UUID? {
@@ -514,7 +535,9 @@ struct CustomDirsView: View {
                 operation: { pair, progressHandler in
                     let item = pair.local.dataDirItem
                     let result = try await DataDirMover().restoreAndComplete(item: item, progressHandler: progressHandler)
-                    return result.cleanupWarning
+                    let signatureWarnings = await discardUnusedSignatureBackups(bundleIdentifiers: [item.associatedBundleIdentifier])
+                    let warnings = [result.cleanupWarning].compactMap { $0 } + signatureWarnings
+                    return warnings.isEmpty ? nil : warnings.joined(separator: "\n\n")
                 }
             )
         }

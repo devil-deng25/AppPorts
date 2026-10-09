@@ -48,6 +48,7 @@ enum DataMigrationWorkflow {
         }
     }
 
+    @discardableResult
     static func run(
         associatedAppURL: URL?,
         classicModeActive: Bool = false,
@@ -59,52 +60,82 @@ enum DataMigrationWorkflow {
         stageChanged: (Stage) async -> Void = { _ in },
         backupSignature: (URL) async throws -> Void,
         migrate: () async throws -> Void,
-        resignApp: (URL, Bool) async throws -> Void
-    ) async throws {
+        resignApp: (URL, Bool) async throws -> Void,
+        cleanupUnusedBackup: (URL) async throws -> Void = { _ in }
+    ) async throws -> String? {
         let signingAppURL = shouldResignAssociatedApp(
             classicModeActive: classicModeActive,
             autoResignEnabled: autoResignEnabled,
             explicitChoice: explicitSigningChoice
         ) ? associatedAppURL : nil
-        let target: SigningTarget?
-        if let signingAppURL {
-            let inspected = try await inspectSigningTarget(signingAppURL)
-            if let approvedSandboxedTarget, approvedSandboxedTarget != inspected {
-                throw CodeSigner.SigningError.applicationChanged
-            }
-            // 全局经典模式只是功能开关，不能替代这个真实应用的逐次批准。
-            if inspected.isSandboxed,
-               !(classicModeActive && approvedSandboxedTarget == inspected) {
-                throw CodeSigner.SigningError.sandboxedApplication(inspected.url)
-            }
-            target = inspected
-            await stageChanged(.backingUpApplication)
-            try await backupSignature(inspected.url)
-            // 备份可能耗时很长；入口或沙盒状态改变时，先停下，不搬动任何数据。
-            guard try await inspectSigningTarget(signingAppURL) == inspected else {
-                throw CodeSigner.SigningError.applicationChanged
-            }
-        } else {
-            target = nil
-        }
-
-        try await validateBeforeMigration()
-        await stageChanged(.migratingData)
-        try await migrate()
-
-        if let signingAppURL, let target {
-            do {
-                guard try await inspectSigningTarget(signingAppURL) == target else {
+        var backupTargetURL: URL?
+        do {
+            let target: SigningTarget?
+            if let signingAppURL {
+                let inspected = try await inspectSigningTarget(signingAppURL)
+                if let approvedSandboxedTarget, approvedSandboxedTarget != inspected {
                     throw CodeSigner.SigningError.applicationChanged
                 }
-                let sandboxedAppApproved = target.isSandboxed
-                    && classicModeActive && approvedSandboxedTarget == target
-                await stageChanged(.resigningApplication)
-                try await resignApp(target.url, sandboxedAppApproved)
-            } catch {
-                // 数据已经成功迁移；不要误报为迁移失败或自动再次搬运数据。
-                throw Failure.signingFailed(error)
+                // 全局经典模式只是功能开关，不能替代这个真实应用的逐次批准。
+                if inspected.isSandboxed,
+                   !(classicModeActive && approvedSandboxedTarget == inspected) {
+                    throw CodeSigner.SigningError.sandboxedApplication(inspected.url)
+                }
+                target = inspected
+                // Remember the actual app before backup starts: even a failed
+                // backup may have left an artifact, and the portal may retarget.
+                backupTargetURL = inspected.url
+                await stageChanged(.backingUpApplication)
+                try await backupSignature(inspected.url)
+                // 备份可能耗时很长；入口或沙盒状态改变时，先停下，不搬动任何数据。
+                guard try await inspectSigningTarget(signingAppURL) == inspected else {
+                    throw CodeSigner.SigningError.applicationChanged
+                }
+            } else {
+                target = nil
             }
+
+            try await validateBeforeMigration()
+            await stageChanged(.migratingData)
+            try await migrate()
+
+            if let signingAppURL, let target {
+                do {
+                    guard try await inspectSigningTarget(signingAppURL) == target else {
+                        throw CodeSigner.SigningError.applicationChanged
+                    }
+                    let sandboxedAppApproved = target.isSandboxed
+                        && classicModeActive && approvedSandboxedTarget == target
+                    await stageChanged(.resigningApplication)
+                    try await resignApp(target.url, sandboxedAppApproved)
+                } catch {
+                    // 数据已经成功迁移；不要误报为迁移失败或自动再次搬运数据。
+                    throw Failure.signingFailed(error)
+                }
+            }
+        } catch let workflowError {
+            if let backupTargetURL {
+                do {
+                    try await cleanupUnusedBackup(backupTargetURL)
+                } catch let cleanupError {
+                    AppLogger.shared.logError("数据迁移失败后清理未用应用备份失败", error: cleanupError,
+                        context: [("operation_error", workflowError.localizedDescription)],
+                        relatedURLs: [("application", backupTargetURL)])
+                }
+            }
+            throw workflowError
+        }
+
+        // Signing must finish before the cleanup policy decides whether this
+        // backup is still needed. Without signing, also check unused history.
+        guard let cleanupTargetURL = backupTargetURL ?? associatedAppURL else { return nil }
+        do {
+            try await cleanupUnusedBackup(cleanupTargetURL)
+            return nil
+        } catch {
+            AppLogger.shared.logError("数据迁移完成后清理未用应用备份失败", error: error,
+                relatedURLs: [("application", cleanupTargetURL)])
+            return error.localizedDescription
         }
     }
 }

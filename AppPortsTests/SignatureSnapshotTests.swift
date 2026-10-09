@@ -5,6 +5,27 @@ import Testing
 
 @Suite("Signature snapshot fingerprints")
 struct SignatureSnapshotTests {
+    @Test("Native Trash retires a full snapshot even when its root or children are locked", arguments: [false, true])
+    func trashesLockedSnapshot(lockRoot: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AppPortsTrashFixture-" + UUID().uuidString + ".app")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        let payload = root.appendingPathComponent("locked-payload")
+        try Data("only a disposable signature fixture".utf8).write(to: payload)
+        let trash = try FileManager.default.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: root, create: true)
+            .appendingPathComponent(root.lastPathComponent)
+        try #require(!FileManager.default.fileExists(atPath: trash.path))
+        defer {
+            try? SignatureSnapshot.remove(root)
+            try? SignatureSnapshot.remove(trash)
+        }
+        try #require(lchflags(payload.path, UInt32(UF_IMMUTABLE)) == 0)
+        if lockRoot { try #require(lchflags(root.path, UInt32(UF_IMMUTABLE)) == 0) }
+        let original = try SignatureSnapshot.fingerprint(of: root)
+        try SignatureSnapshot.trash(root)
+        #expect(!FileManager.default.fileExists(atPath: root.path))
+        #expect(try SignatureSnapshot.fingerprint(of: trash) == original)
+    }
+
     struct Fixture: Sendable {
         let size: Int
         let fingerprint: String

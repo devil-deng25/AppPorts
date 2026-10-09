@@ -1588,7 +1588,7 @@ struct DataDirsView: View {
                     ] + appContextFields(for: capturedApp)
                 )
 
-                try await DataMigrationWorkflow.run(
+                let signatureCleanupWarning = try await DataMigrationWorkflow.run(
                     associatedAppURL: capturedApp?.displayURL,
                     classicModeActive: classicModeActive,
                     autoResignEnabled: capturedAutoResignEnabled,
@@ -1630,6 +1630,11 @@ struct DataDirsView: View {
                     },
                     resignApp: { url, sandboxedAppApproved in
                         try await self.onResignAppAtURL(url, sandboxedAppApproved)
+                    },
+                    cleanupUnusedBackup: { url in
+                        guard let realURL = try? CodeSigner.resolveAppURL(at: url),
+                              let bundleID = CodeSigner.bundleIdentifier(at: realURL) else { return }
+                        _ = try await CodeSigner().discardUnusedOriginalBackup(bundleIdentifier: bundleID, appURL: realURL)
                     }
                 )
                 AppLogger.shared.logContext(
@@ -1638,7 +1643,7 @@ struct DataDirsView: View {
                 )
                 await MainActor.run {
                     self.reloadCurrentTab()
-                    self.showDataCompletionWarning = !self.dataCompletionWarning.isEmpty
+                    self.presentDataCompletionWarnings([self.dataCompletionWarning, signatureCleanupWarning])
                 }
             } catch {
                 AppLogger.shared.logError(
@@ -1863,14 +1868,14 @@ struct DataDirsView: View {
                         self.progressShowsBytes = progress.showsByteProgress
                     }
                 }
+                let signatureCleanupWarning = await discardUnusedSignatureBackups(bundleIdentifiers: [item.associatedBundleIdentifier])
                 AppLogger.shared.logContext(
                     "数据目录还原成功",
                     details: [("operation_id", operationID), ("item_name", item.name)]
                 )
                 await MainActor.run {
                     self.reloadCurrentTab()
-                    self.dataCompletionWarning = result.cleanupWarning ?? ""
-                    self.showDataCompletionWarning = result.cleanupWarning != nil
+                    self.presentDataCompletionWarnings([result.cleanupWarning, signatureCleanupWarning])
                 }
             } catch {
                 AppLogger.shared.logError(
@@ -1938,10 +1943,10 @@ struct DataDirsView: View {
                         self.progressShowsBytes = progress.showsByteProgress
                     }
                 }
+                let signatureCleanupWarning = await discardUnusedSignatureBackups(bundleIdentifiers: [item.associatedBundleIdentifier])
                 await MainActor.run {
                     self.reloadCurrentTab()
-                    self.dataCompletionWarning = result.cleanupWarning ?? ""
-                    self.showDataCompletionWarning = result.cleanupWarning != nil
+                    self.presentDataCompletionWarnings([result.cleanupWarning, signatureCleanupWarning])
                 }
             } catch {
                 AppLogger.shared.logError(
@@ -2175,13 +2180,14 @@ struct DataDirsView: View {
                         self.progressShowsBytes = progress.showsByteProgress
                     }
                 }
+                let signatureCleanupWarning = await discardUnusedSignatureBackups(bundleIdentifiers: [result.record.bundleIdentifier])
                 AppLogger.shared.logContext(
                     "挂载迁移成功",
                     details: [("operation_id", operationID), ("item_name", item.name), ("volume", result.record.volumeName)]
                 )
                 await MainActor.run {
                     self.reloadCurrentTab()
-                    self.presentCleanupWarning(result.cleanupWarning)
+                    self.presentCleanupWarning(result.cleanupWarning, additionalWarning: signatureCleanupWarning)
                 }
             } catch {
                 AppLogger.shared.logError(
@@ -2391,13 +2397,14 @@ struct DataDirsView: View {
                         self.progressShowsBytes = progress.showsByteProgress
                     }
                 }
+                let signatureCleanupWarning = await discardUnusedSignatureBackups(bundleIdentifiers: [record.bundleIdentifier ?? item.associatedBundleIdentifier])
                 AppLogger.shared.logContext(
                     "挂载迁移目录还原成功",
                     details: [("operation_id", operationID), ("item_name", item.name)]
                 )
                 await MainActor.run {
                     self.reloadCurrentTab()
-                    self.presentCleanupWarning(warning)
+                    self.presentCleanupWarning(warning, additionalWarning: signatureCleanupWarning)
                 }
             } catch {
                 AppLogger.shared.logError(
@@ -2416,10 +2423,38 @@ struct DataDirsView: View {
         }
     }
 
-    private func presentCleanupWarning(_ warning: ContainerVolumeMigrator.CleanupWarning?) {
+    private func presentCleanupWarning(_ warning: ContainerVolumeMigrator.CleanupWarning?, additionalWarning: String? = nil) {
+        if let additionalWarning {
+            cleanupWarning = warning
+            showCleanupWarning = false
+            presentDataCompletionWarnings([warning?.message, additionalWarning])
+            return
+        }
         guard let warning else { return }
         cleanupWarning = warning
         showCleanupWarning = true
+    }
+
+    private func presentDataCompletionWarnings(_ warnings: [String?]) {
+        dataCompletionWarning = warnings.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        showDataCompletionWarning = !dataCompletionWarning.isEmpty
+    }
+
+    /// Call only while the data operation still holds its shared lock. These
+    /// identifiers belong to the completed item or record, not the selected app.
+    private func discardUnusedSignatureBackups(bundleIdentifiers: [String?]) async -> String? {
+        let identifiers = Set(bundleIdentifiers.compactMap { $0 }.filter { !$0.isEmpty }).sorted()
+        guard !identifiers.isEmpty else { return nil }
+        let signer = CodeSigner()
+        var warnings: [String] = []
+        for identifier in identifiers {
+            do {
+                _ = try await signer.discardUnusedOriginalBackup(bundleIdentifier: identifier)
+            } catch {
+                warnings.append("\(identifier): \(error.localizedDescription)")
+            }
+        }
+        return warnings.isEmpty ? nil : warnings.joined(separator: "\n\n")
     }
 
     private func recoverTransfer(_ transfer: DataTransferRecord) {
@@ -2462,7 +2497,8 @@ struct DataDirsView: View {
                     } else {
                         warning = try await DataDirMover().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
                     }
-                    if let warning { dataCompletionWarning = warning; showDataCompletionWarning = true }
+                    let signatureCleanupWarning = await discardUnusedSignatureBackups(bundleIdentifiers: [transfer.bundleIdentifier])
+                    presentDataCompletionWarnings([warning, signatureCleanupWarning])
                 } else if transfer.isUnstartedSymlinkRestore {
                     try await DataDirMover().cancelUnstartedRestore(operationID: transfer.operationID)
                 } else {
@@ -2513,6 +2549,8 @@ struct DataDirsView: View {
                         try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
                     }
                 }
+                let signatureCleanupWarning = await discardUnusedSignatureBackups(bundleIdentifiers: group.cleanupTransfers.map(\.bundleIdentifier))
+                presentDataCompletionWarnings([signatureCleanupWarning])
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true
@@ -2558,9 +2596,12 @@ struct DataDirsView: View {
                 return
             }
             let nextWarning = await ContainerVolumeMigrator().retryCleanup(warning)
+            let signatureCleanupWarning = nextWarning == nil
+                ? await discardUnusedSignatureBackups(bundleIdentifiers: [warning.cleanup.mountRecord.bundleIdentifier])
+                : nil
             reloadCurrentTab()
             cleanupWarning = nextWarning
-            presentCleanupWarning(nextWarning)
+            presentCleanupWarning(nextWarning, additionalWarning: signatureCleanupWarning)
         }
     }
 

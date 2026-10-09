@@ -65,17 +65,23 @@ actor CodeSigner {
     private let fileManager = FileManager.default
     private let backupDirectoryURL: URL
     private let allowAdministratorPrompt: Bool
+    private let trashBackupSnapshot: @Sendable (URL) throws -> Void
+    private let deleteBackupRecordFile: @Sendable (URL) throws -> Void
     private let exchangeApplications: @Sendable (URL, URL) throws -> Void
     private let copyApplication: @Sendable (URL, URL) throws -> Void
 
     init(
         backupDirectoryURL: URL? = nil,
         allowAdministratorPrompt: Bool = true,
+        trashBackupSnapshot: @escaping @Sendable (URL) throws -> Void = { try SignatureSnapshot.trash($0) },
+        deleteBackupRecordFile: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) },
         exchangeApplications: @escaping @Sendable (URL, URL) throws -> Void = { try SignatureSnapshot.exchange($0, $1) },
         copyApplication: @escaping @Sendable (URL, URL) throws -> Void = { try SignatureSnapshot.copy(from: $0, to: $1) }
     ) {
         self.backupDirectoryURL = backupDirectoryURL ?? Self.defaultBackupDirectoryURL
         self.allowAdministratorPrompt = allowAdministratorPrompt
+        self.trashBackupSnapshot = trashBackupSnapshot
+        self.deleteBackupRecordFile = deleteBackupRecordFile
         self.exchangeApplications = exchangeApplications
         self.copyApplication = copyApplication
     }
@@ -361,6 +367,10 @@ actor CodeSigner {
             throw SigningError.noBackupFound
         }
         let currentFingerprint = try SignatureSnapshot.fingerprint(of: appURL)
+        if let cleanup = backup.cleanup, cleanup.applicationFingerprint == currentFingerprint {
+            try finishBackupCleanup(backup, appURL: appURL, applicationFingerprint: currentFingerprint)
+            return
+        }
         let original: URL
         let originalFingerprint: String
         let verifyOriginal: Bool
@@ -392,7 +402,7 @@ actor CodeSigner {
             try replaceApplication(at: appURL, with: work, expectedFingerprint: currentFingerprint)
         }
         // 只有交换完成后才清理；清理失败不会伪报恢复失败。
-        removeBackup(bundleIdentifier: bundleIdentifier)
+        removeBackup(bundleIdentifier: bundleIdentifier, appURL: appURL, applicationFingerprint: originalFingerprint)
         AppLogger.shared.logContext("恢复原始签名完成", details: [
             ("path", appURL.path), ("bundle_id", bundleIdentifier),
             ("source", originalApplication == nil ? "snapshot" : "user-selected-original")
@@ -403,6 +413,34 @@ actor CodeSigner {
     func hasBackup(bundleIdentifier: String) -> Bool {
         let backupURL = backupFileURL(for: bundleIdentifier)
         return fileManager.fileExists(atPath: backupURL.path)
+    }
+
+    /// A data operation may have saved an original before failing or before
+    /// the user declined signing. Discard only a proven duplicate of the real
+    /// current app. An app that still differs keeps its signature recovery copy.
+    @discardableResult
+    func discardUnusedOriginalBackup(bundleIdentifier: String, appURL: URL? = nil) async throws -> Bool {
+        guard hasBackup(bundleIdentifier: bundleIdentifier) else { return false }
+        let lock = try acquireSignatureLock()
+        defer { lock.release() }
+        guard let backup = try readBackup(bundleIdentifier: bundleIdentifier),
+              backup.schemaVersion == 2, let originalFingerprint = backup.originalFingerprint else { return false }
+        let current: URL
+        do {
+            current = try Self.resolveAppURL(at: appURL ?? URL(fileURLWithPath: backup.originalPath))
+        } catch SigningError.applicationUnavailable {
+            return false
+        }
+        guard Self.bundleIdentifier(at: current) == bundleIdentifier else { return false }
+        // Another installed copy cannot prove that the recorded app no longer
+        // needs recovery, including when that app's disk or old path is offline.
+        guard let recordedApp = try? Self.resolveAppURL(at: URL(fileURLWithPath: backup.originalPath)),
+              try DataPathIdentity.capture(recordedApp).matchesFilesystemObject(DataPathIdentity.capture(current)) else { return false }
+        let expected = backup.cleanup?.applicationFingerprint ?? originalFingerprint
+        guard try SignatureSnapshot.fingerprint(of: current) == expected else { return false }
+        try finishBackupCleanup(backup, appURL: current, applicationFingerprint: expected)
+        AppLogger.shared.logContext("已清理未使用的原始签名备份", details: [("bundle_id", bundleIdentifier)])
+        return true
     }
 
     /// 备份目录里是否存在任何签名备份。
@@ -440,7 +478,7 @@ actor CodeSigner {
 
     // MARK: - Backup Management
 
-    private struct SignatureBackup: Codable {
+    private struct SignatureBackup: Codable, Equatable {
         let bundleIdentifier: String
         let signingIdentity: String
         let originalPath: String
@@ -450,12 +488,25 @@ actor CodeSigner {
         var originalFingerprint: String? = nil
         var restorableFingerprints: [String]? = nil
         var originalSignatureWasValid: Bool? = nil
+        var cleanup: SignatureBackupCleanup? = nil
+    }
+
+    /// Native Trash moves the whole snapshot. Keep its record until the move
+    /// and record deletion both finish, including across an app restart.
+    private struct SignatureBackupCleanup: Codable, Equatable {
+        let parentIdentity: DataPathIdentity
+        let snapshotIdentity: DataPathIdentity?
+        let applicationFingerprint: String
     }
 
     private func saveOriginalSignature(appURL: URL, bundleIdentifier: String) throws -> SignatureBackup {
         let currentFingerprint = try SignatureSnapshot.fingerprint(of: appURL)
         var retiredBackup: SignatureBackup?
         if let existing = try readBackup(bundleIdentifier: bundleIdentifier) {
+            if let cleanup = existing.cleanup, cleanup.applicationFingerprint == currentFingerprint {
+                try finishBackupCleanup(existing, appURL: appURL, applicationFingerprint: currentFingerprint)
+                return try saveOriginalSignature(appURL: appURL, bundleIdentifier: bundleIdentifier)
+            }
             if existing.schemaVersion == 2, existing.restorableFingerprints?.contains(currentFingerprint) == true {
                 _ = try verifiedSnapshot(for: existing)
                 return existing
@@ -542,14 +593,77 @@ actor CodeSigner {
         try encoder.encode(backup).write(to: backupFileURL(for: backup.bundleIdentifier), options: .atomic)
     }
 
-    private func removeBackup(bundleIdentifier: String) {
+    private func removeBackup(bundleIdentifier: String, appURL: URL, applicationFingerprint: String) {
         do {
-            let snapshot = try readBackup(bundleIdentifier: bundleIdentifier).flatMap(snapshotURL(for:))
-            try fileManager.removeItem(at: backupFileURL(for: bundleIdentifier))
-            if let snapshot { try SignatureSnapshot.remove(snapshot) }
+            guard let backup = try readBackup(bundleIdentifier: bundleIdentifier) else { return }
+            try finishBackupCleanup(backup, appURL: appURL, applicationFingerprint: applicationFingerprint)
         } catch {
             AppLogger.shared.logError("签名已恢复，但备份清理未完成", error: error)
         }
+    }
+
+    private func finishBackupCleanup(_ original: SignatureBackup, appURL: URL, applicationFingerprint: String) throws {
+        let parent = backupDirectoryURL.resolvingSymlinksInPath().standardizedFileURL
+        let appURL = try Self.resolveAppURL(at: appURL)
+        // A portal can accidentally point into the backup directory. Matching
+        // fingerprints must never authorize moving the live application away.
+        guard appURL.path != parent.path, !appURL.path.hasPrefix(parent.path + "/"),
+              Self.bundleIdentifier(at: appURL) == original.bundleIdentifier else {
+            throw SigningError.applicationChanged
+        }
+        let appIdentity = try DataPathIdentity.capture(appURL)
+        guard try SignatureSnapshot.fingerprint(of: appURL) == applicationFingerprint,
+              try readBackup(bundleIdentifier: original.bundleIdentifier) == original else {
+            throw SigningError.applicationChanged
+        }
+        let snapshot = snapshotURL(for: original)
+        if original.snapshotName != nil, snapshot == nil { throw SigningError.snapshotInvalid }
+        let parentIdentity = try DataPathIdentity.capture(parent)
+        var backup = original
+        if let cleanup = backup.cleanup {
+            guard cleanup.applicationFingerprint == applicationFingerprint,
+                  parentIdentity.matchesFilesystemObject(cleanup.parentIdentity) else { throw SigningError.snapshotInvalid }
+        } else {
+            // An unexplained missing snapshot is not a completed Trash move.
+            let snapshotIdentity: DataPathIdentity?
+            if let snapshot {
+                _ = try verifiedSnapshot(for: backup)
+                let identity = try DataPathIdentity.capture(snapshot)
+                guard !identity.matchesFilesystemObject(appIdentity) else { throw SigningError.applicationChanged }
+                snapshotIdentity = identity
+            } else {
+                snapshotIdentity = nil // Legacy identity-only record after explicit signature restoration.
+            }
+            backup.cleanup = .init(parentIdentity: parentIdentity, snapshotIdentity: snapshotIdentity,
+                                   applicationFingerprint: applicationFingerprint)
+            guard try readBackup(bundleIdentifier: backup.bundleIdentifier) == original else { throw SigningError.applicationChanged }
+            try writeBackup(backup)
+        }
+        guard let cleanup = backup.cleanup else { throw SigningError.snapshotInvalid }
+        if let snapshot, try backupEntryExists(snapshot) {
+            guard let expectedIdentity = cleanup.snapshotIdentity,
+                  try DataPathIdentity.capture(snapshot).matchesFilesystemObject(expectedIdentity),
+                  !expectedIdentity.matchesFilesystemObject(appIdentity) else { throw SigningError.snapshotInvalid }
+            _ = try verifiedSnapshot(for: backup)
+            guard try DataPathIdentity.capture(parent).matchesFilesystemObject(cleanup.parentIdentity),
+                  try DataPathIdentity.capture(appURL).matchesFilesystemObject(appIdentity),
+                  try SignatureSnapshot.fingerprint(of: appURL) == applicationFingerprint,
+                  try readBackup(bundleIdentifier: backup.bundleIdentifier) == backup else { throw SigningError.applicationChanged }
+            try trashBackupSnapshot(snapshot)
+            guard try !backupEntryExists(snapshot) else { throw SigningError.snapshotInvalid }
+        }
+        guard try DataPathIdentity.capture(parent).matchesFilesystemObject(cleanup.parentIdentity),
+              try DataPathIdentity.capture(appURL).matchesFilesystemObject(appIdentity),
+              try SignatureSnapshot.fingerprint(of: appURL) == applicationFingerprint,
+              try readBackup(bundleIdentifier: backup.bundleIdentifier) == backup else { throw SigningError.snapshotInvalid }
+        try deleteBackupRecordFile(backupFileURL(for: backup.bundleIdentifier))
+    }
+
+    private func backupEntryExists(_ url: URL) throws -> Bool {
+        var value = stat()
+        if lstat(url.path, &value) == 0 { return true }
+        guard errno == ENOENT else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSFilePathErrorKey: url.path]) }
+        return false
     }
 
     private func backupFileURL(for bundleIdentifier: String) -> URL {
