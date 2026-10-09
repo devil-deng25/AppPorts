@@ -63,6 +63,20 @@ final class MigrationSafetyRenderTests: XCTestCase {
         XCTAssertTrue(roundTrip.canCleanup)
         try await render(DataTransferReviewView(group: roundTrip, onCleanup: {}), size: NSSize(width: 580, height: 620),
                          to: output.appendingPathComponent("restored-directory-copies.png"))
+        var cleanupPending = restored
+        cleanupPending.phase = .cleanupRequested
+        cleanupPending.recoverableReason = "旧副本的清理记录暂时写入失败，可重试完成。"
+        let pendingGroup = DataTransferGroup(transfer: cleanupPending)
+        XCTAssertEqual(pendingGroup.state, .restored)
+        XCTAssertTrue(pendingGroup.canCleanup)
+        try await render(DataTransferReviewView(group: pendingGroup, onCleanup: {}), size: NSSize(width: 580, height: 620),
+                         to: output.appendingPathComponent("cleanup-warning-retry.png"))
+        var verified = retained
+        verified.phase = .needsRecovery
+        verified.recoverableReason = "副本已完成，保存切换记录时中断。"
+        XCTAssertNotNil(DataTransferGroup(transfer: verified).resumeTransfer)
+        try await render(DataTransferReviewView(transfer: verified, onCleanup: {}, onResume: {}), size: NSSize(width: 580, height: 620),
+                         to: output.appendingPathComponent("verified-switch-retry.png"))
         let incomplete = fixtureTransfer(phase: .needsRecovery)
         try await render(DataTransferReviewView(transfer: incomplete, onCleanup: {}), size: NSSize(width: 580, height: 720),
                    to: output.appendingPathComponent("incomplete-copy.png"))

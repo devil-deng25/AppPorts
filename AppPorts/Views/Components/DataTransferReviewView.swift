@@ -6,18 +6,20 @@ struct DataTransferReviewView: View {
     let group: DataTransferGroup
     let onCleanup: () -> Void
     let onUnlock: (() -> Void)?
+    let onResume: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var confirmCleanup = false
     @State private var contentHeight: CGFloat = 320
 
-    init(transfer: DataTransferRecord, onCleanup: @escaping () -> Void, onUnlock: (() -> Void)? = nil) {
-        self.init(group: DataTransferGroup(transfer: transfer), onCleanup: onCleanup, onUnlock: onUnlock)
+    init(transfer: DataTransferRecord, onCleanup: @escaping () -> Void, onUnlock: (() -> Void)? = nil, onResume: (() -> Void)? = nil) {
+        self.init(group: DataTransferGroup(transfer: transfer), onCleanup: onCleanup, onUnlock: onUnlock, onResume: onResume)
     }
 
-    init(group: DataTransferGroup, onCleanup: @escaping () -> Void, onUnlock: (() -> Void)? = nil) {
+    init(group: DataTransferGroup, onCleanup: @escaping () -> Void, onUnlock: (() -> Void)? = nil, onResume: (() -> Void)? = nil) {
         self.group = group
         self.onCleanup = onCleanup
         self.onUnlock = onUnlock
+        self.onResume = onResume
     }
 
     var body: some View {
@@ -41,6 +43,9 @@ struct DataTransferReviewView: View {
                 Button("关闭".localized) { dismiss() }.keyboardShortcut(.cancelAction)
                 if group.canCleanup {
                     Button("校验并清理这些副本".localized, role: .destructive) { confirmCleanup = true }
+                } else if group.resumeTransfer != nil, let onResume {
+                    Button("重试".localized) { dismiss(); onResume() }
+                        .buttonStyle(.borderedProminent)
                 } else if group.unlockTransfer != nil, let onUnlock {
                     Button("检查并解除锁定".localized) { dismiss(); onUnlock() }
                         .buttonStyle(.borderedProminent)
@@ -83,8 +88,14 @@ struct DataTransferReviewView: View {
                 }
             }
             if group.state == .needsAttention {
-                ForEach(group.transfers.filter { ![.awaitingUserVerification, .cleanupRequested].contains($0.phase) || $0.recoverableReason != nil }) { transfer in
+                ForEach(group.transfers.filter { !$0.isDataSwitchComplete || $0.recoverableReason != nil }) { transfer in
                     recoveryDetails(transfer)
+                }
+            } else {
+                ForEach(group.transfers.filter { $0.recoverableReason != nil }) { transfer in
+                    Text(verbatim: transfer.recoverableReason ?? "")
+                        .font(.callout).foregroundStyle(.orange).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -93,6 +104,12 @@ struct DataTransferReviewView: View {
     private var reviewDescription: String {
         if group.state != .needsAttention {
             return "数据已就位。以下是保留的历史副本，可以一起校验并清理。".localized
+        }
+        if group.resumeTransfer != nil {
+            return "副本已校验。重试会检查当前数据与入口，继续完成操作。".localized
+        }
+        if group.unlockTransfer?.isUnstartedSymlinkRestore == true {
+            return "还原尚未生成副本。检查原入口和外部数据后解除锁定，即可重新还原。".localized
         }
         if group.unlockTransfer != nil {
             return "检查原目录与目标位置；确认尚未生成副本后解除锁定，即可重新迁移。".localized

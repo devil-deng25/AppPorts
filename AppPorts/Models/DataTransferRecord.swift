@@ -91,6 +91,16 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     var legacyMountFlags: UInt32? = nil
     /// Identity of our private empty mount point, recorded before the mount attempt.
     var recoveryMountPointIdentity: DataPathIdentity? = nil
+    /// Persisted after the retained copy is verified and before deletion. Its
+    /// parent identity distinguishes an already deleted copy from an offline
+    /// disk or a replacement directory when cleanup resumes after a restart.
+    var cleanupParentIdentity: DataPathIdentity? = nil
+    /// An absent APFS volume counts as deleted only while this exact container
+    /// is online and its complete volume list confirms the UUID is absent.
+    var cleanupVolumeContainerUUID: String? = nil
+    /// Preserve the exact proposed mount across a verified switch interruption.
+    /// It is never reconstructed from a volume name or a current mount path.
+    var recoveryMountRecord: ContainerMountRecord? = nil
     var recoverableReason: String?
 
     init(operationID: UUID = UUID(), mode: Mode, direction: Direction, sourceID: String? = nil,
@@ -135,6 +145,34 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
             && backupPath != nil && stagingPath != nil
     }
 
+    /// Cleanup errors do not undo the committed data switch.
+    var isDataSwitchComplete: Bool {
+        [.awaitingUserVerification, .cleanupRequested].contains(phase)
+    }
+
+    /// A UI candidate; resuming still verifies the ledger, both copies and the
+    /// actual entry before continuing the existing operation.
+    var isVerifiedSwitchRecoverable: Bool {
+        [.verified, .switching, .needsRecovery].contains(phase)
+            && baseline != nil && destinationIdentity != nil && cleanupParentIdentity == nil
+            && backupPath != nil && sourceIdentity.isResolved
+            && (mode == .symlink || direction == .restore || recoveryMountRecord != nil)
+    }
+
+    var isUnstartedSymlinkRestore: Bool {
+        guard mode == .symlink, direction == .restore,
+              [.preparing, .copying, .needsRecovery].contains(phase),
+              sourceIdentity.isResolved, backupIdentity == sourceIdentity,
+              destinationIdentity == nil, baseline == nil, cleanupParentIdentity == nil,
+              destinationVolumeUUID == nil, createdVolumeUUID == nil,
+              legacyRootOwnership == nil, legacyMountFlags == nil, recoveryMountPointIdentity == nil,
+              activePath == backupPath, destinationPath == originalPath,
+              let backupPath, backupPath != originalPath else { return false }
+        let original = URL(fileURLWithPath: originalPath).standardizedFileURL
+        return originalPath == original.path && stagingPath == original.deletingLastPathComponent()
+            .appendingPathComponent(".appports-restore-\(operationID)").path
+    }
+
     /// A display candidate only. Execution must also prove that the original
     /// entry has the same identity and no copy, backup or related operation exists.
     var isUnstartedSymlinkMigration: Bool {
@@ -145,7 +183,7 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
               destinationIdentity == nil, backupIdentity == nil, baseline == nil,
               createdVolumeUUID == nil, stagingPath == nil,
               legacyRootOwnership == nil, legacyMountFlags == nil,
-              recoveryMountPointIdentity == nil else { return false }
+              recoveryMountPointIdentity == nil, cleanupParentIdentity == nil else { return false }
         let original = URL(fileURLWithPath: originalPath).standardizedFileURL
         let destination = URL(fileURLWithPath: destinationPath).standardizedFileURL
         let expectedBackup = original.deletingLastPathComponent()
@@ -156,7 +194,7 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     var topologyEntries: [DataPathTopology.Entry] {
-        let origin: DataPathTopology.Origin = [.awaitingUserVerification, .cleanupRequested].contains(phase) ? .retained : .transfer
+        let origin: DataPathTopology.Origin = isDataSwitchComplete ? .retained : .transfer
         return [originalPath, activePath, destinationPath, backupPath, stagingPath].compactMap { $0 }.map {
             .init(path: $0, origin: origin, operationID: operationID, volumeUUID: createdVolumeUUID)
         }

@@ -55,7 +55,7 @@ final class ContainerMountStore: @unchecked Sendable {
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
-            guard (2...5).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
+            guard (2...6).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
             mounts = try values.decode([ContainerMountRecord].self, forKey: .mounts)
             cleanups = try values.decode([ContainerCleanupRecord].self, forKey: .cleanups)
             transfers = schemaVersion == 2 ? [] : try values.decode([DataTransferRecord].self, forKey: .transfers)
@@ -265,6 +265,28 @@ final class ContainerMountStore: @unchecked Sendable {
         }
     }
 
+    /// A failed restore that created no copy can release its reservation. The
+    /// indexed external data stays managed and available for the next attempt.
+    func cancelUnstartedSymlinkRestore(_ expected: DataTransferRecord, verifyingFilesystem: () throws -> Void) throws {
+        try mutate { current in
+            guard let index = current.transfers.firstIndex(where: { $0.operationID == expected.operationID }),
+                  current.transfers[index] == expected, expected.isUnstartedSymlinkRestore,
+                  !current.transfers.contains(where: { $0.priorOperationID == expected.operationID }),
+                  !current.managedLinks.contains(where: { $0.operationID == expected.operationID }) else {
+                throw StoreError.conflict("Restore intent changed or copying already started")
+            }
+            if let link = current.managedLinks.first(where: { $0.originalPath == expected.originalPath }) {
+                guard link.operationID == expected.priorOperationID,
+                      link.destinationPath == expected.backupPath,
+                      link.destinationIdentity.matchesFilesystemObject(expected.sourceIdentity) else {
+                    throw StoreError.conflict("Restore no longer owns the indexed external data")
+                }
+            }
+            try verifyingFilesystem()
+            current.transfers.remove(at: index)
+        }
+    }
+
     /// The caller has verified the copy and completed the filesystem switch. Retention is normal success.
     func commitMigration(record: ContainerMountRecord?, transfer: DataTransferRecord) throws {
         try mutate { current in
@@ -348,6 +370,33 @@ final class ContainerMountStore: @unchecked Sendable {
             completed.transfers.removeAll { $0.operationID == operationID }
             try self.validate(completed)
             transfer.phase = .cleanupRequested
+            transfer.recoverableReason = nil
+            try self.replaceTransfer(transfer, in: &current)
+        }
+    }
+
+    func beginCleanupDeletion(operationID: UUID, parentIdentity: DataPathIdentity, volumeContainerUUID: String? = nil) throws {
+        try mutate { current in
+            guard var transfer = current.transfers.first(where: { $0.operationID == operationID }),
+                  transfer.phase == .cleanupRequested, parentIdentity.isResolved else {
+                throw StoreError.invalidState("Verified cleanup must be requested before deleting")
+            }
+            if let existing = transfer.cleanupParentIdentity {
+                guard existing.matchesFilesystemObject(parentIdentity) else {
+                    throw StoreError.conflict("Retained copy parent changed")
+                }
+            } else {
+                transfer.cleanupParentIdentity = parentIdentity
+            }
+            if let volumeContainerUUID {
+                guard transfer.mode == .mount, transfer.direction == .restore, !volumeContainerUUID.isEmpty,
+                      transfer.cleanupVolumeContainerUUID == nil
+                        || self.sameUUID(transfer.cleanupVolumeContainerUUID, volumeContainerUUID) else {
+                    throw StoreError.conflict("Retained volume container changed")
+                }
+                transfer.cleanupVolumeContainerUUID = volumeContainerUUID
+            }
+            transfer.recoverableReason = nil
             try self.replaceTransfer(transfer, in: &current)
         }
     }
@@ -394,7 +443,8 @@ final class ContainerMountStore: @unchecked Sendable {
         // side of an ordinary copy. Keep that contract in its opaque baseline
         // while preventing older clients from executing against it.
         let needsCompatibilitySchema = try document.transfers.contains { try self.hasOwnershipCompatibility($0) }
-        document.schemaVersion = max(document.schemaVersion, needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
+        let needsCleanupSchema = document.transfers.contains { $0.cleanupParentIdentity != nil || $0.recoveryMountRecord != nil }
+        document.schemaVersion = max(document.schemaVersion, needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
         // Removing a mount also resolves its remount-only block; transfer recovery remains independent.
         let activeVolumes = Set(document.mounts.map { $0.volumeUUID.uppercased() })
         document.remountInterventions = document.remountInterventions.filter { activeVolumes.contains($0.key) }
@@ -518,6 +568,11 @@ final class ContainerMountStore: @unchecked Sendable {
               old.destinationVolumeUUID == nil || sameUUID(old.destinationVolumeUUID, transfer.destinationVolumeUUID),
               old.backupIdentity == nil || old.backupIdentity == transfer.backupIdentity,
               old.baseline == nil || old.baseline == transfer.baseline,
+              old.recoveryMountRecord == nil || old.recoveryMountRecord == transfer.recoveryMountRecord,
+              old.cleanupParentIdentity == transfer.cleanupParentIdentity
+                || (old.phase == .cleanupRequested && transfer.phase == .cleanupRequested && old.cleanupParentIdentity == nil),
+              old.cleanupVolumeContainerUUID == transfer.cleanupVolumeContainerUUID
+                || (old.phase == .cleanupRequested && transfer.phase == .cleanupRequested && old.cleanupVolumeContainerUUID == nil),
               old.recoveryMountPointIdentity == transfer.recoveryMountPointIdentity
                 || (old.isUnstartedMountRestore && transfer.isUnstartedMountRestore && old.recoveryMountPointIdentity == nil),
               old.legacyRootOwnership == transfer.legacyRootOwnership
@@ -673,6 +728,26 @@ final class ContainerMountStore: @unchecked Sendable {
             }
             if transfer.phase == .needsRecovery {
                 guard let reason = transfer.recoverableReason, !reason.isEmpty else { throw StoreError.invalidState("Recovery needs an explanation") }
+            }
+            if let parent = transfer.cleanupParentIdentity {
+                guard document.schemaVersion >= 6, parent.isResolved, transfer.phase == .cleanupRequested,
+                      transfer.backupIdentity != nil, transfer.backupPath != nil, transfer.baseline != nil else {
+                    throw StoreError.invalidState("Invalid retained-copy cleanup checkpoint")
+                }
+            }
+            if let container = transfer.cleanupVolumeContainerUUID {
+                guard transfer.cleanupParentIdentity != nil, transfer.mode == .mount, transfer.direction == .restore,
+                      !container.isEmpty else { throw StoreError.invalidState("Invalid volume deletion checkpoint") }
+            }
+            if let mount = transfer.recoveryMountRecord {
+                guard document.schemaVersion >= 6, transfer.mode == .mount,
+                      mount.schemaVersion == ContainerMountRecord.currentSchemaVersion,
+                      validPath(mount.externalRootPath), mount.mountPointPath == transfer.originalPath,
+                      mount.appName == transfer.appName, mount.bundleIdentifier == transfer.bundleIdentifier,
+                      mount.dataDirType == transfer.dataDirType,
+                      sameUUID(mount.volumeUUID, transfer.direction == .migrate ? transfer.createdVolumeUUID : transfer.sourceIdentity.volumeUUID) else {
+                    throw StoreError.invalidState("Invalid mount switch recovery record")
+                }
             }
             for mount in document.mounts {
                 for entry in transfer.topologyEntries where DataPathTopology.overlaps(DataPathTopology.relationship(entry.path, mount.mountPointPath)) {

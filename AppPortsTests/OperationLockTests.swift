@@ -182,17 +182,28 @@ final class OperationLockTests: XCTestCase {
         )
         XCTAssertFalse(dataDirsViewSource.contains("OperationLock.shared"))
         XCTAssertFalse(agentSource.contains("OperationLock.shared"))
-        // 拿不到锁时只能停下：每个调用点都要先判断并 return，之后才碰卷。
-        for callSite in dataDirsViewSource.components(separatedBy: "await operationLock.acquire(").dropFirst() {
-            guard let guardRange = callSite.range(of: "if !lockAcquired {"),
-                  let migratorRange = callSite.range(of: "ContainerVolumeMigrator()") else {
-                XCTFail("拿锁之后没有找到「拿不到锁就停下」的判断或挂载调用，审计失效")
+        // Audit each operation's own function so a later function cannot supply
+        // its guard accidentally. Both guard/throw and if/return stop execution.
+        let operations = ["migrateAndComplete", "restoreAndComplete", "normalizeManagedLinkAndComplete",
+                          "createLink", "mount", "unmount", "resumeVerifiedTransfer", "cancelUnstartedRestore",
+                          "cancelUnstartedMigration", "cleanupRetainedTransfer", "retryCleanup", "discardCleanupRecord"]
+        for function in dataDirsViewSource.components(separatedBy: "\n    private func ").dropFirst() {
+            guard let mutation = operations.compactMap({ function.range(of: ".\($0)(") })
+                .min(by: { $0.lowerBound < $1.lowerBound }) else { continue }
+            let name = String(function.prefix { $0 != "(" })
+            guard let acquire = function.range(of: "await operationLock.acquire("), acquire.lowerBound < mutation.lowerBound else {
+                XCTFail("\(name) must acquire its own cross-process lock before its first data operation")
                 continue
             }
-            XCTAssertLessThan(guardRange.lowerBound, migratorRange.lowerBound, "必须先判断是否拿到锁，再动卷")
+            let callSite = function[acquire.upperBound..<mutation.lowerBound]
+            guard let rejection = callSite.range(of: "if !lockAcquired {") ?? callSite.range(of: "guard lockAcquired else {") else {
+                XCTFail("\(name) must reject a failed lock acquisition before its first data operation")
+                continue
+            }
+            let rejectedPath = callSite[rejection.upperBound...]
             XCTAssertTrue(
-                callSite[guardRange.upperBound..<migratorRange.lowerBound].contains("return"),
-                "拿不到锁时必须 return，不能继续挂载、卸载或还原"
+                rejectedPath.contains("return") || rejectedPath.contains("throw"),
+                "\(name) must return or throw when another operation holds the lock"
             )
         }
 

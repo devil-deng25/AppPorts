@@ -1,6 +1,280 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "副本已校验。重试会检查当前数据与入口，继续完成操作。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم التحقق من النسخ. ستفحص إعادة المحاولة البيانات الحالية ومسار الوصول قبل متابعة العملية."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑ ⠉⠕⠏⠊⠑⠎ ⠺⠑⠗⠑ ⠧⠑⠗⠊⠋⠊⠑⠙⠲ ⠠⠗⠑⠞⠗⠽ ⠺⠊⠇⠇ ⠉⠓⠑⠉⠅ ⠞⠓⠑ ⠉⠥⠗⠗⠑⠝⠞ ⠙⠁⠞⠁ ⠁⠝⠙ ⠁⠉⠉⠑⠎⠎ ⠏⠁⠞⠓ ⠃⠑⠋⠕⠗⠑ ⠉⠕⠝⠞⠊⠝⠥⠊⠝⠛⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Kopien wurden geprüft. Beim erneuten Versuch werden die aktuellen Daten und der Zugriffspfad geprüft, bevor der Vorgang fortgesetzt wird."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The copies were verified. Retry will check the current data and access path before continuing."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La kopioj estis kontrolitaj. Reprovo kontrolos la nunajn datumojn kaj alirvojon antaŭ ol daŭrigi."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las copias se han verificado. Al reintentar se comprobarán los datos actuales y la ruta de acceso antes de continuar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les copies ont été vérifiées. Une nouvelle tentative vérifiera les données actuelles et le chemin d’accès avant de poursuivre."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "प्रतियों की जाँच हो चुकी है। दोबारा प्रयास करने पर आगे बढ़ने से पहले मौजूदा डेटा और पहुँच पथ की जाँच की जाएगी।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salinan telah diverifikasi. Percobaan ulang akan memeriksa data saat ini dan jalur akses sebelum melanjutkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le copie sono state verificate. Il nuovo tentativo controllerà i dati attuali e il percorso di accesso prima di continuare."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コピーは検証済みです。再試行すると、現在のデータとアクセス先を確認してから操作を続行します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "복사본 검증이 완료되었습니다. 다시 시도하면 현재 데이터와 접근 경로를 확인한 후 작업을 계속합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De kopieën zijn geverifieerd. Bij een nieuwe poging worden de huidige gegevens en het toegangspad gecontroleerd voordat de bewerking doorgaat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopie zostały zweryfikowane. Ponowna próba sprawdzi bieżące dane i ścieżkę dostępu przed kontynuowaniem."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "As cópias foram verificadas. Uma nova tentativa verificará os dados atuais e o caminho de acesso antes de continuar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копии проверены. При повторной попытке текущие данные и путь доступа будут проверены перед продолжением."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตรวจสอบสำเนาแล้ว การลองใหม่จะตรวจสอบข้อมูลปัจจุบันและเส้นทางการเข้าถึงก่อนดำเนินการต่อ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopyalar doğrulandı. Yeniden deneme, devam etmeden önce mevcut verileri ve erişim yolunu kontrol eder."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Các bản sao đã được xác minh. Khi thử lại, dữ liệu hiện tại và đường dẫn truy cập sẽ được kiểm tra trước khi tiếp tục."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "副本已校验。重试会检查当前数据与入口，继续完成操作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "副本已校驗。重試會檢查目前的資料與存取路徑，繼續完成操作。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "副夲已校驗。偅試會檢查當偂數據與入ロ，繼續唍成操莋。"
+          }
+        }
+      }
+    },
+    "还原尚未生成副本。检查原入口和外部数据后解除锁定，即可重新还原。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "لم تُنشئ عملية الاستعادة نسخة بعد. تحقّق من المسار الأصلي والبيانات الخارجية، ثم ألغِ القفل لإعادة محاولة الاستعادة."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠗⠑⠎⠞⠕⠗⠑ ⠓⠁⠎ ⠝⠕⠞ ⠉⠗⠑⠁⠞⠑⠙ ⠁ ⠉⠕⠏⠽ ⠽⠑⠞⠲ ⠠⠉⠓⠑⠉⠅ ⠞⠓⠑ ⠕⠗⠊⠛⠊⠝⠁⠇ ⠑⠝⠞⠗⠽ ⠁⠝⠙ ⠑⠭⠞⠑⠗⠝⠁⠇ ⠙⠁⠞⠁⠂ ⠞⠓⠑⠝ ⠥⠝⠇⠕⠉⠅ ⠞⠕ ⠗⠑⠞⠗⠽ ⠗⠑⠎⠞⠕⠗⠊⠝⠛⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Wiederherstellung hat noch keine Kopie erstellt. Prüfen Sie den ursprünglichen Eintrag und die externen Daten und entsperren Sie den Vorgang, um die Wiederherstellung erneut zu versuchen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore has not created a copy yet. Check the original entry and external data, then unlock to retry restoring."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restarigo ankoraŭ ne kreis kopion. Kontrolu la originan eniron kaj la eksterajn datumojn, poste malŝlosu por reprovi la restarigon."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La restauración aún no ha creado ninguna copia. Comprueba la entrada original y los datos externos y desbloquea para volver a intentar la restauración."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La restauration n’a pas encore créé de copie. Vérifiez l’entrée d’origine et les données externes, puis déverrouillez pour relancer la restauration."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "पुनर्स्थापना ने अभी तक कोई कॉपी नहीं बनाई है। मूल पथ और बाहरी डेटा जाँचें, फिर पुनर्स्थापना दोबारा आज़माने के लिए अनलॉक करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pemulihan belum membuat salinan. Periksa entri asli dan data eksternal, lalu buka kunci untuk mencoba pemulihan lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il ripristino non ha ancora creato una copia. Controlla il percorso originale e i dati esterni, quindi sblocca per riprovare il ripristino."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "復元用のコピーはまだ作成されていません。元のパスと外部データを確認してロックを解除すると、復元を再試行できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "복원용 복사본이 아직 생성되지 않았습니다. 원래 경로와 외부 데이터를 확인한 다음 잠금을 해제하여 복원을 다시 시도하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Het herstellen heeft nog geen kopie gemaakt. Controleer de oorspronkelijke locatie en de externe gegevens en ontgrendel om het herstellen opnieuw te proberen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przywracanie nie utworzyło jeszcze kopii. Sprawdź pierwotną ścieżkę i dane zewnętrzne, a następnie odblokuj, aby ponowić przywracanie."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O restauro ainda não criou uma cópia. Verifique a entrada original e os dados externos e desbloqueie para voltar a tentar o restauro."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановление ещё не создало копию. Проверьте исходный путь и внешние данные, затем снимите блокировку, чтобы повторить восстановление."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "การกู้คืนยังไม่ได้สร้างสำเนา ตรวจสอบเส้นทางเดิมและข้อมูลภายนอก แล้วปลดล็อกเพื่อลองกู้คืนอีกครั้ง"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geri yükleme henüz bir kopya oluşturmadı. İlk yolu ve harici verileri kontrol edin, ardından geri yüklemeyi yeniden denemek için kilidi açın."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quá trình khôi phục chưa tạo bản sao. Kiểm tra đường dẫn gốc và dữ liệu bên ngoài, sau đó mở khóa để thử khôi phục lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还原尚未生成副本。检查原入口和外部数据后解除锁定，即可重新还原。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原尚未產生副本。檢查原入口和外部資料後解除鎖定，即可重新還原。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原尚未產甡副本。檢查原入口啝外部資料後解除鎖萣，即可重新還原。"
+          }
+        }
+      }
+    },
     "已迁移到外部存储" : {
       "extractionState" : "manual",
       "localizations" : {

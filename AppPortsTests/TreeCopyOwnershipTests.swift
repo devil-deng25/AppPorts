@@ -189,6 +189,66 @@ struct TreeCopyOwnershipTests {
         }
     }
 
+    @Test("Partial retained cleanup waits for the same real noowners volume and resumes after reconnection")
+    func partialCleanupAfterReconnect() async throws {
+        try await withImage { image in
+            let home = image.root.appendingPathComponent("Home")
+            let source = home.appendingPathComponent("Payload")
+            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+            try Data("latest data".utf8).write(to: source.appendingPathComponent("keep.txt"))
+            try Data("second file".utf8).write(to: source.appendingPathComponent("other.txt"))
+            let store = ContainerMountStore(fileURL: image.root.appendingPathComponent("cleanup-ledger.plist"))
+            let mover = DataDirMover(homeDir: home, store: store, runner: OwnershipTestIdleRunner())
+            let item = DataDirItem(name: "Payload", path: source, type: .custom, priority: .optional, description: "")
+            let result = try await mover.migrateAndComplete(item: item, to: image.mountPoint, progressHandler: nil)
+            #expect(result.cleanupWarning == nil)
+            try await mover.restore(item: item, progressHandler: nil)
+            let transfer = try #require(try store.transfers().first)
+            let backup = URL(fileURLWithPath: try #require(transfer.backupPath))
+            try store.requestCleanup(operationID: transfer.operationID)
+            try store.beginCleanupDeletion(operationID: transfer.operationID,
+                parentIdentity: DataPathIdentity.capture(backup.deletingLastPathComponent()))
+            try FileManager.default.removeItem(at: backup.appendingPathComponent("other.txt"))
+            let current = try TreeCopySession.snapshot(at: source)
+            try await image.detach()
+            await #expect(throws: (any Error).self) { try await mover.cleanupRetainedTransfer(operationID: transfer.operationID) }
+            #expect(try store.transfers().count == 1)
+            try await image.remount(ignoringOwnership: true)
+            try await mover.cleanupRetainedTransfer(operationID: transfer.operationID)
+            #expect(try store.transfers().isEmpty)
+            #expect(try TreeCopySession.snapshot(at: source) == current)
+            #expect(!FileManager.default.fileExists(atPath: backup.path))
+        }
+    }
+
+    @Test("An unstarted restore from a real volume root releases its failed intent")
+    func unstartedVolumeRootRestoreCanRetry() async throws {
+        try await withImage { image in
+            let home = image.root.appendingPathComponent("Home")
+            let local = home.appendingPathComponent("Volume Data")
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            try Data("volume-root payload".utf8).write(to: image.mountPoint.appendingPathComponent("payload.txt"))
+            try FileManager.default.createSymbolicLink(at: local, withDestinationURL: image.mountPoint)
+            let ledger = image.root.appendingPathComponent("root-restore.plist")
+            let store = ContainerMountStore(fileURL: ledger, writeData: { data, url in
+                let document = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+                let transfers = document?["transfers"] as? [[String: Any]] ?? []
+                if transfers.contains(where: { $0["phase"] as? String == "copying" }) { throw CocoaError(.fileWriteNoPermission) }
+                try data.write(to: url, options: .atomic)
+            })
+            let mover = DataDirMover(homeDir: home, store: store, runner: OwnershipTestIdleRunner())
+            let item = DataDirItem(name: "Volume Data", path: local, type: .custom, priority: .optional, description: "")
+            // This intentional write failure happens before the volume root is copied.
+            for _ in 0..<2 {
+                await #expect(throws: (any Error).self) { try await mover.restore(item: item, progressHandler: nil) }
+                #expect(try store.transfers().isEmpty)
+                #expect(try FileManager.default.contentsOfDirectory(atPath: home.path) == ["Volume Data"])
+                #expect(local.resolvingSymlinksInPath() == image.mountPoint.resolvingSymlinksInPath())
+                #expect(try String(contentsOf: image.mountPoint.appendingPathComponent("payload.txt"), encoding: .utf8) == "volume-root payload")
+            }
+        }
+    }
+
     @Test("DataDirMover migrates, restores and cleans its retained lineage on noowners")
     func migrationServiceRoundTrip() async throws {
         try await withImage { image in

@@ -304,6 +304,52 @@ struct DiskUtility: Sendable {
         return nil
     }
 
+    /// UUID-based inventory makes cleanup retry distinguish deletion from an
+    /// unplugged drive; a transient device identifier cannot supply that proof.
+    func apfsContainerUUID(containingVolume volumeUUID: String) async throws -> String {
+        let containers = try await apfsCleanupInventory()
+        let matches = containers.filter { $0.volumes.contains(volumeUUID.uppercased()) }
+        guard matches.count == 1, let match = matches.first else {
+            throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Retained volume is unavailable or ambiguous")
+        }
+        return match.uuid
+    }
+
+    func apfsVolumeIsPresent(_ volumeUUID: String, inContainer containerUUID: String) async throws -> Bool {
+        let containers = try await apfsCleanupInventory()
+        guard let container = containers.first(where: { $0.uuid == containerUUID.uppercased() }) else {
+            throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Retained volume's APFS container is offline")
+        }
+        guard !containers.contains(where: { $0.uuid != container.uuid && $0.volumes.contains(volumeUUID.uppercased()) }) else {
+            throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Retained volume container changed")
+        }
+        return container.volumes.contains(volumeUUID.uppercased())
+    }
+
+    private func apfsCleanupInventory() async throws -> [(uuid: String, volumes: Set<String>)] {
+        let plist = try await runPlist(["apfs", "list", "-plist"])
+        guard let values = plist["Containers"] as? [[String: Any]] else {
+            throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Missing container inventory")
+        }
+        var seenContainers: Set<String> = []
+        var seenVolumes: Set<String> = []
+        return try values.map { value in
+            guard let uuid = value["APFSContainerUUID"] as? String, !uuid.isEmpty,
+                  seenContainers.insert(uuid.uppercased()).inserted,
+                  let volumes = value["Volumes"] as? [[String: Any]] else {
+                throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Invalid container inventory")
+            }
+            let ids = try volumes.map { volume -> String in
+                guard let id = volume["APFSVolumeUUID"] as? String, !id.isEmpty,
+                      seenVolumes.insert(id.uppercased()).inserted else {
+                    throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Invalid volume inventory")
+                }
+                return id.uppercased()
+            }
+            return (uuid.uppercased(), Set(ids))
+        }
+    }
+
     func mount(volume: String, at mountPoint: URL, requireOwnership: Bool = false) async throws {
         let options = ["-mountOptions", requireOwnership ? "owners" : "noowners"]
         _ = try await run(["mount", "nobrowse", "-mountPoint", mountPoint.path] + options + [volume])
@@ -352,9 +398,21 @@ struct DiskUtility: Sendable {
         _ = try await run(arguments)
     }
 
-    func deleteAPFSVolume(_ volume: String) async throws {
-        // deleteVolume 只认设备标识；先把 Volume UUID 解析成 diskNsM。
-        let device = (try? await volumeInfo(for: volume))?.deviceIdentifier ?? volume
+    func deleteAPFSVolume(_ volumeUUID: String) async throws {
+        // Resolve the recorded volume identity, then recheck its device before
+        // deletion. A failed lookup never authorizes deletion by the input name.
+        let resolved = try await volumeInfo(for: volumeUUID)
+        let device = resolved.deviceIdentifier
+        guard !volumeUUID.isEmpty, resolved.isAPFS,
+              resolved.volumeUUID?.caseInsensitiveCompare(volumeUUID) == .orderedSame,
+              !device.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw Failure.unexpectedOutput(command: "diskutil info", output: "APFS volume identity does not match \(volumeUUID)")
+        }
+        let current = try await volumeInfo(for: device)
+        guard current.isAPFS, current.deviceIdentifier == device,
+              current.volumeUUID?.caseInsensitiveCompare(volumeUUID) == .orderedSame else {
+            throw Failure.unexpectedOutput(command: "diskutil info", output: "APFS device identity changed for \(volumeUUID)")
+        }
         _ = try await run(["apfs", "deleteVolume", device])
     }
 

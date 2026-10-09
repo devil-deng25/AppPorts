@@ -152,16 +152,59 @@ actor TreeCopySession {
         restored = true
     }
 
-    /// Delete only a freshly verified tree. The caller separately establishes
-    /// retained-object identity and exclusive cleanup ownership. Any failure
-    /// may leave a partial tree; the ledger must require recovery, never resume
-    /// by treating missing entries as permission to delete the remainder.
-    nonisolated static func removeVerifiedCopy(at root: URL, against snapshot: TreeCopySnapshot,
-                                             ownershipRole: OwnershipRole = .source) throws {
-        try Task.checkCancellation()
+    /// Locate a retained file interrupted between its exclusive rename and
+    /// unlink. A replacement at the original name never inherits that identity.
+    nonisolated static func retainedRemovalURL(at root: URL, removalID: UUID) throws -> URL? {
         let root = canonicalRoot(root)
+        let quarantine = root.deletingLastPathComponent().appendingPathComponent(removalName(removalID))
+        func exists(_ url: URL) throws -> Bool {
+            var value = stat()
+            if lstat(url.path, &value) == 0 { return true }
+            guard errno == ENOENT else { throw posix(url.path) }
+            return false
+        }
+        let originalExists = try exists(root)
+        let quarantineExists = try exists(quarantine)
+        guard !(originalExists && quarantineExists) else { throw TreeCopyError.sourceChanged(root.path) }
+        return originalExists ? root : quarantineExists ? quarantine : nil
+    }
+
+    /// Only a durable cleanup checkpoint authorizes this subset check. Every
+    /// remaining node must still have its original inode and content. Deletion
+    /// can change directory timestamps, temporary owner-write modes, and the
+    /// representative name of an internal hardlink group.
+    nonisolated static func verifyRemovalRemainder(at root: URL, against snapshot: TreeCopySnapshot,
+                                                   expectedVolumeUUID: String? = nil, removalID: UUID) throws {
+        guard let retained = try retainedRemovalURL(at: root, removalID: removalID) else {
+            throw TreeCopyError.verificationFailed(root.path)
+        }
+        let actual = try scan(retained, exclusions: snapshot.excludedRootEntries)
+        try compareRemovalRemainder(actual, snapshot, root: retained,
+                                    expectedVolumeUUID: expectedVolumeUUID, removalID: removalID)
+    }
+
+    /// Delete a freshly verified tree, or resume a checkpointed deletion. The
+    /// caller proves active data and retained-parent identity before calling.
+    nonisolated static func removeVerifiedCopy(at root: URL, against snapshot: TreeCopySnapshot,
+                                             ownershipRole: OwnershipRole = .source,
+                                             allowPartialRemoval: Bool = false,
+                                             expectedVolumeUUID: String? = nil, removalID: UUID? = nil) throws {
+        try Task.checkCancellation()
+        var root = canonicalRoot(root)
+        if allowPartialRemoval {
+            guard ownershipRole == .source, let removalID,
+                  let retained = try retainedRemovalURL(at: root, removalID: removalID) else {
+                throw TreeCopyError.verificationFailed(root.path)
+            }
+            root = retained
+        }
         let actual = try scan(root, exclusions: snapshot.excludedRootEntries)
-        try compare(actual, snapshot, identities: false, ownershipRole: ownershipRole, rootPath: root.path)
+        if allowPartialRemoval, let removalID {
+            try compareRemovalRemainder(actual, snapshot, root: root,
+                                        expectedVolumeUUID: expectedVolumeUUID, removalID: removalID)
+        } else {
+            try compare(actual, snapshot, identities: false, ownershipRole: ownershipRole, rootPath: root.path)
+        }
         let entries = Dictionary(uniqueKeysWithValues: actual.entries.map { ($0.path, $0) })
         let children = Dictionary(grouping: actual.entries.filter { !$0.path.isEmpty }.map(\.path)) {
             ($0 as NSString).deletingLastPathComponent
@@ -176,12 +219,65 @@ actor TreeCopySession {
             }
         }
         try removeNode(fd: descriptor.value, parent: parent.value, name: root.lastPathComponent, path: "", entries: entries, children: children,
-                       ownershipIsIgnored: actual.ownershipCompatibility?.sourceIgnoresOwnership == true)
+                       ownershipIsIgnored: actual.ownershipCompatibility?.sourceIgnoresOwnership == true, removalID: removalID)
+    }
+
+    nonisolated private static func removalName(_ id: UUID) -> String { ".appports-deleting-" + id.uuidString }
+
+    nonisolated private static func compareRemovalRemainder(_ actual: TreeCopySnapshot, _ expected: TreeCopySnapshot,
+                                                           root: URL, expectedVolumeUUID: String?, removalID: UUID) throws {
+        let ignoresOwnership = try permitsProjectedOwnership(expected, role: .source)
+        if !ignoresOwnership, actual.ownershipCompatibility?.sourceIgnoresOwnership == true {
+            throw TreeCopyError.ownershipDisabled(root.path)
+        }
+        if let expectedVolumeUUID { try requireVolumeUUID(expectedVolumeUUID, at: root) }
+        var byPath: [String: TreeCopySnapshot.Entry] = [:]
+        byPath.reserveCapacity(expected.entries.count)
+        for entry in expected.entries {
+            guard byPath.updateValue(entry, forKey: entry.path) == nil else {
+                throw TreeCopyError.verificationFailed(root.path)
+            }
+        }
+        let remainingPaths = Set(actual.entries.map(\.path))
+        let quarantinedName = removalName(removalID)
+        var matched: Set<String> = []
+        for entry in actual.entries {
+            let baseline: TreeCopySnapshot.Entry
+            if let exact = byPath[entry.path] {
+                baseline = exact
+            } else {
+                // A crash may leave our exclusive per-file rename behind.
+                // Match only a missing sibling with the recorded inode.
+                guard (entry.path as NSString).lastPathComponent == quarantinedName,
+                      let prior = expected.entries.first(where: {
+                          $0.kind != .directory && !remainingPaths.contains($0.path) && !matched.contains($0.path)
+                              && ($0.path as NSString).deletingLastPathComponent == (entry.path as NSString).deletingLastPathComponent
+                              && $0.identity.inode == entry.identity.inode
+                      }) else { throw TreeCopyError.verificationFailed(entry.path) }
+                baseline = prior
+            }
+            guard matched.insert(baseline.path).inserted,
+                  entry.identity.inode == baseline.identity.inode,
+                  expectedVolumeUUID != nil || entry.identity.device == baseline.identity.device,
+                  entry.kind == baseline.kind,
+                  entry.mode == baseline.mode || (entry.kind == .directory && entry.mode == baseline.mode | 0o700) else {
+                throw TreeCopyError.sourceChanged(entry.path)
+            }
+            let comparable = TreeCopySnapshot.Entry(path: entry.path, kind: baseline.kind, identity: entry.identity,
+                mode: entry.mode, uid: baseline.uid, gid: baseline.gid, flags: baseline.flags,
+                birthTime: baseline.birthTime,
+                modificationTime: baseline.kind == .directory ? entry.modificationTime : baseline.modificationTime,
+                extendedAttributes: baseline.extendedAttributes, acl: baseline.acl, size: baseline.size,
+                digest: baseline.digest, linkTarget: baseline.linkTarget, hardlinkGroup: entry.hardlinkGroup)
+            try compareEntry(entry, comparable, identities: true, compareOwnership: !ignoresOwnership)
+        }
+        guard matched.contains("") else { throw TreeCopyError.verificationFailed(root.path) }
+        if let expectedVolumeUUID { try requireVolumeUUID(expectedVolumeUUID, at: root) }
     }
 
     nonisolated private static func removeNode(fd: Int32, parent: Int32, name: String, path: String,
                                               entries: [String: TreeCopySnapshot.Entry], children: [String: [String]],
-                                              ownershipIsIgnored: Bool) throws {
+                                              ownershipIsIgnored: Bool, removalID: UUID?) throws {
         try Task.checkCancellation()
         guard let expected = entries[path] else { throw TreeCopyError.verificationFailed(path) }
         try requireOwnership(fd: fd, path: path, allowingIgnored: ownershipIsIgnored)
@@ -197,7 +293,7 @@ actor TreeCopySession {
                 let childName = (child as NSString).lastPathComponent
                 let childFD = try openNode(parent: fd, name: childName, expectedDevice: expected.identity.device)
                 try removeNode(fd: childFD.value, parent: fd, name: childName, path: child, entries: entries, children: children,
-                               ownershipIsIgnored: ownershipIsIgnored)
+                               ownershipIsIgnored: ownershipIsIgnored, removalID: removalID)
             }
             try Task.checkCancellation()
             guard try directoryNames(fd).isEmpty else { throw TreeCopyError.verificationFailed(path) }
@@ -208,11 +304,13 @@ actor TreeCopySession {
             // Move to an exclusive, unpredictable sibling before the last
             // verification. A writer recreating the original name leaves new
             // data behind and makes the parent nonempty; it is not unlinked.
-            let quarantinedName = ".appports-deleting-" + UUID().uuidString
-            guard renameatx_np(parent, name, parent, quarantinedName, UInt32(RENAME_EXCL)) == 0 else { throw posix(path) }
+            let quarantinedName = removalName(removalID ?? UUID())
+            if name != quarantinedName {
+                guard renameatx_np(parent, name, parent, quarantinedName, UInt32(RENAME_EXCL)) == 0 else { throw posix(path) }
+            }
             var removed = false
             defer {
-                if !removed {
+                if !removed && name != quarantinedName {
                     // Never replace a new entry at the original name. A crash
                     // or failed restoration leaves recognizable retained data
                     // under the recorded root for explicit recovery.

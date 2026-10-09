@@ -248,7 +248,8 @@ struct DataDirsView: View {
         }
         .sheet(item: $selectedTransferGroup) { group in
             DataTransferReviewView(group: group, onCleanup: { cleanupTransferGroup(group) },
-                                   onUnlock: { if let transfer = group.unlockTransfer { unlockUnstartedTransfer(transfer) } })
+                                   onUnlock: { if let transfer = group.unlockTransfer { recoverTransfer(transfer) } },
+                                   onResume: { if let transfer = group.resumeTransfer { recoverTransfer(transfer) } })
         }
         // 错误弹窗
         .alert("操作失败".localized, isPresented: $showError) {
@@ -265,8 +266,10 @@ struct DataDirsView: View {
             Button("重试清理".localized) {
                 if let warning = cleanupWarning { retryCleanup(warning) }
             }
-            Button("仅移除清理记录".localized) {
-                if let warning = cleanupWarning { confirmDiscardCleanupRecord(warning.cleanup) }
+            if cleanupWarning?.transferOperationID == nil {
+                Button("仅移除清理记录".localized) {
+                    if let warning = cleanupWarning { confirmDiscardCleanupRecord(warning.cleanup) }
+                }
             }
             Button("稍后".localized, role: .cancel) {}
         } message: {
@@ -1907,20 +1910,38 @@ struct DataDirsView: View {
             ] + appContextFields()
         )
         Task { @MainActor in
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
+                if lockAcquired { operationLock.release() }
                 showProgress = false
+                progressShowsBytes = true
                 AppOperationState.shared.finish(operationToken)
+            }
+            guard lockAcquired else {
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
             }
             let mover = DataDirMover()
             let normalizedTarget = normalizedManagementDestination(for: item, currentTarget: target)
             do {
-                try await mover.normalizeManagedLink(
+                let result = try await mover.normalizeManagedLinkAndComplete(
                     localPath: item.path,
                     currentExternalPath: target,
                     normalizedExternalPath: normalizedTarget
-                )
+                ) { progress in
+                    await MainActor.run {
+                        self.progressBytes = progress.copiedBytes
+                        self.progressTotalBytes = progress.totalBytes
+                        self.progressFileName = progress.currentFile
+                        self.progressShowsBytes = progress.showsByteProgress
+                    }
+                }
                 await MainActor.run {
                     self.reloadCurrentTab()
+                    self.dataCompletionWarning = result.cleanupWarning ?? ""
+                    self.showDataCompletionWarning = result.cleanupWarning != nil
                 }
             } catch {
                 AppLogger.shared.logError(
@@ -1960,9 +1981,18 @@ struct DataDirsView: View {
             ] + appContextFields()
         )
         Task { @MainActor in
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
+                if lockAcquired { operationLock.release() }
                 showProgress = false
+                progressShowsBytes = true
                 AppOperationState.shared.finish(operationToken)
+            }
+            guard lockAcquired else {
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
             }
             let mover = DataDirMover()
             do {
@@ -2112,6 +2142,7 @@ struct DataDirsView: View {
             let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
                 showProgress = false
+                progressShowsBytes = true
                 AppOperationState.shared.finish(operationToken)
                 if lockAcquired { operationLock.release() }
             }
@@ -2131,7 +2162,7 @@ struct DataDirsView: View {
             }
             let migrator = ContainerVolumeMigrator()
             do {
-                let result = try await migrator.migrate(
+                let result = try await migrator.migrateAndComplete(
                     item: item,
                     externalRootURL: dest,
                     appName: appName,
@@ -2141,6 +2172,7 @@ struct DataDirsView: View {
                         self.progressBytes = progress.copiedBytes
                         self.progressTotalBytes = progress.totalBytes
                         self.progressFileName = progress.currentFile
+                        self.progressShowsBytes = progress.showsByteProgress
                     }
                 }
                 AppLogger.shared.logContext(
@@ -2332,6 +2364,7 @@ struct DataDirsView: View {
             let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
                 showProgress = false
+                progressShowsBytes = true
                 AppOperationState.shared.finish(operationToken)
                 if lockAcquired { operationLock.release() }
             }
@@ -2350,11 +2383,12 @@ struct DataDirsView: View {
                 return
             }
             do {
-                let warning = try await ContainerVolumeMigrator().restore(record: record, estimatedTotalBytes: item.sizeBytes) { progress in
+                let warning = try await ContainerVolumeMigrator().restoreAndComplete(record: record, estimatedTotalBytes: item.sizeBytes) { progress in
                     await MainActor.run {
                         self.progressBytes = progress.copiedBytes
                         self.progressTotalBytes = progress.totalBytes
                         self.progressFileName = progress.currentFile
+                        self.progressShowsBytes = progress.showsByteProgress
                     }
                 }
                 AppLogger.shared.logContext(
@@ -2388,18 +2422,21 @@ struct DataDirsView: View {
         showCleanupWarning = true
     }
 
-    private func unlockUnstartedTransfer(_ transfer: DataTransferRecord) {
-        guard transfer.isUnstartedSymlinkMigration, let token = AppOperationState.shared.begin() else { return }
+    private func recoverTransfer(_ transfer: DataTransferRecord) {
+        guard transfer.isUnstartedSymlinkMigration || transfer.isUnstartedSymlinkRestore || transfer.isVerifiedSwitchRecoverable,
+              let token = AppOperationState.shared.begin() else { return }
         showProgress = true
-        progressTitle = "检查并解除锁定".localized
+        progressTitle = transfer.isVerifiedSwitchRecoverable ? "重试".localized : "检查并解除锁定".localized
         progressBytes = 0
         progressTotalBytes = 0
         progressFileName = ""
+        progressShowsBytes = false
         Task { @MainActor in
             let operationLock = OperationLock()
             let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
                 showProgress = false
+                progressShowsBytes = true
                 AppOperationState.shared.finish(token)
                 if lockAcquired { operationLock.release() }
                 reloadCurrentTab()
@@ -2410,7 +2447,27 @@ struct DataDirsView: View {
                 return
             }
             do {
-                try await DataDirMover().cancelUnstartedMigration(operationID: transfer.operationID)
+                if transfer.isVerifiedSwitchRecoverable {
+                    let progress: FileCopier.ProgressHandler = { value in
+                        await MainActor.run {
+                            self.progressFileName = value.currentFile
+                            self.progressShowsBytes = value.showsByteProgress
+                            self.progressBytes = value.copiedBytes
+                            self.progressTotalBytes = value.totalBytes
+                        }
+                    }
+                    let warning: String?
+                    if transfer.mode == .mount {
+                        warning = try await ContainerVolumeMigrator().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
+                    } else {
+                        warning = try await DataDirMover().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
+                    }
+                    if let warning { dataCompletionWarning = warning; showDataCompletionWarning = true }
+                } else if transfer.isUnstartedSymlinkRestore {
+                    try await DataDirMover().cancelUnstartedRestore(operationID: transfer.operationID)
+                } else {
+                    try await DataDirMover().cancelUnstartedMigration(operationID: transfer.operationID)
+                }
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true

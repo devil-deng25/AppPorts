@@ -1360,7 +1360,7 @@ final class DataDirScannerTests: XCTestCase {
     }
 
     func testCompletedRestoreIsMigratableWithTwoRetainedCopiesUnlessEntryChangedOrRecoveryIsPending() async throws {
-        for state in ["restored", "used-after-restore", "replaced", "needs-recovery"] {
+        for state in ["restored", "used-after-restore", "cleanup-retry", "replaced", "needs-recovery"] {
             let workspace = try makeWorkspace()
             defer { cleanupWorkspace(workspace.rootURL) }
             let bundleID = "com.example.restored"
@@ -1382,6 +1382,10 @@ final class DataDirScannerTests: XCTestCase {
             switch state {
             case "used-after-restore":
                 try Data("used-locally".utf8).write(to: source.appendingPathComponent("payload.txt"))
+            case "cleanup-retry":
+                restored.phase = .cleanupRequested
+                restored.recoverableReason = "Cleanup can retry after the completed restore"
+                try store.updateTransfer(restored)
             case "replaced":
                 try fileManager.moveItem(at: source, to: source.appendingPathExtension("previous"))
                 try createDirectoryWithPayload(at: source)
@@ -1398,7 +1402,7 @@ final class DataDirScannerTests: XCTestCase {
                 externalRootURL: workspace.externalRootURL)
             let scanned = try XCTUnwrap(items.first { $0.path.standardizedFileURL == source.standardizedFileURL })
             XCTAssertEqual(scanned.status, DataDirStatus.local, state)
-            XCTAssertEqual(scanned.isMigratable, ["restored", "used-after-restore"].contains(state), state)
+            XCTAssertEqual(scanned.isMigratable, ["restored", "used-after-restore", "cleanup-retry"].contains(state), state)
             XCTAssertEqual(scanned.recoveryOperationID, restored.operationID, state)
             XCTAssertNil(scanned.linkedDestination, state)
             XCTAssertTrue(scanned.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false), state)

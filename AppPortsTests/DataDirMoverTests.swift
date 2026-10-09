@@ -1211,7 +1211,7 @@ final class DataDirMoverTests: XCTestCase {
         XCTAssertEqual(try store.transfers().first?.phase, .awaitingUserVerification)
     }
 
-    func testCleanupCompletionWriteFailureStillRequiresRecoveryAfterPhysicalDeletion() async throws {
+    func testCleanupCompletionWriteFailureCanFinishAfterReopening() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }
         let local = workspace.homeURL.appendingPathComponent("Cache")
@@ -1228,23 +1228,19 @@ final class DataDirMoverTests: XCTestCase {
         do { try await mover.cleanupRetainedTransfer(operationID: transfer.operationID); XCTFail("Failed completion record must be surfaced") }
         catch { }
         XCTAssertFalse(fileManager.fileExists(atPath: try XCTUnwrap(transfer.backupPath)))
-        XCTAssertEqual(try store.transfer(operationID: transfer.operationID)?.phase, .needsRecovery)
+        XCTAssertEqual(try store.transfer(operationID: transfer.operationID)?.phase, .cleanupRequested)
         XCTAssertEqual(try String(contentsOf: local.appendingPathComponent("payload.txt")), "keep-active")
         let file = workspace.rootURL.appendingPathComponent("finish-failure.plist")
-        let ledger = try Data(contentsOf: file)
         let recovery = try XCTUnwrap(try store.transfer(operationID: transfer.operationID))
+        XCTAssertNotNil(recovery.cleanupParentIdentity)
         let active = URL(fileURLWithPath: recovery.destinationPath)
         let activeSnapshot = try TreeCopySession.snapshot(at: active)
         let linkIdentity = try DataPathIdentity.capture(local)
         for _ in 0..<2 {
             let coldStore = ContainerMountStore(fileURL: file)
             let coldMover = DataDirMover(homeDir: workspace.homeURL, store: coldStore, runner: NoFixtureWriters())
-            do {
-                try await coldMover.cleanupRetainedTransfer(operationID: transfer.operationID)
-                XCTFail("Persisted recovery must refuse a second physical cleanup")
-            } catch { }
-            XCTAssertEqual(try coldStore.unfinishedTransfers(), [recovery])
-            XCTAssertEqual(try Data(contentsOf: file), ledger)
+            try await coldMover.cleanupRetainedTransfer(operationID: transfer.operationID)
+            XCTAssertTrue(try coldStore.unfinishedTransfers().isEmpty)
             XCTAssertFalse(fileManager.fileExists(atPath: try XCTUnwrap(recovery.backupPath)))
             XCTAssertEqual(try DataPathIdentity.capture(local), linkIdentity)
             try assertSymlink(local, pointsTo: active)

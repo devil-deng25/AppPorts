@@ -799,10 +799,9 @@ actor DataDirScanner {
                 URL(fileURLWithPath: $0.originalPath).standardizedFileURL.path
             }
             for (path, history) in histories {
-                guard history.allSatisfy({
-                    $0.mode == .symlink && [.awaitingUserVerification, .cleanupRequested].contains($0.phase)
-                        && $0.recoverableReason == nil
-                }), !inspection.managedLinks.contains(where: { $0.originalPath == path }) else { continue }
+                guard history.allSatisfy({ $0.isDataSwitchComplete }),
+                      !inspection.managedLinks.contains(where: { $0.originalPath == path }),
+                      !inspection.mounts.contains(where: { $0.mountPointPath == path }) else { continue }
                 let terminals = history.filter { candidate in
                     !history.contains { $0.priorOperationID == candidate.operationID }
                 }
@@ -811,6 +810,7 @@ actor DataDirScanner {
                       let expected = restored.destinationIdentity,
                       let current = try? DataPathIdentity.capture(URL(fileURLWithPath: path)),
                       expected.matchesFilesystemObject(current),
+                      !DiskUtility.isMountPoint(URL(fileURLWithPath: path)),
                       (try? fileManager.destinationOfSymbolicLink(atPath: path)) == nil else { continue }
                 completedRestores[path] = restored
             }
@@ -846,7 +846,7 @@ actor DataDirScanner {
             // Retention is a separate housekeeping task after a completed
             // restore. The execution workflow verifies and finishes its lineage
             // before reusing an old destination.
-            if [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase), transfer.recoverableReason == nil,
+            if transfer.isDataSwitchComplete,
                item.pathPolicy?.reason != .runtimeConflict, item.pathPolicy?.reason != .readFailure {
                 let policy = DataPathPolicy(homeDirectory: homeDir).evaluate(item.path)
                 let canContinue = completedRestores[source.path] != nil && item.status == DataDirStatus.local

@@ -149,35 +149,26 @@ struct DataTransferCompletionTests {
         #expect(try fixture.payload(at: fixture.source) == "original")
         #expect(try fixture.store.managedLinks().count == 1)
         let retained = try #require(try fixture.store.transfers().first)
-        #expect(retained.phase == .needsRecovery)
+        #expect(retained.phase == .cleanupRequested)
+        #expect(retained.cleanupParentIdentity != nil)
         #expect(!FileManager.default.fileExists(atPath: try #require(retained.backupPath)))
+        writes.rejectCleanupCompletion(false)
+        try await fixture.mover.cleanupRetainedTransfer(operationID: retained.operationID)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.payload(at: fixture.source) == "original")
     }
 
-    @Test("Legitimate local edits require explicit old-copy review before automatic repeat migration")
-    func changedRestoredDataDoesNotCreateAnotherIntent() async throws {
+    @Test("Legitimate local edits after a historical restore are migrated without extra review")
+    func changedRestoredDataCanMigrateAgain() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let records = try await fixture.retainedRoundTrip()
         try fixture.writePayload("updated after restore", at: fixture.source)
-        let ledger = try Data(contentsOf: fixture.file)
-
-        await #expect(throws: DataDirMover.CompletionError.self) {
-            try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
-        }
-
-        #expect(try Data(contentsOf: fixture.file) == ledger)
-        #expect(fixture.isRealDirectory(fixture.source))
-        #expect(try fixture.payload(at: fixture.source) == "updated after restore")
-        #expect(try fixture.payload(at: fixture.destination) == "original")
-        #expect(FileManager.default.fileExists(atPath: try #require(records[0].backupPath)))
-
-        // Explicit review uses the existing contract: the application may have
-        // legitimately changed active data while its original remains unchanged.
-        try await fixture.mover.cleanupRetainedLineage(operationID: records[1].operationID)
-        #expect(try fixture.payload(at: fixture.source) == "updated after restore")
         let result = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
         #expect(result.cleanupWarning == nil)
         #expect(try fixture.payload(at: fixture.destination) == "updated after restore")
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: try #require(records[0].backupPath)))
     }
 
     @Test("Automatic repeat migration never removes an unrelated existing destination")

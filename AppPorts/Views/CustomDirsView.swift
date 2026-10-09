@@ -159,7 +159,8 @@ struct CustomDirsView: View {
         }
         .sheet(item: $selectedTransferGroup) { group in
             DataTransferReviewView(group: group, onCleanup: { cleanupTransferGroup(group) },
-                                   onUnlock: { if let transfer = group.unlockTransfer { unlockUnstartedTransfer(transfer) } })
+                                   onUnlock: { if let transfer = group.unlockTransfer { recoverTransfer(transfer) } },
+                                   onResume: { if let transfer = group.resumeTransfer { recoverTransfer(transfer) } })
         }
         .alert("操作失败".localized, isPresented: $showError) {
             Button("好的".localized, role: .cancel) {}
@@ -370,25 +371,48 @@ struct CustomDirsView: View {
         isScanning = false
     }
 
-    private func unlockUnstartedTransfer(_ transfer: DataTransferRecord) {
-        guard transfer.isUnstartedSymlinkMigration, let operationID = beginOperation() else { return }
+    private func recoverTransfer(_ transfer: DataTransferRecord) {
+        guard transfer.isUnstartedSymlinkMigration || transfer.isUnstartedSymlinkRestore || transfer.isVerifiedSwitchRecoverable,
+              let operationID = beginOperation() else { return }
         showProgress = true
-        progressTitle = "检查并解除锁定".localized
+        progressTitle = transfer.isVerifiedSwitchRecoverable ? "重试".localized : "检查并解除锁定".localized
         progressBytes = 0
         progressTotalBytes = 0
         progressFileName = ""
+        progressShowsBytes = false
         Task { @MainActor in
             let lock = OperationLock()
             let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
                 showProgress = false
+                progressShowsBytes = true
                 if acquired { lock.release() }
                 operationState.finish(operationID)
                 refresh()
             }
             do {
                 guard acquired else { throw DataOperationSafety.Failure.occupied(transfer.originalPath) }
-                try await DataDirMover().cancelUnstartedMigration(operationID: transfer.operationID)
+                if transfer.isVerifiedSwitchRecoverable {
+                    let progress: FileCopier.ProgressHandler = { value in
+                        await MainActor.run {
+                            self.progressFileName = value.currentFile
+                            self.progressShowsBytes = value.showsByteProgress
+                            self.progressBytes = value.copiedBytes
+                            self.progressTotalBytes = value.totalBytes
+                        }
+                    }
+                    let warning: String?
+                    if transfer.mode == .mount {
+                        warning = try await ContainerVolumeMigrator().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
+                    } else {
+                        warning = try await DataDirMover().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
+                    }
+                    if let warning { completionWarning = warning; showCompletionWarning = true }
+                } else if transfer.isUnstartedSymlinkRestore {
+                    try await DataDirMover().cancelUnstartedRestore(operationID: transfer.operationID)
+                } else {
+                    try await DataDirMover().cancelUnstartedMigration(operationID: transfer.operationID)
+                }
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true

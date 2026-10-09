@@ -73,7 +73,22 @@ struct DataTransferGroup: Equatable, Identifiable, Sendable {
     var cleanupTransfers: [DataTransferRecord] { canCleanup ? transfers : [] }
 
     var unlockTransfer: DataTransferRecord? {
-        transfers.count == 1 && currentTransfer.isUnstartedSymlinkMigration ? currentTransfer : nil
+        if transfers.count == 1 && currentTransfer.isUnstartedSymlinkMigration { return currentTransfer }
+        if currentTransfer.isUnstartedSymlinkRestore,
+           transfers.filter({ $0.operationID != currentTransfer.operationID }).allSatisfy(Self.isCompleted) { return currentTransfer }
+        return nil
+    }
+
+    var resumeTransfer: DataTransferRecord? {
+        guard isLinear else { return nil }
+        let pending = transfers.filter { !Self.isCompleted($0) }
+        guard pending.count == 1, let transfer = pending.first, transfer.isVerifiedSwitchRecoverable else { return nil }
+        if transfer.operationID == currentTransfer.operationID { return transfer }
+        // Historical builds permitted a restore after the migration's final
+        // save failed. Expose its checked bookkeeping continuation as well.
+        if currentTransfer.mode == .symlink, currentTransfer.direction == .restore, Self.isCompleted(currentTransfer),
+           transfer.direction == .migrate, transfer.backupIdentity != nil { return transfer }
+        return nil
     }
 
     init(transfer: DataTransferRecord) {
@@ -125,7 +140,7 @@ struct DataTransferGroup: Equatable, Identifiable, Sendable {
     }
 
     private static func isCompleted(_ transfer: DataTransferRecord) -> Bool {
-        [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase) && transfer.recoverableReason == nil
+        transfer.isDataSwitchComplete
     }
 
     private static func createdBefore(_ lhs: DataTransferRecord, _ rhs: DataTransferRecord) -> Bool {

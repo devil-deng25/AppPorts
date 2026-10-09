@@ -65,6 +65,7 @@ struct DataTransferGroupTests {
         #expect(!group.canCleanup)
         #expect(group.cleanupTransfers.isEmpty)
         #expect(group.unlockTransfer == nil)
+        #expect(group.resumeTransfer == restoration)
     }
 
     @Test("Ambiguous branches never offer a bulk cleanup")
@@ -75,6 +76,7 @@ struct DataTransferGroupTests {
         let group = try #require(DataTransferGroup.groups(from: [migration, first, second]).first)
         #expect(group.state == .needsAttention)
         #expect(group.cleanupTransfers.isEmpty)
+        #expect(group.resumeTransfer == nil)
     }
 
     @Test("A restored APFS volume is identified by UUID rather than an obsolete private mount point")
@@ -109,6 +111,27 @@ struct DataTransferGroupTests {
         #expect(group.unlockTransfer == migration)
         #expect(group.state == .needsAttention)
         #expect(group.retainedCopies.isEmpty)
+        #expect(group.resumeTransfer == nil)
+    }
+
+    @Test("A verified switch can resume only with completed ancestors and its original mount description")
+    func resumeEligibility() throws {
+        var migration = record(direction: .migrate)
+        migration.phase = .needsRecovery
+        migration.recoverableReason = "Interrupted"
+        #expect(DataTransferGroup(transfer: migration).resumeTransfer == migration)
+        var restoration = record(direction: .restore, prior: migration.operationID)
+        restoration.phase = .needsRecovery
+        restoration.recoverableReason = "Interrupted"
+        #expect(try #require(DataTransferGroup.groups(from: [migration, restoration]).first).resumeTransfer == nil)
+        var mount = record(direction: .migrate, mode: .mount)
+        mount.phase = .needsRecovery
+        mount.recoverableReason = "Interrupted"
+        #expect(DataTransferGroup(transfer: mount).resumeTransfer == nil)
+        mount.recoveryMountRecord = ContainerMountRecord(appName: mount.appName, bundleIdentifier: mount.bundleIdentifier,
+            dataDirType: mount.dataDirType, mountPointPath: mount.originalPath,
+            volumeUUID: "SYNTHETIC-VOLUME", volumeName: "Synthetic", externalRootPath: "/Volumes/Archive")
+        #expect(DataTransferGroup(transfer: mount).resumeTransfer == mount)
     }
 
     @Test("An external copy after successful restore is not offered as data waiting to relink")
