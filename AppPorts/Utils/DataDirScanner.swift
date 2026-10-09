@@ -789,6 +789,32 @@ actor DataDirScanner {
             let role = DataPathPolicy(homeDirectory: homeDir).evaluate(item.path).role
             item.applyPathPolicy(.init(role: role, reason: .runtimeConflict, canMigrate: false, mayDiscoverChildren: false))
         }
+        // A successful restore is usable local data. Its old copies can be
+        // finished by the next migration workflow without reserving the row.
+        // Only the exact restored entry qualifies; failed or replaced entries
+        // still need their recovery records inspected.
+        var completedRestores: [String: DataTransferRecord] = [:]
+        if inspection.validationError == nil {
+            let histories = Dictionary(grouping: inspection.transfers) {
+                URL(fileURLWithPath: $0.originalPath).standardizedFileURL.path
+            }
+            for (path, history) in histories {
+                guard history.allSatisfy({
+                    $0.mode == .symlink && [.awaitingUserVerification, .cleanupRequested].contains($0.phase)
+                        && $0.recoverableReason == nil
+                }), !inspection.managedLinks.contains(where: { $0.originalPath == path }) else { continue }
+                let terminals = history.filter { candidate in
+                    !history.contains { $0.priorOperationID == candidate.operationID }
+                }
+                guard terminals.count == 1, let restored = terminals.first, restored.direction == .restore,
+                      restored.activePath == path, restored.destinationPath == path,
+                      let expected = restored.destinationIdentity,
+                      let current = try? DataPathIdentity.capture(URL(fileURLWithPath: path)),
+                      expected.matchesFilesystemObject(current),
+                      (try? fileManager.destinationOfSymbolicLink(atPath: path)) == nil else { continue }
+                completedRestores[path] = restored
+            }
+        }
         for link in inspection.managedLinks {
             let source = URL(fileURLWithPath: link.originalPath).standardizedFileURL
             guard belongs(link.bundleIdentifier, source), let type = DataDirType(rawValue: link.dataDirType) else { continue }
@@ -816,13 +842,16 @@ actor DataDirScanner {
             if items[source.path] == nil {
                 applyInspectionResult(to: &item, inspection: inspectItem(at: source, type: type), externalRootURL: externalRootURL)
             }
-            item.recoveryOperationID = transfer.operationID
-            // Retention after success reserves the layout, but is not an error.
-            // Interrupted operations still require explicit inspection.
+            item.recoveryOperationID = completedRestores[source.path]?.operationID ?? transfer.operationID
+            // Retention is a separate housekeeping task after a completed
+            // restore. The execution workflow verifies and finishes its lineage
+            // before reusing an old destination.
             if [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase), transfer.recoverableReason == nil,
                item.pathPolicy?.reason != .runtimeConflict, item.pathPolicy?.reason != .readFailure {
-                let role = DataPathPolicy(homeDirectory: homeDir).evaluate(item.path).role
-                item.applyPathPolicy(.init(role: role, reason: .retainedOriginal, canMigrate: false, mayDiscoverChildren: false))
+                let policy = DataPathPolicy(homeDirectory: homeDir).evaluate(item.path)
+                let canContinue = completedRestores[source.path] != nil && item.status == DataDirStatus.local
+                item.applyPathPolicy(.init(role: policy.role, reason: .retainedOriginal,
+                                           canMigrate: canContinue && policy.canMigrate, mayDiscoverChildren: false))
             } else {
                 conflict(&item)
             }

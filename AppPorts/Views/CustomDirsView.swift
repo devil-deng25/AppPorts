@@ -10,6 +10,16 @@ import AppKit
 import Darwin
 
 enum CustomDirRecoveryEligibility {
+    static func isRetainedExternalCopy(config: CustomDirConfig, groups: [DataTransferGroup]) -> Bool {
+        groups.contains { group in
+            group.state == .restored
+                && URL(fileURLWithPath: group.originalPath).standardizedFileURL == config.localURL
+                && group.retainedCopies.contains { copy in
+                    copy.path.map { URL(fileURLWithPath: $0).standardizedFileURL == config.externalDestinationURL } == true
+                }
+        }
+    }
+
     static func canRestoreMissingSource(config: CustomDirConfig, managedLinks: [ManagedDataLinkRecord]) -> Bool {
         var localEntry = stat()
         guard lstat(config.localURL.path, &localEntry) != 0, errno == ENOENT,
@@ -37,22 +47,33 @@ struct CustomDirsView: View {
     @State private var showAddSheet = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var showCompletionWarning = false
+    @State private var completionWarning = ""
     @State private var retainedTransfers: [DataTransferRecord] = []
     @State private var managedLinks: [ManagedDataLinkRecord] = []
-    @State private var selectedTransfer: DataTransferRecord?
+    @State private var selectedTransferGroup: DataTransferGroup?
+    private var transferGroups: [DataTransferGroup] { DataTransferGroup.groups(from: retainedTransfers) }
 
     @State private var showProgress = false
     @State private var progressTitle = ""
     @State private var progressBytes: Int64 = 0
     @State private var progressTotalBytes: Int64 = 0
     @State private var progressFileName = ""
+    @State private var progressShowsBytes = true
 
     private var localEntries: [CustomDirEntry] {
         pairs.map(\.local)
     }
 
     private var externalEntries: [CustomDirEntry] {
-        pairs.map(\.external)
+        pairs.map { pair in
+            var entry = pair.external
+            if pair.local.status == CustomDirStatus.local,
+               CustomDirRecoveryEligibility.isRetainedExternalCopy(config: pair.config, groups: transferGroups) {
+                entry.status = CustomDirStatus.retainedCopy
+            }
+            return entry
+        }
     }
 
     private var selectedLocalPairs: [CustomDirPair] {
@@ -68,7 +89,10 @@ struct CustomDirsView: View {
     }
 
     private var relinkablePairs: [CustomDirPair] {
-        selectedExternalPairs.filter { $0.external.status == CustomDirStatus.pendingRelink }
+        selectedExternalPairs.filter {
+            $0.external.status == CustomDirStatus.pendingRelink
+                && !CustomDirRecoveryEligibility.isRetainedExternalCopy(config: $0.config, groups: transferGroups)
+        }
     }
 
     private var restorablePairs: [CustomDirPair] {
@@ -87,9 +111,9 @@ struct CustomDirsView: View {
                         Text("原件仍保留，清理后才会释放空间。".localized).foregroundStyle(.secondary)
                         Spacer()
                         Menu("副本管理".localized) {
-                            ForEach(retainedTransfers) { transfer in
-                                Button { selectedTransfer = transfer } label: {
-                                    Text(verbatim: URL(fileURLWithPath: transfer.originalPath).lastPathComponent)
+                            ForEach(transferGroups) { group in
+                                Button { selectedTransferGroup = group } label: {
+                                    Text(verbatim: group.menuTitle)
                                 }
                             }
                         }
@@ -114,7 +138,8 @@ struct CustomDirsView: View {
                     title: progressTitle,
                     copiedBytes: progressBytes,
                     totalBytes: progressTotalBytes,
-                    currentFile: progressFileName
+                    currentFile: progressFileName,
+                    showsByteProgress: progressShowsBytes
                 )
             }
         }
@@ -132,14 +157,19 @@ struct CustomDirsView: View {
                 addAndMigrateConfig(config)
             }
         }
-        .sheet(item: $selectedTransfer) { transfer in
-            DataTransferReviewView(transfer: transfer, onCleanup: { cleanupTransfer(transfer) },
-                                   onUnlock: { unlockUnstartedTransfer(transfer) })
+        .sheet(item: $selectedTransferGroup) { group in
+            DataTransferReviewView(group: group, onCleanup: { cleanupTransferGroup(group) },
+                                   onUnlock: { if let transfer = group.unlockTransfer { unlockUnstartedTransfer(transfer) } })
         }
         .alert("操作失败".localized, isPresented: $showError) {
             Button("好的".localized, role: .cancel) {}
         } message: {
             Text(errorMessage)
+        }
+        .alert("已完成，但仍有清理事项".localized, isPresented: $showCompletionWarning) {
+            Button("好的".localized, role: .cancel) {}
+        } message: {
+            Text(completionWarning)
         }
     }
 
@@ -366,22 +396,33 @@ struct CustomDirsView: View {
         }
     }
 
-    private func cleanupTransfer(_ transfer: DataTransferRecord) {
-        guard let operationID = beginOperation() else { return }
+    private func cleanupTransferGroup(_ group: DataTransferGroup) {
+        guard group.canCleanup, let operationID = beginOperation() else { return }
+        showProgress = true
+        progressTitle = "校验并清理这些副本".localized
+        progressBytes = 0
+        progressTotalBytes = 0
+        progressFileName = ""
+        progressShowsBytes = false
         Task { @MainActor in
             let lock = OperationLock()
             let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
+                showProgress = false
+                progressShowsBytes = true
                 if acquired { lock.release() }
                 operationState.finish(operationID)
                 refresh()
             }
             do {
-                guard acquired else { throw DataOperationSafety.Failure.occupied(transfer.originalPath) }
-                if transfer.mode == .mount {
-                    try await ContainerVolumeMigrator().cleanupRetainedTransfer(operationID: transfer.operationID)
-                } else {
-                    try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
+                guard acquired else { throw DataOperationSafety.Failure.occupied(group.originalPath) }
+                for transfer in group.cleanupTransfers {
+                    progressFileName = transfer.backupPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? transfer.appName
+                    if transfer.mode == .mount {
+                        try await ContainerVolumeMigrator().cleanupRetainedTransfer(operationID: transfer.operationID)
+                    } else {
+                        try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
+                    }
                 }
             } catch {
                 errorMessage = error.localizedDescription
@@ -409,13 +450,14 @@ struct CustomDirsView: View {
         }
     }
 
-    private func migratePair(_ pair: CustomDirPair, progressHandler: FileCopier.ProgressHandler?) async throws {
+    private func migratePair(_ pair: CustomDirPair, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
         let item = pair.local.dataDirItem
-        try await DataDirMover().migrate(
+        let result = try await DataDirMover().migrateAndComplete(
             item: item,
             to: pair.config.externalBaseURL,
             progressHandler: progressHandler
         )
+        return result.cleanupWarning
     }
 
     private func relinkSelected() {
@@ -431,6 +473,7 @@ struct CustomDirsView: View {
                         localPath: pair.config.localURL,
                         externalPath: pair.config.externalDestinationURL
                     )
+                    return nil
                 }
             )
         }
@@ -446,7 +489,8 @@ struct CustomDirsView: View {
                 pairs: selectedPairs,
                 operation: { pair, progressHandler in
                     let item = pair.local.dataDirItem
-                    try await DataDirMover().restore(item: item, progressHandler: progressHandler)
+                    let result = try await DataDirMover().restoreAndComplete(item: item, progressHandler: progressHandler)
+                    return result.cleanupWarning
                 }
             )
         }
@@ -492,7 +536,7 @@ struct CustomDirsView: View {
     private func runBatch(
         title: String,
         pairs selectedPairs: [CustomDirPair],
-        operation: @escaping @MainActor (CustomDirPair, FileCopier.ProgressHandler?) async throws -> Void
+        operation: @escaping @MainActor (CustomDirPair, FileCopier.ProgressHandler?) async throws -> String?
     ) async {
         guard !selectedPairs.isEmpty else { return }
 
@@ -500,26 +544,34 @@ struct CustomDirsView: View {
         progressBytes = 0
         progressTotalBytes = 0
         progressFileName = ""
+        progressShowsBytes = true
         showProgress = true
 
         let lock = OperationLock()
         let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
-        defer { if acquired { lock.release() } }
+        defer {
+            progressShowsBytes = true
+            if acquired { lock.release() }
+        }
 
+        var warnings: [String] = []
         do {
             guard acquired else { throw DataOperationSafety.Failure.occupied(selectedPairs[0].config.localPath) }
             for pair in selectedPairs {
                 await MainActor.run {
                     progressFileName = pair.config.displayName
+                    progressShowsBytes = true
                 }
 
-                try await operation(pair) { progress in
+                let warning = try await operation(pair) { progress in
                     await MainActor.run {
                         progressBytes = progress.copiedBytes
                         progressTotalBytes = progress.totalBytes
                         progressFileName = progress.currentFile.isEmpty ? pair.config.displayName : progress.currentFile
+                        progressShowsBytes = progress.showsByteProgress
                     }
                 }
+                if let warning { warnings.append(pair.config.displayName + "\n" + warning) }
             }
 
             await MainActor.run {
@@ -527,11 +579,13 @@ struct CustomDirsView: View {
                 selectedLocalIDs.removeAll()
                 selectedExternalIDs.removeAll()
                 refresh()
+                completionWarning = warnings.joined(separator: "\n\n")
+                showCompletionWarning = !warnings.isEmpty
             }
         } catch {
             await MainActor.run {
                 showProgress = false
-                errorMessage = error.localizedDescription
+                errorMessage = ([error.localizedDescription] + warnings).joined(separator: "\n\n")
                 showError = true
                 refresh()
             }

@@ -1329,7 +1329,7 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
     }
 
-    func testCompletedRetentionUsesNormalExplanationInsteadOfConflict() async throws {
+    func testRetainedMigrationWithoutCompletedRestoreStillRequiresCopyManagement() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }
         let appURL = try createAppBundle(named: "Synthetic.app", bundleID: "com.example.synthetic", in: workspace.appsURL)
@@ -1357,6 +1357,59 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertFalse(item.isMigratable)
         XCTAssertEqual(item.pathPolicy?.reason, .retainedOriginal)
         XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
+    }
+
+    func testCompletedRestoreIsMigratableWithTwoRetainedCopiesUnlessEntryChangedOrRecoveryIsPending() async throws {
+        for state in ["restored", "used-after-restore", "replaced", "needs-recovery"] {
+            let workspace = try makeWorkspace()
+            defer { cleanupWorkspace(workspace.rootURL) }
+            let bundleID = "com.example.restored"
+            let appURL = try createAppBundle(named: "Restored.app", bundleID: bundleID, in: workspace.appsURL)
+            let source = workspace.homeURL.appendingPathComponent("Library/Application Support/Restored")
+            try createDirectoryWithPayload(at: source)
+            let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("roundtrip.plist"))
+            let mover = DataDirMover(homeDir: workspace.homeURL, store: store, runner: IdleScannerFixtureRunner())
+            let item = DataDirItem(name: "Restored", path: source, type: .applicationSupport,
+                                   priority: .critical, description: "", associatedAppName: "Restored",
+                                   associatedBundleIdentifier: bundleID)
+            try await mover.migrate(item: item, to: workspace.externalRootURL, progressHandler: nil)
+            let external = source.resolvingSymlinksInPath()
+            try Data("used-on-external".utf8).write(to: external.appendingPathComponent("payload.txt"))
+            try await mover.restore(item: item, progressHandler: nil)
+            XCTAssertEqual(try store.transfers().count, 2)
+            var restored = try XCTUnwrap(try store.transfers().first { $0.direction == .restore })
+
+            switch state {
+            case "used-after-restore":
+                try Data("used-locally".utf8).write(to: source.appendingPathComponent("payload.txt"))
+            case "replaced":
+                try fileManager.moveItem(at: source, to: source.appendingPathExtension("previous"))
+                try createDirectoryWithPayload(at: source)
+            case "needs-recovery":
+                restored.phase = .needsRecovery
+                restored.recoverableReason = "Interrupted cleanup"
+                try store.updateTransfer(restored)
+            default:
+                break
+            }
+
+            let items = await DataDirScanner(homeDir: workspace.homeURL, mountStore: store).scanLibraryDirs(
+                for: AppItem(name: "Restored.app", path: appURL, status: DataDirStatus.local),
+                externalRootURL: workspace.externalRootURL)
+            let scanned = try XCTUnwrap(items.first { $0.path.standardizedFileURL == source.standardizedFileURL })
+            XCTAssertEqual(scanned.status, DataDirStatus.local, state)
+            XCTAssertEqual(scanned.isMigratable, ["restored", "used-after-restore"].contains(state), state)
+            XCTAssertEqual(scanned.recoveryOperationID, restored.operationID, state)
+            XCTAssertNil(scanned.linkedDestination, state)
+            XCTAssertTrue(scanned.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false), state)
+            XCTAssertEqual(try store.transfers().count, 2, "Scanning must not delete retained data")
+        }
+    }
+
+    private struct IdleScannerFixtureRunner: ShellCommandRunning {
+        func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
+            ShellCommandResult(status: 1, standardOutput: Data(), standardError: Data(), timedOut: false)
+        }
     }
 
     func testPersistedRemountInterventionReasonIsVisibleAfterRescan() async throws {

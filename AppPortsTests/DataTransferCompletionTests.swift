@@ -1,0 +1,354 @@
+import Darwin
+import Foundation
+import Testing
+@testable import AppPorts
+
+struct DataTransferCompletionTests {
+    @Test("Completed user flows can migrate, restore and migrate to the same target again")
+    func repeatedRoundTrip() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let mover = fixture.mover
+        let migration = try await mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        #expect(migration.cleanupWarning == nil)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.store.managedLinks().count == 1)
+        #expect(fixture.source.resolvingSymlinksInPath().path == fixture.destination.path)
+
+        let restore = try await mover.restoreAndComplete(item: fixture.item, progressHandler: nil)
+        #expect(restore.cleanupWarning == nil)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.store.managedLinks().isEmpty)
+        #expect(fixture.isRealDirectory(fixture.source))
+        #expect(!FileManager.default.fileExists(atPath: fixture.destination.path))
+        #expect(try fixture.payload(at: fixture.source) == "original")
+
+        try fixture.writePayload("latest local data", at: fixture.source)
+        let next = try await mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        #expect(next.cleanupWarning == nil)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.payload(at: fixture.destination) == "latest local data")
+        #expect(fixture.source.resolvingSymlinksInPath().path == fixture.destination.path)
+    }
+
+    @Test("Explicit cleanup of a completed restore removes its retained ancestors oldest first")
+    func retainedLineageOrder() async throws {
+        let writes = LedgerWrites()
+        let fixture = try Fixture(writeData: writes.write)
+        defer { fixture.remove() }
+        let records = try await fixture.retainedRoundTrip()
+        #expect(records.count == 2)
+        let originalBackup = URL(fileURLWithPath: try #require(records[0].backupPath))
+        let restoredIdentity = try DataPathIdentity.capture(fixture.source)
+
+        try await fixture.mover.cleanupRetainedLineage(operationID: records[1].operationID)
+
+        #expect(writes.cleanupOrder == records.map(\.operationID))
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: originalBackup.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.destination.path))
+        #expect(try DataPathIdentity.capture(fixture.source) == restoredIdentity)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+    }
+
+    @Test("A new user migration first completes the old restore chain and reuses its old target")
+    func repeatMigrationCompletesHistoricalRestore() async throws {
+        let writes = LedgerWrites()
+        let fixture = try Fixture(writeData: writes.write)
+        defer { fixture.remove() }
+        let records = try await fixture.retainedRoundTrip()
+        let originalBackup = URL(fileURLWithPath: try #require(records[0].backupPath))
+
+        let result = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+
+        #expect(result.cleanupWarning == nil)
+        #expect(Array(writes.cleanupOrder.prefix(2)) == records.map(\.operationID))
+        #expect(writes.cleanupOrder.count == 3)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: originalBackup.path))
+        #expect(fixture.source.resolvingSymlinksInPath().path == fixture.destination.path)
+        let link = try #require(try fixture.store.managedLinks().first)
+        #expect(!records.contains(where: { $0.operationID == link.operationID }))
+        #expect(try fixture.payload(at: fixture.destination) == "original")
+    }
+
+    @Test("A cleanup intent write failure is a warning after a successful data switch", arguments: [
+        DataTransferRecord.Direction.migrate, .restore
+    ])
+    func completionFailureIsNotMigrationFailure(direction: DataTransferRecord.Direction) async throws {
+        let writes = LedgerWrites()
+        let fixture = try Fixture(writeData: writes.write)
+        defer { fixture.remove() }
+        if direction == .restore {
+            try await fixture.mover.migrate(item: fixture.item, to: fixture.external, progressHandler: nil)
+        }
+        writes.rejectCleanupRequests(true)
+        let result: DataDirMover.CompletionResult
+        if direction == .restore {
+            result = try await fixture.mover.restoreAndComplete(item: fixture.item, progressHandler: nil)
+            #expect(fixture.isRealDirectory(fixture.source))
+            #expect(try fixture.store.managedLinks().isEmpty)
+        } else {
+            result = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+            #expect(fixture.source.resolvingSymlinksInPath().path == fixture.destination.path)
+            #expect(try fixture.store.managedLinks().count == 1)
+        }
+        #expect(result.cleanupWarning != nil)
+        let records = try fixture.store.transfers()
+        #expect(records.count == (direction == .restore ? 2 : 1))
+        #expect(records.allSatisfy { $0.phase == .awaitingUserVerification && $0.recoverableReason == nil })
+        for record in records {
+            #expect(FileManager.default.fileExists(atPath: try #require(record.backupPath)))
+        }
+        #expect(try fixture.payload(at: fixture.source) == "original")
+
+        writes.rejectCleanupRequests(false)
+        let terminal = try #require(records.last)
+        try await fixture.mover.cleanupRetainedLineage(operationID: terminal.operationID)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+    }
+
+    @Test("A later cleanup failure keeps the remaining restore retryable without its cleaned ancestor")
+    func laterLineageFailureCanRetry() async throws {
+        let writes = LedgerWrites()
+        let fixture = try Fixture(writeData: writes.write)
+        defer { fixture.remove() }
+        let records = try await fixture.retainedRoundTrip()
+        writes.rejectCleanupRequest(operationID: records[1].operationID)
+
+        await #expect(throws: (any Error).self) {
+            try await fixture.mover.cleanupRetainedLineage(operationID: records[1].operationID)
+        }
+
+        #expect(try fixture.store.transfer(operationID: records[0].operationID) == nil)
+        #expect(!FileManager.default.fileExists(atPath: try #require(records[0].backupPath)))
+        let remaining = try #require(try fixture.store.transfer(operationID: records[1].operationID))
+        #expect(remaining.phase == .awaitingUserVerification)
+        #expect(remaining.recoverableReason == nil)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+        #expect(try fixture.payload(at: fixture.destination) == "original")
+
+        writes.rejectCleanupRequest(operationID: nil)
+        try await fixture.mover.cleanupRetainedLineage(operationID: remaining.operationID)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+    }
+
+    @Test("A completed data switch remains successful if the deletion-completion write fails")
+    func cleanupCompletionWriteFailurePreservesActiveData() async throws {
+        let writes = LedgerWrites()
+        writes.rejectCleanupCompletion(true)
+        let fixture = try Fixture(writeData: writes.write)
+        defer { fixture.remove() }
+
+        let result = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+
+        #expect(result.cleanupWarning != nil)
+        #expect(fixture.source.resolvingSymlinksInPath().path == fixture.destination.path)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+        #expect(try fixture.store.managedLinks().count == 1)
+        let retained = try #require(try fixture.store.transfers().first)
+        #expect(retained.phase == .needsRecovery)
+        #expect(!FileManager.default.fileExists(atPath: try #require(retained.backupPath)))
+    }
+
+    @Test("Legitimate local edits require explicit old-copy review before automatic repeat migration")
+    func changedRestoredDataDoesNotCreateAnotherIntent() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let records = try await fixture.retainedRoundTrip()
+        try fixture.writePayload("updated after restore", at: fixture.source)
+        let ledger = try Data(contentsOf: fixture.file)
+
+        await #expect(throws: DataDirMover.CompletionError.self) {
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        }
+
+        #expect(try Data(contentsOf: fixture.file) == ledger)
+        #expect(fixture.isRealDirectory(fixture.source))
+        #expect(try fixture.payload(at: fixture.source) == "updated after restore")
+        #expect(try fixture.payload(at: fixture.destination) == "original")
+        #expect(FileManager.default.fileExists(atPath: try #require(records[0].backupPath)))
+
+        // Explicit review uses the existing contract: the application may have
+        // legitimately changed active data while its original remains unchanged.
+        try await fixture.mover.cleanupRetainedLineage(operationID: records[1].operationID)
+        #expect(try fixture.payload(at: fixture.source) == "updated after restore")
+        let result = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        #expect(result.cleanupWarning == nil)
+        #expect(try fixture.payload(at: fixture.destination) == "updated after restore")
+    }
+
+    @Test("Automatic repeat migration never removes an unrelated existing destination")
+    func arbitraryDestinationIsPreserved() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let records = try await fixture.retainedRoundTrip()
+        let otherBase = fixture.root.appendingPathComponent("OtherExternal")
+        let unrelated = otherBase.appendingPathComponent(fixture.source.lastPathComponent)
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        try fixture.writePayload("unrelated data", at: unrelated)
+        let ledger = try Data(contentsOf: fixture.file)
+
+        await #expect(throws: DataDirError.self) {
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: otherBase, progressHandler: nil)
+        }
+
+        #expect(try Data(contentsOf: fixture.file) == ledger)
+        #expect(try fixture.payload(at: unrelated) == "unrelated data")
+        #expect(try fixture.payload(at: fixture.source) == "original")
+        #expect(try fixture.payload(at: fixture.destination) == "original")
+        #expect(FileManager.default.fileExists(atPath: try #require(records[0].backupPath)))
+    }
+
+    @Test("A replacement at the recorded old target cannot inherit permission for automatic cleanup")
+    func replacedRetainedTargetIsPreserved() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let records = try await fixture.retainedRoundTrip()
+        let preserved = fixture.root.appendingPathComponent("PreservedExternal")
+        try FileManager.default.moveItem(at: fixture.destination, to: preserved)
+        try FileManager.default.createDirectory(at: fixture.destination, withIntermediateDirectories: false)
+        try fixture.writePayload("different directory", at: fixture.destination)
+        let ledger = try Data(contentsOf: fixture.file)
+
+        await #expect(throws: DataDirMover.CompletionError.self) {
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        }
+
+        #expect(try Data(contentsOf: fixture.file) == ledger)
+        #expect(try fixture.payload(at: fixture.destination) == "different directory")
+        #expect(try fixture.payload(at: preserved) == "original")
+        #expect(FileManager.default.fileExists(atPath: try #require(records[0].backupPath)))
+    }
+
+    @Test("Recovery records still prevent repeat migration without adding another intent")
+    func unfinishedRestoreStillBlocks() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let records = try await fixture.retainedRoundTrip()
+        var terminal = records[1]
+        terminal.phase = .needsRecovery
+        terminal.recoverableReason = "An unfinished recovery needs inspection"
+        try fixture.store.updateTransfer(terminal)
+        let ledger = try Data(contentsOf: fixture.file)
+
+        await #expect(throws: (any Error).self) {
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        }
+
+        #expect(try Data(contentsOf: fixture.file) == ledger)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+        #expect(try fixture.payload(at: fixture.destination) == "original")
+    }
+
+    private struct NoWriters: ShellCommandRunning {
+        func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
+            ShellCommandResult(status: 1, standardOutput: Data(), standardError: Data(), timedOut: false)
+        }
+    }
+
+    private struct Fixture: Sendable {
+        let root: URL
+        let home: URL
+        let source: URL
+        let external: URL
+        let destination: URL
+        let file: URL
+        let store: ContainerMountStore
+        var mover: DataDirMover { DataDirMover(homeDir: home, store: store, runner: NoWriters()) }
+        var item: DataDirItem { DataDirItem(name: "Fixture", path: source, type: .custom, priority: .optional, description: "") }
+
+        init(writeData: @escaping @Sendable (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws {
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("DataTransferCompletion-\(UUID())").resolvingSymlinksInPath()
+            home = root.appendingPathComponent("Home")
+            source = home.appendingPathComponent("Payload")
+            external = root.appendingPathComponent("External")
+            destination = external.appendingPathComponent(source.lastPathComponent)
+            file = root.appendingPathComponent("records.plist")
+            store = ContainerMountStore(fileURL: file, writeData: writeData)
+            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+            try Data("original".utf8).write(to: source.appendingPathComponent("payload.txt"))
+        }
+
+        func retainedRoundTrip() async throws -> [DataTransferRecord] {
+            let mover = self.mover
+            try await mover.migrate(item: item, to: external, progressHandler: nil)
+            let migration = try #require(try store.transfers().first)
+            try await mover.restore(item: item, progressHandler: nil)
+            let restoration = try #require(try store.transfers().first(where: { $0.priorOperationID == migration.operationID }))
+            return [migration, restoration]
+        }
+
+        func payload(at directory: URL) throws -> String {
+            try String(contentsOf: directory.appendingPathComponent("payload.txt"), encoding: .utf8)
+        }
+
+        func writePayload(_ value: String, at directory: URL) throws {
+            try Data(value.utf8).write(to: directory.appendingPathComponent("payload.txt"))
+        }
+
+        func isRealDirectory(_ url: URL) -> Bool {
+            var value = stat()
+            return lstat(url.path, &value) == 0 && value.st_mode & S_IFMT == S_IFDIR
+        }
+
+        func remove() { try? FileManager.default.removeItem(at: root) }
+    }
+
+    /// Each fixture has its own writer and lock, including when parameterized
+    /// cases execute concurrently. Only fixture ledgers are ever intercepted.
+    private final class LedgerWrites: @unchecked Sendable {
+        private let lock = NSLock()
+        private var rejectedRequests = false
+        private var rejectedOperationID: UUID?
+        private var rejectedCompletion = false
+        private var pendingCleanupIDs: Set<UUID> = []
+        private var recordedCleanupOrder: [UUID] = []
+
+        var cleanupOrder: [UUID] {
+            lock.lock()
+            defer { lock.unlock() }
+            return recordedCleanupOrder
+        }
+
+        func rejectCleanupRequests(_ value: Bool) {
+            lock.lock()
+            defer { lock.unlock() }
+            rejectedRequests = value
+        }
+
+        func rejectCleanupCompletion(_ value: Bool) {
+            lock.lock()
+            defer { lock.unlock() }
+            rejectedCompletion = value
+        }
+
+        func rejectCleanupRequest(operationID: UUID?) {
+            lock.lock()
+            defer { lock.unlock() }
+            rejectedOperationID = operationID
+        }
+
+        func write(_ data: Data, _ url: URL) throws {
+            lock.lock()
+            defer { lock.unlock() }
+            let document = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+            let records = document["transfers"] as? [[String: Any]] ?? []
+            let currentIDs = Set(records.compactMap { ($0["operationID"] as? String).flatMap(UUID.init(uuidString:)) })
+            let requestedIDs = records.compactMap { record -> UUID? in
+                guard record["phase"] as? String == DataTransferRecord.Phase.cleanupRequested.rawValue,
+                      let value = record["operationID"] as? String else { return nil }
+                return UUID(uuidString: value)
+            }
+            if rejectedRequests && !requestedIDs.isEmpty { throw CocoaError(.fileWriteNoPermission) }
+            if let rejectedOperationID, requestedIDs.contains(rejectedOperationID) { throw CocoaError(.fileWriteNoPermission) }
+            if rejectedCompletion && !pendingCleanupIDs.isSubset(of: currentIDs) { throw CocoaError(.fileWriteNoPermission) }
+            try data.write(to: url, options: .atomic)
+            for id in requestedIDs where !recordedCleanupOrder.contains(id) { recordedCleanupOrder.append(id) }
+            pendingCleanupIDs = Set(requestedIDs)
+        }
+    }
+}

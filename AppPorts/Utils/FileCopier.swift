@@ -16,6 +16,8 @@ actor FileCopier {
         /// 复制期间为调用者已有的大小估算（0 表示未知），完成时为实际复制字节数。
         let totalBytes: Int64
         let currentFile: String
+        /// Verification and cleanup are work in progress without copied-byte totals.
+        var showsByteProgress = true
 
         var percentage: Double {
             totalBytes > 0 ? min(1, max(0, Double(copiedBytes) / Double(totalBytes))) : 0

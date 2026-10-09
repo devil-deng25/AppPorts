@@ -24,6 +24,7 @@ struct SignatureRepairSheet: View {
     @State private var isRestoring = false
     @State private var restoreProgressText = ""
     @State private var errorMessage: String?
+    @State private var cleanupWarning: String?
     @State private var realAppURL: URL?
     @State private var currentAuthority: String?
     @State private var signatureRestored = false
@@ -148,6 +149,12 @@ struct SignatureRepairSheet: View {
                 Text(errorMessage)
                     .font(.caption)
                     .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let cleanupWarning {
+                Text(cleanupWarning)
+                    .font(.caption)
+                    .foregroundColor(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -281,28 +288,43 @@ struct SignatureRepairSheet: View {
         }
         isRestoring = true
         errorMessage = nil
+        cleanupWarning = nil
         let items = linkedContainerItems
         AppLogger.shared.logContext(
             "修复面板：批量还原容器目录",
             details: [("app_name", app.displayName), ("count", String(items.count))]
         )
         Task { @MainActor in
+            let lock = OperationLock()
+            let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
                 isRestoring = false
+                if acquired { lock.release() }
                 AppOperationState.shared.finish(token)
                 scanContainerItems()
+            }
+            guard acquired else {
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                return
             }
             let mover = DataDirMover()
             let outcome = await workflow.run(items: items) { item, index in
                 restoreProgressText = String(format: "正在还原 %lld / %lld：%@".localized, Int64(index + 1), Int64(items.count), item.name)
-                try await mover.restore(item: item) { progress in
+                let result = try await mover.restoreAndComplete(item: item) { progress in
                     await MainActor.run {
-                        restoreProgressText = String(
-                            format: "正在还原 %lld / %lld：%@（%@）".localized,
-                            Int64(index + 1), Int64(items.count), item.name,
-                            LocalizedByteCountFormatter.string(fromByteCount: progress.copiedBytes)
-                        )
+                        if progress.showsByteProgress {
+                            restoreProgressText = String(
+                                format: "正在还原 %lld / %lld：%@（%@）".localized,
+                                Int64(index + 1), Int64(items.count), item.name,
+                                LocalizedByteCountFormatter.string(fromByteCount: progress.copiedBytes)
+                            )
+                        } else {
+                            restoreProgressText = item.name + " · " + progress.currentFile
+                        }
                     }
+                }
+                if let warning = result.cleanupWarning {
+                    cleanupWarning = [cleanupWarning, warning].compactMap { $0 }.joined(separator: "\n\n")
                 }
             }
             switch outcome {

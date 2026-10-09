@@ -109,9 +109,12 @@ struct DataDirsView: View {
     @State private var isCheckingMountDestination = false
     @State private var pendingCleanups: [ContainerCleanupRecord] = []
     @State private var dataTransfers: [DataTransferRecord] = []
-    @State private var selectedTransfer: DataTransferRecord?
+    @State private var selectedTransferGroup: DataTransferGroup?
+    private var transferGroups: [DataTransferGroup] { DataTransferGroup.groups(from: dataTransfers) }
     @State private var cleanupWarning: ContainerVolumeMigrator.CleanupWarning?
     @State private var showCleanupWarning = false
+    @State private var dataCompletionWarning = ""
+    @State private var showDataCompletionWarning = false
 
     // 错误弹窗
     @State private var showError = false
@@ -178,9 +181,9 @@ struct DataDirsView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Menu("副本管理".localized) {
-                        ForEach(dataTransfers) { transfer in
-                            Button { selectedTransfer = transfer } label: {
-                                Text(verbatim: transfer.appName + " · " + URL(fileURLWithPath: transfer.originalPath).lastPathComponent)
+                        ForEach(transferGroups) { group in
+                            Button { selectedTransferGroup = group } label: {
+                                Text(verbatim: group.menuTitle)
                             }
                         }
                     }
@@ -243,15 +246,20 @@ struct DataDirsView: View {
         .sheet(isPresented: $showReadinessCheck) {
             ReadinessCheckSheet()
         }
-        .sheet(item: $selectedTransfer) { transfer in
-            DataTransferReviewView(transfer: transfer, onCleanup: { cleanupTransfer(transfer) },
-                                   onUnlock: { unlockUnstartedTransfer(transfer) })
+        .sheet(item: $selectedTransferGroup) { group in
+            DataTransferReviewView(group: group, onCleanup: { cleanupTransferGroup(group) },
+                                   onUnlock: { if let transfer = group.unlockTransfer { unlockUnstartedTransfer(transfer) } })
         }
         // 错误弹窗
         .alert("操作失败".localized, isPresented: $showError) {
             Button("好的".localized, role: .cancel) {}
         } message: {
             Text(errorMessage)
+        }
+        .alert("已完成，但仍有清理事项".localized, isPresented: $showDataCompletionWarning) {
+            Button("好的".localized, role: .cancel) {}
+        } message: {
+            Text(dataCompletionWarning)
         }
         .alert("已完成，但仍有清理事项".localized, isPresented: $showCleanupWarning) {
             Button("重试清理".localized) {
@@ -326,7 +334,8 @@ struct DataDirsView: View {
                                     onRestore: { askRestore($0) },
                                     onManageExistingLink: { askManageExistingLink($0) },
                                     onNormalizeManagedLink: { askNormalizeManagedLink($0) },
-                                    onRelinkExternalData: { askRelinkExternalData($0) }
+                                    onRelinkExternalData: { askRelinkExternalData($0) },
+                                    onReviewCopies: reviewCopies
                                 )
                                 .onTapGesture { selectedItemID = item.id }
                                 .padding(.horizontal, 12)
@@ -933,6 +942,7 @@ struct DataDirsView: View {
             onMount: performMount,
             onUnmount: performUnmount,
             onMountRestore: askMountRestore,
+            onReviewCopies: reviewCopies,
             classicModeActive: classicModeActive,
             inline: true
         )
@@ -1542,15 +1552,20 @@ struct DataDirsView: View {
             autoResignEnabled: capturedAutoResignEnabled,
             explicitChoice: shouldResignAssociatedApp
         )
+        dataCompletionWarning = ""
 
         Task { @MainActor in
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
                 showProgress = false
                 progressShowsBytes = true
+                if lockAcquired { operationLock.release() }
                 AppOperationState.shared.finish(operationToken)
             }
             let mover = DataDirMover()
             do {
+                guard lockAcquired else { throw DataOperationSafety.Failure.occupied(item.path.path) }
                 let signingTarget: DataMigrationWorkflow.SigningTarget?
                 if requestedSigning, let app = capturedApp {
                     signingTarget = try DataMigrationWorkflow.signingTarget(at: app.displayURL)
@@ -1600,13 +1615,15 @@ struct DataDirsView: View {
                     },
                     backupSignature: onBackupSignatureForURL,
                     migrate: {
-                        try await mover.migrate(item: item, to: dest) { progress in
+                        let result = try await mover.migrateAndComplete(item: item, to: dest) { progress in
                             await MainActor.run {
                                 self.progressBytes = progress.copiedBytes
                                 self.progressTotalBytes = progress.totalBytes
                                 self.progressFileName = progress.currentFile
+                                self.progressShowsBytes = progress.showsByteProgress
                             }
                         }
+                        await MainActor.run { self.dataCompletionWarning = result.cleanupWarning ?? "" }
                     },
                     resignApp: { url, sandboxedAppApproved in
                         try await self.onResignAppAtURL(url, sandboxedAppApproved)
@@ -1618,6 +1635,7 @@ struct DataDirsView: View {
                 )
                 await MainActor.run {
                     self.reloadCurrentTab()
+                    self.showDataCompletionWarning = !self.dataCompletionWarning.isEmpty
                 }
             } catch {
                 AppLogger.shared.logError(
@@ -1628,7 +1646,8 @@ struct DataDirsView: View {
                 )
                 await MainActor.run {
                     self.reloadCurrentTab()
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = [error.localizedDescription, self.dataCompletionWarning]
+                        .filter { !$0.isEmpty }.joined(separator: "\n\n")
                     self.showError = true
                 }
             }
@@ -1807,6 +1826,7 @@ struct DataDirsView: View {
         progressBytes = 0
         progressTotalBytes = 0
         progressFileName = ""
+        progressShowsBytes = true
         showProgress = true
         let operationID = AppLogger.shared.makeOperationID(prefix: "view-data-restore")
         AppLogger.shared.logContext(
@@ -1821,17 +1841,23 @@ struct DataDirsView: View {
         )
 
         Task { @MainActor in
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
                 showProgress = false
+                progressShowsBytes = true
+                if lockAcquired { operationLock.release() }
                 AppOperationState.shared.finish(operationToken)
             }
             let mover = DataDirMover()
             do {
-                try await mover.restore(item: item) { progress in
+                guard lockAcquired else { throw DataOperationSafety.Failure.occupied(item.path.path) }
+                let result = try await mover.restoreAndComplete(item: item) { progress in
                     await MainActor.run {
                         self.progressBytes = progress.copiedBytes
                         self.progressTotalBytes = progress.totalBytes
                         self.progressFileName = progress.currentFile
+                        self.progressShowsBytes = progress.showsByteProgress
                     }
                 }
                 AppLogger.shared.logContext(
@@ -1840,6 +1866,8 @@ struct DataDirsView: View {
                 )
                 await MainActor.run {
                     self.reloadCurrentTab()
+                    self.dataCompletionWarning = result.cleanupWarning ?? ""
+                    self.showDataCompletionWarning = result.cleanupWarning != nil
                 }
             } catch {
                 AppLogger.shared.logError(
@@ -2390,18 +2418,26 @@ struct DataDirsView: View {
         }
     }
 
-    private func cleanupTransfer(_ transfer: DataTransferRecord) {
-        guard let token = AppOperationState.shared.begin() else { return }
+    private func reviewCopies(_ item: DataDirItem) {
+        selectedTransferGroup = transferGroups.first { group in
+            group.transfers.contains { $0.operationID == item.recoveryOperationID }
+        } ?? transferGroups.first { URL(fileURLWithPath: $0.originalPath).standardizedFileURL == item.path.standardizedFileURL }
+    }
+
+    private func cleanupTransferGroup(_ group: DataTransferGroup) {
+        guard group.canCleanup, let token = AppOperationState.shared.begin() else { return }
         showProgress = true
-        progressTitle = "校验并清理原件".localized
+        progressTitle = "校验并清理这些副本".localized
         progressBytes = 0
         progressTotalBytes = 0
         progressFileName = ""
+        progressShowsBytes = false
         Task { @MainActor in
             let operationLock = OperationLock()
             let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
                 showProgress = false
+                progressShowsBytes = true
                 AppOperationState.shared.finish(token)
                 if lockAcquired { operationLock.release() }
                 reloadCurrentTab()
@@ -2412,10 +2448,13 @@ struct DataDirsView: View {
                 return
             }
             do {
-                if transfer.mode == .mount {
-                    try await ContainerVolumeMigrator().cleanupRetainedTransfer(operationID: transfer.operationID)
-                } else {
-                    try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
+                for transfer in group.cleanupTransfers {
+                    progressFileName = transfer.backupPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? transfer.appName
+                    if transfer.mode == .mount {
+                        try await ContainerVolumeMigrator().cleanupRetainedTransfer(operationID: transfer.operationID)
+                    } else {
+                        try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
+                    }
                 }
             } catch {
                 errorMessage = error.localizedDescription

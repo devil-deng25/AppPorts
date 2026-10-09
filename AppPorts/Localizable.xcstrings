@@ -1,6 +1,2061 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "已迁移到外部存储" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moved to external storage"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已遷移至外部儲存"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf externen Speicher verschoben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trasladado al almacenamiento externo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacé vers le stockage externe"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Movido para armazenamento externo"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spostato su memoria esterna"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外部ストレージに移行済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "외부 저장소로 이동됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенесено на внешний накопитель"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verplaatst naar externe opslag"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przeniesiono na nośnik zewnętrzny"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dipindahkan ke penyimpanan eksternal"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Harici depolamaya taşındı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đã chuyển sang bộ nhớ ngoài"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Movita al ekstera stokado"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बाहरी स्टोरेज में स्थानांतरित"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم النقل إلى التخزين الخارجي"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ย้ายไปยังที่จัดเก็บภายนอกแล้ว"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已遷移菿外蔀儲存"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已迁移到外部存储"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠍⠕⠧⠑⠙ ⠞⠕ ⠑⠭⠞⠑⠗⠝⠁⠇ ⠎⠞⠕⠗⠁⠛⠑"
+          }
+        }
+      }
+    },
+    "已还原到本地" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restored locally"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已還原至本機"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokal wiederhergestellt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurado localmente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restauré localement"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurado localmente"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ripristinato localmente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルに復元済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬로 복원됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановлено локально"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokaal hersteld"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przywrócono lokalnie"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dipulihkan secara lokal"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yerel olarak geri yüklendi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đã khôi phục về máy"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loke restaŭrita"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "स्थानीय रूप से बहाल"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تمت الاستعادة محليًا"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "กู้คืนลงเครื่องแล้ว"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已還原菿夲哋"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已还原到本地"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠗⠑⠎⠞⠕⠗⠑⠙ ⠇⠕⠉⠁⠇⠇⠽"
+          }
+        }
+      }
+    },
+    "需要检查" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Needs attention"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要檢查"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüfung erforderlich"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requiere revisión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérification nécessaire"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requer verificação"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verifica necessaria"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認が必要"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "확인 필요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Требуется проверка"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Controle nodig"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wymaga sprawdzenia"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Perlu diperiksa"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kontrol gerekli"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cần kiểm tra"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kontrolo necesas"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "जाँच आवश्यक"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يلزم الفحص"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ต้องตรวจสอบ"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要檢查"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要检查"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠝⠑⠑⠙⠎ ⠁⠞⠞⠑⠝⠞⠊⠕⠝"
+          }
+        }
+      }
+    },
+    "迁移前副本" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy before migration"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移前副本"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopie vor der Migration"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia anterior a la migración"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copie avant migration"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cópia anterior à migração"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia prima della migrazione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移行前のコピー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 전 복사본"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копия до переноса"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopie vóór migratie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopia sprzed migracji"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salinan sebelum migrasi"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taşıma öncesi kopya"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bản sao trước khi di chuyển"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopio antaŭ migrado"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "स्थानांतरण से पहले की प्रति"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نسخة قبل النقل"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "สำเนาก่อนย้าย"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移前副本"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迁移前副本"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠉⠕⠏⠽ ⠃⠑⠋⠕⠗⠑ ⠍⠊⠛⠗⠁⠞⠊⠕⠝"
+          }
+        }
+      }
+    },
+    "还原前副本" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy before restoration"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原前副本"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopie vor der Wiederherstellung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia anterior a la restauración"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copie avant restauration"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cópia anterior à restauração"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia prima del ripristino"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "復元前のコピー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "복원 전 복사본"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копия до восстановления"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopie vóór herstel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopia sprzed przywracania"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salinan sebelum pemulihan"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geri yükleme öncesi kopya"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bản sao trước khi khôi phục"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopio antaŭ restaŭrado"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बहाली से पहले की प्रति"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نسخة قبل الاستعادة"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "สำเนาก่อนกู้คืน"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原前副本"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还原前副本"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠉⠕⠏⠽ ⠃⠑⠋⠕⠗⠑ ⠗⠑⠎⠞⠕⠗⠁⠞⠊⠕⠝"
+          }
+        }
+      }
+    },
+    "保留副本" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retained copy"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留副本"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufbewahrte Kopie"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia conservada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copie conservée"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cópia preservada"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia conservata"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保持中のコピー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보관된 복사본"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранённая копия"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bewaarde kopie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zachowana kopia"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salinan yang disimpan"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saklanan kopya"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bản sao được giữ lại"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Konservita kopio"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "रखी गई प्रति"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نسخة محفوظة"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "สำเนาที่เก็บไว้"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "葆畱副本"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留副本"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠗⠑⠞⠁⠊⠝⠑⠙ ⠉⠕⠏⠽"
+          }
+        }
+      }
+    },
+    "校验并清理这些副本" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verify and remove these copies"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "驗證並清理這些副本"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Kopien prüfen und entfernen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verificar y eliminar estas copias"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérifier et supprimer ces copies"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verificar e remover estas cópias"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verifica e rimuovi queste copie"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "これらのコピーを検証して削除"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 복사본 확인 및 삭제"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить и удалить эти копии"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deze kopieën controleren en verwijderen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sprawdź i usuń te kopie"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verifikasi dan hapus salinan ini"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu kopyaları doğrula ve kaldır"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Xác minh và xóa các bản sao này"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kontroli kaj forigi ĉi tiujn kopiojn"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "इन प्रतियों की जाँच करके हटाएँ"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "التحقق من هذه النسخ وإزالتها"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตรวจสอบและลบสำเนาเหล่านี้"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校驗並淸理這些副本"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校验并清理这些副本"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠧⠑⠗⠊⠋⠽ ⠁⠝⠙ ⠗⠑⠍⠕⠧⠑ ⠞⠓⠑⠎⠑ ⠉⠕⠏⠊⠑⠎"
+          }
+        }
+      }
+    },
+    "数据已就位。以下是保留的历史副本，可以一起校验并清理。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your data is in place. These retained historical copies can be verified and removed together."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料已就位。以下是保留的歷史副本，可以一起驗證並清理。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Daten sind am Ziel. Diese aufbewahrten früheren Kopien können gemeinsam geprüft und entfernt werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los datos ya están en su destino. Estas copias históricas conservadas se pueden verificar y eliminar juntas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les données sont en place. Ces anciennes copies conservées peuvent être vérifiées et supprimées ensemble."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Os dados já estão no destino. Estas cópias históricas preservadas podem ser verificadas e removidas em conjunto."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I dati sono al loro posto. Queste copie storiche conservate possono essere verificate e rimosse insieme."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "データの配置は完了しています。保持されている過去のコピーは、まとめて検証して削除できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "데이터가 제자리에 있습니다. 보관된 이전 복사본을 함께 확인하고 삭제할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные на месте. Эти сохранённые старые копии можно проверить и удалить вместе."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De gegevens staan op hun plek. Deze bewaarde oude kopieën kunnen samen worden gecontroleerd en verwijderd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dane są na miejscu. Te zachowane starsze kopie można sprawdzić i usunąć razem."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data sudah berada di tempatnya. Salinan lama yang disimpan ini dapat diverifikasi dan dihapus bersama."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Veriler yerinde. Saklanan bu eski kopyalar birlikte doğrulanıp kaldırılabilir."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dữ liệu đã ở đúng vị trí. Có thể xác minh và xóa cùng lúc các bản sao cũ được giữ lại này."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La datumoj estas en sia loko. Ĉi tiuj konservitaj historiaj kopioj povas esti kontrolitaj kaj forigitaj kune."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "डेटा अपने स्थान पर है। रखी गई इन पुरानी प्रतियों की एक साथ जाँच करके उन्हें हटाया जा सकता है।"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "البيانات في مكانها. يمكن التحقق من هذه النسخ القديمة المحفوظة وإزالتها معًا."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ข้อมูลอยู่ในตำแหน่งที่เรียบร้อยแล้ว สามารถตรวจสอบและลบสำเนาเก่าที่เก็บไว้เหล่านี้พร้อมกันได้"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "數據已就位。以下是葆畱的歷史副本，可以一起校驗並淸理。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "数据已就位。以下是保留的历史副本，可以一起校验并清理。"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠽⠕⠥⠗ ⠙⠁⠞⠁ ⠊⠎ ⠊⠝ ⠏⠇⠁⠉⠑⠲ ⠠⠞⠓⠑⠎⠑ ⠗⠑⠞⠁⠊⠝⠑⠙ ⠓⠊⠎⠞⠕⠗⠊⠉⠁⠇ ⠉⠕⠏⠊⠑⠎ ⠉⠁⠝ ⠃⠑ ⠧⠑⠗⠊⠋⠊⠑⠙ ⠁⠝⠙ ⠗⠑⠍⠕⠧⠑⠙ ⠞⠕⠛⠑⠞⠓⠑⠗⠲"
+          }
+        }
+      }
+    },
+    "校验通过后清理所列历史副本，当前数据会保留。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The listed historical copies will be removed after verification. Your current data will be kept."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "驗證通過後清理所列歷史副本，目前資料會保留。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die aufgeführten früheren Kopien werden nach der Prüfung entfernt. Die aktuellen Daten bleiben erhalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las copias históricas indicadas se eliminarán tras verificarlas. Se conservarán los datos actuales."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les anciennes copies indiquées seront supprimées après vérification. Les données actuelles seront conservées."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "As cópias históricas indicadas serão removidas após a verificação. Os dados atuais serão preservados."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le copie storiche elencate verranno rimosse dopo la verifica. I dati attuali verranno conservati."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一覧の過去のコピーを検証後に削除します。現在のデータは保持されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "목록의 이전 복사본을 확인한 후 삭제합니다. 현재 데이터는 유지됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Указанные старые копии будут удалены после проверки. Текущие данные сохранятся."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De vermelde oude kopieën worden na controle verwijderd. De huidige gegevens blijven behouden."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wymienione starsze kopie zostaną usunięte po sprawdzeniu. Bieżące dane zostaną zachowane."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salinan lama yang tercantum akan dihapus setelah diverifikasi. Data saat ini akan tetap disimpan."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listelenen eski kopyalar doğrulandıktan sonra kaldırılacak. Geçerli veriler korunacak."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Các bản sao cũ được liệt kê sẽ bị xóa sau khi xác minh. Dữ liệu hiện tại sẽ được giữ nguyên."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La listigitaj historiaj kopioj estos forigitaj post kontrolo. La nunaj datumoj estos konservitaj."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "जाँच के बाद सूचीबद्ध पुरानी प्रतियाँ हटा दी जाएँगी। वर्तमान डेटा रखा जाएगा।"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ستُزال النسخ القديمة المدرجة بعد التحقق منها. ستُحفظ البيانات الحالية."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "สำเนาเก่าที่ระบุจะถูกลบหลังการตรวจสอบ ข้อมูลปัจจุบันจะยังคงอยู่"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校驗通過後淸理所列歷史副本，當前數據會葆畱。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校验通过后清理所列历史副本，当前数据会保留。"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑ ⠇⠊⠎⠞⠑⠙ ⠓⠊⠎⠞⠕⠗⠊⠉⠁⠇ ⠉⠕⠏⠊⠑⠎ ⠺⠊⠇⠇ ⠃⠑ ⠗⠑⠍⠕⠧⠑⠙ ⠁⠋⠞⠑⠗ ⠧⠑⠗⠊⠋⠊⠉⠁⠞⠊⠕⠝⠲ ⠠⠽⠕⠥⠗ ⠉⠥⠗⠗⠑⠝⠞ ⠙⠁⠞⠁ ⠺⠊⠇⠇ ⠃⠑ ⠅⠑⠏⠞⠲"
+          }
+        }
+      }
+    },
+    "最后记录的数据位置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last recorded data location"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最後記錄的資料位置"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zuletzt erfasster Datenspeicherort"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Última ubicación registrada de los datos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dernier emplacement enregistré des données"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Última localização registrada dos dados"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ultima posizione registrata dei dati"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最後に記録されたデータの場所"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "마지막으로 기록된 데이터 위치"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последнее записанное расположение данных"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Laatst geregistreerde gegevenslocatie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ostatnia zapisana lokalizacja danych"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokasi data terakhir yang tercatat"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Son kaydedilen veri konumu"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vị trí dữ liệu được ghi nhận gần nhất"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lasta registrita loko de datumoj"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "डेटा का अंतिम दर्ज स्थान"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "آخر موقع مسجل للبيانات"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตำแหน่งข้อมูลที่บันทึกไว้ล่าสุด"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最後記錄的數據位置"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最后记录的数据位置"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠇⠁⠎⠞ ⠗⠑⠉⠕⠗⠙⠑⠙ ⠙⠁⠞⠁ ⠇⠕⠉⠁⠞⠊⠕⠝"
+          }
+        }
+      }
+    },
+    "保留位置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recorded backup location"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留位置"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erfasster Sicherungsspeicherort"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ubicación registrada de la copia"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Emplacement enregistré de la sauvegarde"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Localização registrada do backup"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Posizione registrata del backup"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "記録されたバックアップの場所"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기록된 백업 위치"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записанное расположение резервной копии"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geregistreerde back-uplocatie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zapisana lokalizacja kopii zapasowej"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokasi cadangan yang tercatat"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kaydedilen yedek konumu"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vị trí bản sao lưu được ghi nhận"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Registrita loko de sekurkopio"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बैकअप का दर्ज स्थान"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "موقع النسخة الاحتياطية المسجل"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตำแหน่งข้อมูลสำรองที่บันทึกไว้"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "葆畱位置"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留位置"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠗⠑⠉⠕⠗⠙⠑⠙ ⠃⠁⠉⠅⠥⠏ ⠇⠕⠉⠁⠞⠊⠕⠝"
+          }
+        }
+      }
+    },
+    "正在清理旧副本..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Removing old copies..."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在清理舊副本⋯"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alte Kopien werden entfernt …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eliminando copias antiguas…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suppression des anciennes copies…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Removendo cópias antigas…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rimozione delle vecchie copie…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "古いコピーを削除中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 복사본 삭제 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаление старых копий…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oude kopieën verwijderen…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usuwanie starych kopii…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Menghapus salinan lama…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eski kopyalar kaldırılıyor…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đang xóa các bản sao cũ…"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forigante malnovajn kopiojn…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "पुरानी प्रतियाँ हटाई जा रही हैं…"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "جارٍ إزالة النسخ القديمة…"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "กำลังลบสำเนาเก่า…"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在淸理舊副本..."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在清理旧副本..."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠗⠑⠍⠕⠧⠊⠝⠛ ⠕⠇⠙ ⠉⠕⠏⠊⠑⠎⠲⠲⠲"
+          }
+        }
+      }
+    },
+    "迁移已完成，但旧副本尚未全部清理。%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration is complete, but some old copies remain.%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移已完成，但舊副本尚未全部清理。%@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Migration ist abgeschlossen, aber einige alte Kopien sind noch vorhanden.%@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La migración ha finalizado, pero quedan algunas copias antiguas.%@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La migration est terminée, mais certaines anciennes copies subsistent.%@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A migração foi concluída, mas algumas cópias antigas permanecem.%@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La migrazione è completata, ma rimangono alcune vecchie copie.%@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移行は完了しましたが、一部の古いコピーが残っています。%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전이 완료되었지만 일부 이전 복사본이 남아 있습니다.%@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенос завершён, но некоторые старые копии остались.%@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De migratie is voltooid, maar er zijn nog oude kopieën over.%@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migracja została zakończona, ale pozostały niektóre stare kopie.%@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrasi selesai, tetapi beberapa salinan lama masih tersisa.%@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taşıma tamamlandı ancak bazı eski kopyalar kaldı.%@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đã di chuyển xong nhưng vẫn còn một số bản sao cũ.%@"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La migrado finiĝis, sed kelkaj malnovaj kopioj restas.%@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "स्थानांतरण पूरा हो गया है, लेकिन कुछ पुरानी प्रतियाँ बाकी हैं।%@"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "اكتمل النقل، لكن بعض النسخ القديمة ما زالت موجودة.%@"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "การย้ายเสร็จสมบูรณ์แล้ว แต่ยังมีสำเนาเก่าบางส่วนเหลืออยู่%@"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移已完成，但舊副本尚未全部淸理。%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迁移已完成，但旧副本尚未全部清理。%@"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠍⠊⠛⠗⠁⠞⠊⠕⠝ ⠊⠎ ⠉⠕⠍⠏⠇⠑⠞⠑⠂ ⠃⠥⠞ ⠎⠕⠍⠑ ⠕⠇⠙ ⠉⠕⠏⠊⠑⠎ ⠗⠑⠍⠁⠊⠝⠲%@"
+          }
+        }
+      }
+    },
+    "数据已还原到本地，但旧副本尚未全部清理。%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your data has been restored locally, but some old copies remain.%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料已還原至本機，但舊副本尚未全部清理。%@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Daten wurden lokal wiederhergestellt, aber einige alte Kopien sind noch vorhanden.%@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los datos se han restaurado localmente, pero quedan algunas copias antiguas.%@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les données ont été restaurées localement, mais certaines anciennes copies subsistent.%@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Os dados foram restaurados localmente, mas algumas cópias antigas permanecem.%@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I dati sono stati ripristinati localmente, ma rimangono alcune vecchie copie.%@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "データはローカルに復元されましたが、一部の古いコピーが残っています。%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "데이터가 로컬로 복원되었지만 일부 이전 복사본이 남아 있습니다.%@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные восстановлены локально, но некоторые старые копии остались.%@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De gegevens zijn lokaal hersteld, maar er zijn nog oude kopieën over.%@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dane zostały przywrócone lokalnie, ale pozostały niektóre stare kopie.%@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data telah dipulihkan secara lokal, tetapi beberapa salinan lama masih tersisa.%@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Veriler yerel olarak geri yüklendi ancak bazı eski kopyalar kaldı.%@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dữ liệu đã được khôi phục về máy nhưng vẫn còn một số bản sao cũ.%@"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La datumoj estas loke restaŭritaj, sed kelkaj malnovaj kopioj restas.%@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "डेटा स्थानीय रूप से बहाल हो गया है, लेकिन कुछ पुरानी प्रतियाँ बाकी हैं।%@"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تمت استعادة البيانات محليًا، لكن بعض النسخ القديمة ما زالت موجودة.%@"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "กู้คืนข้อมูลลงเครื่องแล้ว แต่ยังมีสำเนาเก่าบางส่วนเหลืออยู่%@"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "數據已還原菿夲哋，但舊副本尚未全部淸理。%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "数据已还原到本地，但旧副本尚未全部清理。%@"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠽⠕⠥⠗ ⠙⠁⠞⠁ ⠓⠁⠎ ⠃⠑⠑⠝ ⠗⠑⠎⠞⠕⠗⠑⠙ ⠇⠕⠉⠁⠇⠇⠽⠂ ⠃⠥⠞ ⠎⠕⠍⠑ ⠕⠇⠙ ⠉⠕⠏⠊⠑⠎ ⠗⠑⠍⠁⠊⠝⠲%@"
+          }
+        }
+      }
+    },
+    "上次还原的旧副本尚未清理，新的迁移尚未开始。请先在副本管理中校验并清理后重试。%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copies from the previous restoration remain, so the new migration has not started. Verify and remove them in Manage Copies, then retry.%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次還原的舊副本尚未清理，新的遷移尚未開始。請先在副本管理中驗證並清理後重試。%@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopien der vorherigen Wiederherstellung sind noch vorhanden. Die neue Migration wurde nicht gestartet. Prüfen und entfernen Sie sie in der Kopienverwaltung und versuchen Sie es erneut.%@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quedan copias de la restauración anterior, por lo que la nueva migración no ha comenzado. Verifíquelas y elimínelas en Gestionar copias y vuelva a intentarlo.%@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Des copies de la restauration précédente subsistent. La nouvelle migration n’a pas démarré. Vérifiez et supprimez-les dans la gestion des copies, puis réessayez.%@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ainda existem cópias da restauração anterior, por isso a nova migração não foi iniciada. Verifique e remova-as em Gerenciar cópias e tente novamente.%@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rimangono copie del ripristino precedente, quindi la nuova migrazione non è iniziata. Verificale e rimuovile in Gestisci copie, quindi riprova.%@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前回の復元時のコピーが残っているため、新しい移行は開始されていません。「コピー管理」で検証して削除してから、再試行してください。%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 복원에서 남은 복사본이 있어 새 이전이 시작되지 않았습니다. 복사본 관리에서 확인하고 삭제한 후 다시 시도하세요.%@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остались копии от предыдущего восстановления, поэтому новый перенос не начат. Проверьте и удалите их в разделе управления копиями, затем повторите попытку.%@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Er zijn nog kopieën van het vorige herstel, dus de nieuwe migratie is niet gestart. Controleer en verwijder ze in Kopieën beheren en probeer het opnieuw.%@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pozostały kopie z poprzedniego przywracania, więc nowa migracja nie została rozpoczęta. Sprawdź i usuń je w zarządzaniu kopiami, a następnie spróbuj ponownie.%@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salinan dari pemulihan sebelumnya masih tersisa, jadi migrasi baru belum dimulai. Verifikasi dan hapus melalui Kelola Salinan, lalu coba lagi.%@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Önceki geri yüklemeden kalan kopyalar olduğu için yeni taşıma başlamadı. Kopyaları Yönet bölümünden bunları doğrulayıp kaldırın ve yeniden deneyin.%@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vẫn còn các bản sao từ lần khôi phục trước nên chưa bắt đầu di chuyển mới. Hãy xác minh và xóa chúng trong Quản lý bản sao rồi thử lại.%@"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopioj de la antaŭa restaŭrado restas, do la nova migrado ne komenciĝis. Kontrolu kaj forigu ilin en Administri kopiojn, poste reprovu.%@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "पिछली बहाली की प्रतियाँ बाकी हैं, इसलिए नया स्थानांतरण शुरू नहीं हुआ है। प्रति प्रबंधन में उनकी जाँच करके हटाएँ, फिर दोबारा प्रयास करें।%@"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ما زالت هناك نسخ من الاستعادة السابقة، لذا لم يبدأ النقل الجديد. تحقق منها وأزلها في إدارة النسخ، ثم حاول مجددًا.%@"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ยังมีสำเนาจากการกู้คืนครั้งก่อน จึงยังไม่ได้เริ่มการย้ายครั้งใหม่ โปรดตรวจสอบและลบในจัดการสำเนา แล้วลองอีกครั้ง%@"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次還原的舊副本尚未淸理，新的遷移尚未開始。請先在副本菅理中校驗並淸理後重試。%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次还原的旧副本尚未清理，新的迁移尚未开始。请先在副本管理中校验并清理后重试。%@"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠉⠕⠏⠊⠑⠎ ⠋⠗⠕⠍ ⠞⠓⠑ ⠏⠗⠑⠧⠊⠕⠥⠎ ⠗⠑⠎⠞⠕⠗⠁⠞⠊⠕⠝ ⠗⠑⠍⠁⠊⠝⠂ ⠎⠕ ⠞⠓⠑ ⠝⠑⠺ ⠍⠊⠛⠗⠁⠞⠊⠕⠝ ⠓⠁⠎ ⠝⠕⠞ ⠎⠞⠁⠗⠞⠑⠙⠲ ⠠⠧⠑⠗⠊⠋⠽ ⠁⠝⠙ ⠗⠑⠍⠕⠧⠑ ⠞⠓⠑⠍ ⠊⠝ ⠠⠍⠁⠝⠁⠛⠑ ⠠⠉⠕⠏⠊⠑⠎⠂ ⠞⠓⠑⠝ ⠗⠑⠞⠗⠽⠲%@"
+          }
+        }
+      }
+    },
     "正在备份原始应用" : {
       "extractionState" : "manual",
       "localizations" : {

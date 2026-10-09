@@ -15,6 +15,7 @@ enum CustomDirStatus {
     static let missing = "未找到"
     static let external = "外部"
     static let destinationConflict = "目标冲突"
+    static let retainedCopy = "保留副本"
 
     static func localized(_ status: String) -> String {
         switch status {
@@ -32,6 +33,8 @@ enum CustomDirStatus {
             return "外部".localized
         case destinationConflict:
             return "目标冲突".localized
+        case retainedCopy:
+            return "保留副本".localized
         default:
             return status
         }

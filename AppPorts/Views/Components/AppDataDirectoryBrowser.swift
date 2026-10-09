@@ -501,7 +501,7 @@ private struct AppDataDirectoryRow<Actions: View>: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         if !row.item.isMigratable {
-                            Image(systemName: "lock")
+                            Image(systemName: row.item.pathPolicy?.reason == .retainedOriginal ? "doc.on.doc" : "lock")
                                 .font(.system(size: 11))
                                 .foregroundColor(isEmphasized ? .white.opacity(0.85) : .secondary)
                                 .help((row.item.nonMigratableReason ?? "此目录不支持迁移").localized)

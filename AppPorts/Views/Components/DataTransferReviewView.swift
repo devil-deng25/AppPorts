@@ -3,28 +3,27 @@ import SwiftUI
 /// A retained copy is ordinary success. Unfinished transactions expose their
 /// recorded locations and offer a checked unlock when copying has not started.
 struct DataTransferReviewView: View {
-    let transfer: DataTransferRecord
+    let group: DataTransferGroup
     let onCleanup: () -> Void
     let onUnlock: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
-    @State private var verifiedApplication = false
     @State private var confirmCleanup = false
     @State private var contentHeight: CGFloat = 320
 
     init(transfer: DataTransferRecord, onCleanup: @escaping () -> Void, onUnlock: (() -> Void)? = nil) {
-        self.transfer = transfer
-        self.onCleanup = onCleanup
-        self.onUnlock = onUnlock
+        self.init(group: DataTransferGroup(transfer: transfer), onCleanup: onCleanup, onUnlock: onUnlock)
     }
 
-    private var canCleanup: Bool {
-        [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase) && transfer.baseline != nil
+    init(group: DataTransferGroup, onCleanup: @escaping () -> Void, onUnlock: (() -> Void)? = nil) {
+        self.group = group
+        self.onCleanup = onCleanup
+        self.onUnlock = onUnlock
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("副本管理".localized).font(.title2.weight(.semibold))
-            Text(verbatim: transfer.appName + " · " + URL(fileURLWithPath: transfer.originalPath).lastPathComponent)
+            Text(verbatim: group.displayName)
                 .font(.headline)
                 .lineLimit(2)
             ScrollView {
@@ -40,10 +39,9 @@ struct DataTransferReviewView: View {
             HStack {
                 Spacer()
                 Button("关闭".localized) { dismiss() }.keyboardShortcut(.cancelAction)
-                if canCleanup {
-                    Button("校验并清理原件".localized, role: .destructive) { confirmCleanup = true }
-                        .disabled(!verifiedApplication)
-                } else if transfer.isUnstartedSymlinkMigration, let onUnlock {
+                if group.canCleanup {
+                    Button("校验并清理这些副本".localized, role: .destructive) { confirmCleanup = true }
+                } else if group.unlockTransfer != nil, let onUnlock {
                     Button("检查并解除锁定".localized) { dismiss(); onUnlock() }
                         .buttonStyle(.borderedProminent)
                 }
@@ -51,11 +49,11 @@ struct DataTransferReviewView: View {
         }
         .padding(24)
         .frame(width: 580)
-        .confirmationDialog("校验并清理原件".localized, isPresented: $confirmCleanup, titleVisibility: .visible) {
-            Button("校验并清理原件".localized, role: .destructive) { dismiss(); onCleanup() }
+        .confirmationDialog("校验并清理这些副本".localized, isPresented: $confirmCleanup, titleVisibility: .visible) {
+            Button("校验并清理这些副本".localized, role: .destructive) { dismiss(); onCleanup() }
             Button("取消".localized, role: .cancel) { }
         } message: {
-            Text("仅在原件与已复制内容一致、且没有占用或路径冲突时清理。清理后无法通过这份原件撤销。".localized)
+            Text("校验通过后清理所列历史副本，当前数据会保留。".localized)
         }
     }
 
@@ -66,20 +64,49 @@ struct DataTransferReviewView: View {
 
     private var reviewContent: some View {
         VStack(alignment: .leading, spacing: 16) {
+            Label(group.statusTitle, systemImage: group.state == .needsAttention ? "exclamationmark.triangle" : "checkmark.circle.fill")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(group.state == .needsAttention ? Color.orange : Color.green)
             Text(reviewDescription)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            pathRow(title: "当前数据".localized, path: transfer.activePath)
-            if canCleanup, transfer.mode == .mount, transfer.direction == .restore,
-               let uuid = transfer.sourceIdentity.volumeUUID {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("保留原件".localized).font(.subheadline.weight(.medium))
-                    Text(verbatim: "APFS · " + uuid).font(.caption.monospaced()).textSelection(.enabled)
+            pathRow(title: group.state == .needsAttention ? "最后记录的数据位置".localized : "当前数据".localized,
+                    path: group.activePath)
+            ForEach(group.retainedCopies) { copy in
+                if let path = copy.path {
+                    pathRow(title: copy.title, path: path)
+                } else if let uuid = copy.volumeUUID {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(copy.title).font(.subheadline.weight(.medium))
+                        Text(verbatim: "APFS · " + uuid).font(.caption.monospaced()).textSelection(.enabled)
+                    }
                 }
-            } else if let backup = transfer.backupPath {
-                pathRow(title: "保留原件".localized, path: backup)
             }
-            if !canCleanup, let staging = transfer.stagingPath { pathRow(title: "暂存副本".localized, path: staging) }
+            if group.state == .needsAttention {
+                ForEach(group.transfers.filter { ![.awaitingUserVerification, .cleanupRequested].contains($0.phase) || $0.recoverableReason != nil }) { transfer in
+                    recoveryDetails(transfer)
+                }
+            }
+        }
+    }
+
+    private var reviewDescription: String {
+        if group.state != .needsAttention {
+            return "数据已就位。以下是保留的历史副本，可以一起校验并清理。".localized
+        }
+        if group.unlockTransfer != nil {
+            return "检查原目录与目标位置；确认尚未生成副本后解除锁定，即可重新迁移。".localized
+        }
+        return "操作尚需检查，所有已记录的副本都会保留。请先检查这些位置，不要合并或覆盖数据。".localized
+    }
+
+    private func recoveryDetails(_ transfer: DataTransferRecord) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            Text((transfer.direction == .migrate ? "迁移".localized : "还原".localized) + " · " + "需要检查".localized)
+                .font(.subheadline.weight(.medium))
+            if let backup = transfer.backupPath { pathRow(title: "保留位置".localized, path: backup) }
+            if let staging = transfer.stagingPath { pathRow(title: "暂存副本".localized, path: staging) }
             if ![transfer.activePath, transfer.backupPath, transfer.stagingPath].compactMap({ $0 })
                 .contains(where: { URL(fileURLWithPath: $0).standardizedFileURL.path == URL(fileURLWithPath: transfer.destinationPath).standardizedFileURL.path }) {
                 pathRow(title: "目标副本".localized, path: transfer.destinationPath)
@@ -91,21 +118,7 @@ struct DataTransferReviewView: View {
                 Text(verbatim: reason).font(.callout).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if canCleanup {
-                Toggle("我已验证应用与数据正常".localized, isOn: $verifiedApplication)
-                    .toggleStyle(.checkbox)
-            }
         }
-    }
-
-    private var reviewDescription: String {
-        if canCleanup {
-            return "原件已保留，仍占用存储空间。验证应用与数据正常后，可以校验并清理。".localized
-        }
-        if transfer.isUnstartedSymlinkMigration {
-            return "检查原目录与目标位置；确认尚未生成副本后解除锁定，即可重新迁移。".localized
-        }
-        return "操作尚需检查，所有已记录的副本都会保留。请先检查这些位置，不要合并或覆盖数据。".localized
     }
 
     private func pathRow(title: String, path: String) -> some View {

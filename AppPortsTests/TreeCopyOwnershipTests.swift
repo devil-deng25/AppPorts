@@ -154,6 +154,41 @@ struct TreeCopyOwnershipTests {
         }
     }
 
+    @Test("Normal noowners migration and restore finish cleanup and can repeat at the same destination")
+    func completedMigrationServiceCanRepeat() async throws {
+        try await withImage { image in
+            let home = image.root.appendingPathComponent("home")
+            let local = home.appendingPathComponent("Library/Application Support/Repeat Data")
+            try await makeTree(at: local)
+            let external = image.mountPoint.appendingPathComponent(local.lastPathComponent)
+            let store = ContainerMountStore(fileURL: image.root.appendingPathComponent("completed-transfers.plist"))
+            let mover = DataDirMover(homeDir: home, store: store, runner: OwnershipTestIdleRunner())
+            let item = DataDirItem(name: "Repeat Data", path: local, type: .applicationSupport,
+                                   priority: .critical, description: "Isolated completed noowners migration")
+            for _ in 0..<2 {
+                let migration = try await mover.migrateAndComplete(item: item, to: image.mountPoint, progressHandler: nil)
+                #expect(migration.cleanupWarning == nil)
+                #expect(try store.transfers().isEmpty)
+                #expect(try store.managedLinks().count == 1)
+                #expect(try info(local).st_mode & S_IFMT == S_IFLNK)
+                #expect(try FileManager.default.contentsOfDirectory(atPath: local.deletingLastPathComponent().path)
+                    .allSatisfy { !$0.hasPrefix(".appports-migration-backup-") })
+
+                let restoration = try await mover.restoreAndComplete(item: item, progressHandler: nil)
+                #expect(restoration.cleanupWarning == nil)
+                #expect(try store.transfers().isEmpty)
+                #expect(try store.managedLinks().isEmpty)
+                #expect(!FileManager.default.fileExists(atPath: external.path))
+                #expect(try info(local).st_mode & S_IFMT == S_IFDIR)
+                #expect(try info(local).st_uid == geteuid())
+                #expect(try info(local).st_gid == getegid())
+                #expect(try Data(contentsOf: local.appendingPathComponent("nested/payload")) == Data("verified data".utf8))
+                #expect(try info(local.appendingPathComponent("nested/payload")).st_ino
+                    == info(local.appendingPathComponent("second")).st_ino)
+            }
+        }
+    }
+
     @Test("DataDirMover migrates, restores and cleans its retained lineage on noowners")
     func migrationServiceRoundTrip() async throws {
         try await withImage { image in

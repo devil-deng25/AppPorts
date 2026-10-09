@@ -22,6 +22,7 @@ struct DataDirRowView: View {
     var onMount: ((DataDirItem) -> Void)? = nil
     var onUnmount: ((DataDirItem) -> Void)? = nil
     var onMountRestore: ((DataDirItem) -> Void)? = nil
+    var onReviewCopies: ((DataDirItem) -> Void)? = nil
     /// 经典模式：容器目录同时提供符号链接「迁移」
     var classicModeActive: Bool = false
 
@@ -144,6 +145,7 @@ struct DataDirRowView: View {
             onMount: onMount,
             onUnmount: onUnmount,
             onMountRestore: onMountRestore,
+            onReviewCopies: onReviewCopies,
             classicModeActive: classicModeActive
         )
     }
@@ -170,6 +172,7 @@ struct DataDirOperationButtons: View {
     var onMount: ((DataDirItem) -> Void)? = nil
     var onUnmount: ((DataDirItem) -> Void)? = nil
     var onMountRestore: ((DataDirItem) -> Void)? = nil
+    var onReviewCopies: ((DataDirItem) -> Void)? = nil
     /// 经典模式：容器目录同时提供符号链接「迁移」
     var classicModeActive: Bool = false
     /// 行内保留全部直接操作，次要操作使用图标以节省名称空间。
@@ -181,6 +184,12 @@ struct DataDirOperationButtons: View {
             mountOperationButtons
         } else if item.canRestore && (!item.isMigratable || item.status != DataDirStatus.needsNormalization) {
             restoreButton()
+        } else if !item.isMigratable, item.pathPolicy?.reason == .retainedOriginal, let onReviewCopies {
+            Button { onReviewCopies(item) } label: {
+                Label("副本管理".localized, systemImage: "doc.on.doc")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.borderless)
         } else if !item.isMigratable {
             // 不可迁移的目录：显示禁用按钮 + tooltip
             Image(systemName: "lock.fill")

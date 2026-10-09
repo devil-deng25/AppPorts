@@ -1,9 +1,26 @@
 import Darwin
 import Foundation
 
-/// Data-tree operations retain verified originals until explicit cleanup.
+/// Low-level data-tree operations retain originals; complete user flows clean
+/// their verified copies after the successful switch has been committed.
 /// UI flags never authorize execution; every entry point evaluates real paths and durable topology.
 actor DataDirMover {
+    struct CompletionResult: Sendable {
+        /// The data switch succeeded. A warning refers only to retained-copy cleanup.
+        let cleanupWarning: String?
+    }
+
+    enum CompletionError: LocalizedError {
+        case previousRestoreNeedsCleanup(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .previousRestoreNeedsCleanup(let details):
+                return String(format: "上次还原的旧副本尚未清理，新的迁移尚未开始。请先在副本管理中校验并清理后重试。%@".localized, "\n" + details)
+            }
+        }
+    }
+
     private let fileManager = FileManager.default
     private let homeDir: URL
     private let store: ContainerMountStore
@@ -34,7 +51,28 @@ actor DataDirMover {
         _ = failSourceBackupCleanup
     }
 
+    /// Complete the ordinary user flow while keeping cleanup failures separate
+    /// from a successful data switch. The caller holds the shared operation lock.
+    func migrateAndComplete(item: DataDirItem, to externalBaseURL: URL,
+                            progressHandler: FileCopier.ProgressHandler?) async throws -> CompletionResult {
+        try await completePreviousRestoreIfNeeded(item: item, externalBaseURL: externalBaseURL, progressHandler: progressHandler)
+        let operationID = try await migrateRetainingOriginal(item: item, to: externalBaseURL, progressHandler: progressHandler)
+        return await completeSuccessfulTransfer(operationID: operationID, direction: .migrate, progressHandler: progressHandler)
+    }
+
+    func restoreAndComplete(item: DataDirItem,
+                            progressHandler: FileCopier.ProgressHandler?) async throws -> CompletionResult {
+        let operationID = try await restoreRetainingOriginal(item: item, progressHandler: progressHandler)
+        return await completeSuccessfulTransfer(operationID: operationID, direction: .restore, progressHandler: progressHandler)
+    }
+
+    /// Low-level recovery callers may deliberately retain the verified original.
     func migrate(item: DataDirItem, to externalBaseURL: URL, progressHandler: FileCopier.ProgressHandler?) async throws {
+        _ = try await migrateRetainingOriginal(item: item, to: externalBaseURL, progressHandler: progressHandler)
+    }
+
+    private func migrateRetainingOriginal(item: DataDirItem, to externalBaseURL: URL,
+                                          progressHandler: FileCopier.ProgressHandler?) async throws -> UUID {
         let source = item.path.standardizedFileURL
         let destination = externalBaseURL.appendingPathComponent(source.lastPathComponent).standardizedFileURL
         try requirePolicy(source)
@@ -98,6 +136,7 @@ actor DataDirMover {
             try store.commitMigration(record: nil, transfer: transfer)
             invalidateSizeCache(for: source)
             invalidateSizeCache(for: destination)
+            return id
         } catch {
             // A copier preflight can fail before it creates anything. Retrying
             // such an operation needs no recovery once absence is proven.
@@ -107,12 +146,17 @@ actor DataDirMover {
     }
 
     func restore(item: DataDirItem, progressHandler: FileCopier.ProgressHandler?) async throws {
+        _ = try await restoreRetainingOriginal(item: item, progressHandler: progressHandler)
+    }
+
+    private func restoreRetainingOriginal(item: DataDirItem,
+                                          progressHandler: FileCopier.ProgressHandler?) async throws -> UUID {
         let local = item.path.standardizedFileURL
         let indexed = try store.managedLink(forOriginalPath: local.path)
         let existingTransfers = try store.transfers()
         if !isSymbolicLink(at: local), indexed == nil,
            let completed = existingTransfers.last(where: { $0.direction == .restore && $0.originalPath == local.path && [.awaitingUserVerification, .cleanupRequested].contains($0.phase) }),
-           let identity = completed.destinationIdentity, let current = try? DataPathIdentity.capture(local), identity.matchesFilesystemObject(current) { return }
+           let identity = completed.destinationIdentity, let current = try? DataPathIdentity.capture(local), identity.matchesFilesystemObject(current) { return completed.operationID }
         let linkIdentity: DataPathIdentity?
         let external: URL
         if isSymbolicLink(at: local) {
@@ -173,6 +217,7 @@ actor DataDirMover {
             try store.finalizeTransfer(operationID: id, baseline: transfer.baseline!)
             invalidateSizeCache(for: local)
             invalidateSizeCache(for: external)
+            return id
         } catch { try recordFailure(&transfer, error: error) }
     }
 
@@ -309,7 +354,149 @@ actor DataDirMover {
         }
     }
 
-    /// The only operation that removes an original, after an explicit user request.
+    /// Explicit cleanup may follow normal application edits to the active data.
+    /// Keep every predecessor until its own retained copy has been removed.
+    func cleanupRetainedLineage(operationID: UUID) async throws {
+        let lineage = try retainedLineage(endingAt: operationID)
+        for transfer in lineage {
+            try await cleanupRetainedTransfer(operationID: transfer.operationID)
+        }
+    }
+
+    private func completeSuccessfulTransfer(operationID: UUID, direction: DataTransferRecord.Direction,
+                                             progressHandler: FileCopier.ProgressHandler?) async -> CompletionResult {
+        do {
+            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized,
+                                        showsByteProgress: false))
+            let lineage = try retainedLineage(endingAt: operationID)
+            try await verifyAutomaticCleanup(lineage)
+            try await cleanupRetainedLineage(operationID: operationID)
+            return CompletionResult(cleanupWarning: nil)
+        } catch {
+            // This runs after commit/finalize. Never turn successful migration
+            // into recovery just because an old copy could not be removed.
+            let message = direction == .restore
+                ? "数据已还原到本地，但旧副本尚未全部清理。%@".localized
+                : "迁移已完成，但旧副本尚未全部清理。%@".localized
+            return CompletionResult(cleanupWarning: String(format: message, "\n" + error.localizedDescription))
+        }
+    }
+
+    private func completePreviousRestoreIfNeeded(item: DataDirItem, externalBaseURL: URL,
+                                                progressHandler: FileCopier.ProgressHandler?) async throws {
+        let local = item.path.standardizedFileURL
+        guard !isSymbolicLink(at: local) else { return }
+        let transfers = try store.transfers()
+        let related = transfers.filter { $0.originalPath == local.path }
+        let terminalRestores = related.filter { transfer in
+            transfer.mode == .symlink && transfer.direction == .restore
+                && [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase)
+                && !transfers.contains(where: { $0.priorOperationID == transfer.operationID })
+        }
+        guard !terminalRestores.isEmpty else { return }
+        guard terminalRestores.count == 1, let terminal = terminalRestores.first else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        let lineage = try retainedLineage(endingAt: terminal.operationID)
+        guard Set(lineage.map(\.operationID)) == Set(related.map(\.operationID)) else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+
+        // A same-named directory is only reclaimable when it is the recorded
+        // retained source in this completed chain; never adopt arbitrary data.
+        let destination = externalBaseURL.appendingPathComponent(local.lastPathComponent).standardizedFileURL
+        if try entryExists(destination), !lineage.contains(where: { $0.backupPath == destination.path }) {
+            throw DataDirError.destinationExists(destination)
+        }
+        do {
+            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized,
+                                        showsByteProgress: false))
+            try requirePolicy(local)
+            guard !DiskUtility.isMountPoint(local) else { throw DataOperationSafety.Failure.conflict(local.path) }
+            _ = try preflightWritePermission(at: externalBaseURL)
+            try await verifyAutomaticCleanup(lineage)
+            try await cleanupRetainedLineage(operationID: terminal.operationID)
+        } catch {
+            // No new intent exists yet. Changed active data can be reviewed and
+            // explicitly cleaned without creating another failed transaction.
+            throw CompletionError.previousRestoreNeedsCleanup(error.localizedDescription)
+        }
+    }
+
+    /// Oldest first, following durable identities instead of timestamps or path
+    /// names. A missing predecessor was already cleaned and ends the chain.
+    private func retainedLineage(endingAt operationID: UUID) throws -> [DataTransferRecord] {
+        let transfers = try store.transfers()
+        guard var current = transfers.first(where: { $0.operationID == operationID }) else { return [] }
+        let originalPath = current.originalPath
+        var visited: Set<UUID> = []
+        var lineage: [DataTransferRecord] = []
+        while true {
+            guard visited.insert(current.operationID).inserted,
+                  current.mode == .symlink, current.originalPath == originalPath,
+                  [.awaitingUserVerification, .cleanupRequested].contains(current.phase),
+                  current.baseline != nil, current.destinationIdentity != nil,
+                  current.backupPath != nil, current.backupIdentity != nil else {
+                throw DataOperationSafety.Failure.inspection(originalPath)
+            }
+            lineage.append(current)
+            guard let priorID = current.priorOperationID,
+                  let prior = transfers.first(where: { $0.operationID == priorID }) else { break }
+            guard prior.direction == .migrate,
+                  let identity = prior.destinationIdentity,
+                  identity.matchesFilesystemObject(current.sourceIdentity) else {
+                throw DataOperationSafety.Failure.conflict(originalPath)
+            }
+            current = prior
+        }
+        return Array(lineage.reversed())
+    }
+
+    /// Automatic cleanup needs current content proof, not just the active root's
+    /// inode. Explicit review remains available if an application has since made
+    /// legitimate edits to an older completed restore.
+    private func verifyAutomaticCleanup(_ lineage: [DataTransferRecord]) async throws {
+        guard let terminal = lineage.last else { return }
+        guard !(try store.transfers()).contains(where: { $0.priorOperationID == terminal.operationID }),
+              let activeIdentity = terminal.destinationIdentity, let encoded = terminal.baseline else {
+            throw DataOperationSafety.Failure.conflict(terminal.originalPath)
+        }
+        let active = URL(fileURLWithPath: terminal.activePath)
+        let local = URL(fileURLWithPath: terminal.originalPath)
+        if terminal.direction == .restore {
+            guard terminal.activePath == terminal.originalPath, terminal.destinationPath == terminal.originalPath,
+                  !isSymbolicLink(at: local), try store.managedLink(forOriginalPath: terminal.originalPath) == nil else {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+        } else {
+            guard let link = try store.managedLink(forOriginalPath: terminal.originalPath),
+                  link.operationID == terminal.operationID, link.destinationPath == terminal.destinationPath,
+                  terminal.activePath == terminal.destinationPath,
+                  link.destinationIdentity.matchesFilesystemObject(activeIdentity),
+                  isSymbolicLink(at: local),
+                  DataPathTopology.relationship(local.path, active.path) == .same else {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+        }
+        try requireIdentity(active, activeIdentity)
+        try await safety.requireNoKnownWriters(at: active, bundleIdentifier: terminal.bundleIdentifier)
+        let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
+        try TreeCopySession.verifyCopy(at: active, against: baseline)
+        // Check every retained source before removing the first one, so a
+        // modified later backup does not cause an avoidable partial cleanup.
+        for transfer in lineage {
+            guard let path = transfer.backupPath, let identity = transfer.backupIdentity,
+                  let encoded = transfer.baseline else { throw DataOperationSafety.Failure.inspection(transfer.originalPath) }
+            let retained = URL(fileURLWithPath: path)
+            try requireIdentity(retained, identity)
+            try verifyRetainedTree(retained, identity: identity,
+                                   baseline: PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded))
+        }
+        try requireIdentity(active, activeIdentity)
+    }
+
+    /// The only operation that removes an original, for requested completion or
+    /// explicit retained-copy cleanup.
     func cleanupRetainedTransfer(operationID: UUID) async throws {
         let transfers = try store.transfers()
         guard var transfer = transfers.first(where: { $0.operationID == operationID }) else { return }

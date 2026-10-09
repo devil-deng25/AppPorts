@@ -18,7 +18,8 @@ final class MigrationSafetyRenderTests: XCTestCase {
         let items = fixtureItems()
         for (name, title, bytes) in [
             ("data-backup-progress", "正在备份原始应用".localized, Int64(0)),
-            ("data-signing-progress", "重签名此应用".localized, Int64(1_073_741_824))
+            ("data-signing-progress", "重签名此应用".localized, Int64(1_073_741_824)),
+            ("data-cleanup-progress", "正在清理旧副本...".localized, Int64(0))
         ] {
             try await render(DataDirProgressOverlay(title: title, copiedBytes: bytes, totalBytes: bytes,
                                                     currentFile: "Example.app", showsByteProgress: false),
@@ -50,6 +51,18 @@ final class MigrationSafetyRenderTests: XCTestCase {
         let retained = fixtureTransfer(phase: .awaitingUserVerification)
         try await render(DataTransferReviewView(transfer: retained, onCleanup: {}), size: NSSize(width: 580, height: 570),
                    to: output.appendingPathComponent("retained-copy.png"))
+        let restored = DataTransferRecord(mode: .symlink, direction: .restore, appName: retained.appName,
+            dataDirType: retained.dataDirType, originalPath: retained.originalPath, activePath: retained.originalPath,
+            destinationPath: retained.originalPath, backupPath: retained.activePath,
+            sourceIdentity: try XCTUnwrap(retained.destinationIdentity), destinationIdentity: DataPathIdentity(device: 1, inode: 300),
+            backupIdentity: retained.destinationIdentity, priorOperationID: retained.operationID,
+            phase: .awaitingUserVerification, baseline: Data([1]))
+        let roundTrip = try XCTUnwrap(DataTransferGroup.groups(from: [restored, retained]).first)
+        XCTAssertEqual(roundTrip.state, .restored)
+        XCTAssertEqual(roundTrip.retainedCopies.count, 2)
+        XCTAssertTrue(roundTrip.canCleanup)
+        try await render(DataTransferReviewView(group: roundTrip, onCleanup: {}), size: NSSize(width: 580, height: 620),
+                         to: output.appendingPathComponent("restored-directory-copies.png"))
         let incomplete = fixtureTransfer(phase: .needsRecovery)
         try await render(DataTransferReviewView(transfer: incomplete, onCleanup: {}), size: NSSize(width: 580, height: 720),
                    to: output.appendingPathComponent("incomplete-copy.png"))
