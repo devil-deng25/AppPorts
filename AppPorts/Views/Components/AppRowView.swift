@@ -107,10 +107,11 @@ struct AppRowView: View {
                 }
             }
 
-            // 应用本体迁移后弹「已损坏」时的兜底；签名已被替换的应用再签只会更糟，不提供。
+            // History diagnostics do not decide whether a fresh, explicitly
+            // selected signing operation is possible. Its service inspects the
+            // current installation again before showing the confirmation.
             if !app.isFolder,
                !app.isSystemApp,
-               !app.needsSignatureAttention,
                app.status != AppStatus.orphanedLink,
                app.displayURL.pathExtension.lowercased() == "app",
                let onResign {

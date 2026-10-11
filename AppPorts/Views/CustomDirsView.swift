@@ -147,6 +147,7 @@ struct CustomDirsView: View {
             isVisible = true
             refresh()
         }
+        .onChange(of: operationState.recordsRevision) { _ in refresh() }
         .onChange(of: configStore.configs) { _ in refresh() }
         .onDisappear {
             isVisible = false
@@ -157,9 +158,10 @@ struct CustomDirsView: View {
                 addAndMigrateConfig(config)
             }
         }
-        .sheet(item: $selectedTransferGroup) { group in
+        .sheet(item: $selectedTransferGroup) { oldGroup in
+            let group = transferGroups.first { $0.id == oldGroup.id } ?? oldGroup
             DataTransferReviewView(group: group, onCleanup: { cleanupTransferGroup(group) },
-                                   onUnlock: { if let transfer = group.unlockTransfer { recoverTransfer(transfer) } },
+                                   onUnlock: { if let transfer = group.unlockTransfer { recoverTransfer(transfer, cancel: true) } },
                                    onResume: { if let transfer = group.resumeTransfer { recoverTransfer(transfer) } })
         }
         .alert("操作失败".localized, isPresented: $showError) {
@@ -317,7 +319,7 @@ struct CustomDirsView: View {
             return errorMessage
         }
 
-        Task { @MainActor in
+        operationState.startTask(for: operationID) { @MainActor in
             defer { operationState.finish(operationID) }
             await runBatch(
                 title: "正在迁移目录".localized,
@@ -345,6 +347,9 @@ struct CustomDirsView: View {
             retainedTransfers = try ContainerMountStore.shared.transfers().filter { transfer in
                 configs.contains { DataPathTopology.relationship($0.localURL.path, transfer.originalPath) == .same }
             }
+            if let selected = selectedTransferGroup {
+                selectedTransferGroup = transferGroups.first { $0.id == selected.id }
+            }
         } catch {
             managedLinks = []
             errorMessage = error.localizedDescription
@@ -371,16 +376,16 @@ struct CustomDirsView: View {
         isScanning = false
     }
 
-    private func recoverTransfer(_ transfer: DataTransferRecord) {
-        guard transfer.isUnstartedSymlinkMigration || transfer.isUnstartedSymlinkRestore || transfer.isVerifiedSwitchRecoverable,
+    private func recoverTransfer(_ transfer: DataTransferRecord, cancel: Bool = false) {
+        guard transfer.isPreparationRecoverable || transfer.isVerifiedSwitchRecoverable,
               let operationID = beginOperation() else { return }
         showProgress = true
-        progressTitle = transfer.isVerifiedSwitchRecoverable ? "重试".localized : "检查并解除锁定".localized
+        progressTitle = cancel ? "取消并清理暂存".localized : "继续".localized
         progressBytes = 0
         progressTotalBytes = 0
         progressFileName = ""
         progressShowsBytes = false
-        Task { @MainActor in
+        operationState.startTask(for: operationID) { @MainActor in
             let lock = OperationLock()
             let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
@@ -392,7 +397,7 @@ struct CustomDirsView: View {
             }
             do {
                 guard acquired else { throw DataOperationSafety.Failure.occupied(transfer.originalPath) }
-                if transfer.isVerifiedSwitchRecoverable {
+                if !cancel {
                     let progress: FileCopier.ProgressHandler = { value in
                         await MainActor.run {
                             self.progressFileName = value.currentFile
@@ -407,14 +412,14 @@ struct CustomDirsView: View {
                     } else {
                         warning = try await DataDirMover().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
                     }
-                    let signatureWarnings = await discardUnusedSignatureBackups(bundleIdentifiers: [transfer.bundleIdentifier])
-                    let warnings = [warning].compactMap { $0 } + signatureWarnings
+
+                    let warnings = [warning].compactMap { $0 }
                     completionWarning = warnings.joined(separator: "\n\n")
                     showCompletionWarning = !warnings.isEmpty
-                } else if transfer.isUnstartedSymlinkRestore {
-                    try await DataDirMover().cancelUnstartedRestore(operationID: transfer.operationID)
+                } else if transfer.mode == .mount {
+                    try await ContainerVolumeMigrator().cancelPreparation(operationID: transfer.operationID)
                 } else {
-                    try await DataDirMover().cancelUnstartedMigration(operationID: transfer.operationID)
+                    try await DataDirMover().cancelPreparation(operationID: transfer.operationID)
                 }
             } catch {
                 errorMessage = error.localizedDescription
@@ -431,7 +436,7 @@ struct CustomDirsView: View {
         progressTotalBytes = 0
         progressFileName = ""
         progressShowsBytes = false
-        Task { @MainActor in
+        operationState.startTask(for: operationID) { @MainActor in
             let lock = OperationLock()
             let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
@@ -443,37 +448,29 @@ struct CustomDirsView: View {
             }
             do {
                 guard acquired else { throw DataOperationSafety.Failure.occupied(group.originalPath) }
+                var cleanupFailures: [String] = []
                 for transfer in group.cleanupTransfers {
+                    try Task.checkCancellation()
                     progressFileName = transfer.backupPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? transfer.appName
-                    if transfer.mode == .mount {
-                        try await ContainerVolumeMigrator().cleanupRetainedTransfer(operationID: transfer.operationID)
-                    } else {
-                        try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
+                    do {
+                        if transfer.mode == .mount {
+                            try await ContainerVolumeMigrator().cleanupRetainedTransfer(operationID: transfer.operationID)
+                        } else {
+                            try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
+                        }
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        cleanupFailures.append(error.localizedDescription)
                     }
                 }
-                let warnings = await discardUnusedSignatureBackups(bundleIdentifiers: group.cleanupTransfers.map(\.bundleIdentifier))
-                completionWarning = warnings.joined(separator: "\n\n")
-                showCompletionWarning = !warnings.isEmpty
+                completionWarning = cleanupFailures.joined(separator: "\n")
+                showCompletionWarning = !cleanupFailures.isEmpty
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true
             }
         }
-    }
-
-    private func discardUnusedSignatureBackups(bundleIdentifiers: [String?]) async -> [String] {
-        let identifiers = Set(bundleIdentifiers.compactMap { $0 }.filter { !$0.isEmpty }).sorted()
-        guard !identifiers.isEmpty else { return [] }
-        let signer = CodeSigner()
-        var warnings: [String] = []
-        for bundleIdentifier in identifiers {
-            do {
-                _ = try await signer.discardUnusedOriginalBackup(bundleIdentifier: bundleIdentifier)
-            } catch {
-                warnings.append(bundleIdentifier + "\n" + error.localizedDescription)
-            }
-        }
-        return warnings
     }
 
     private func beginOperation() -> UUID? {
@@ -485,7 +482,7 @@ struct CustomDirsView: View {
     private func migrateSelected() {
         let selectedPairs = migratablePairs
         guard !selectedPairs.isEmpty, let operationID = beginOperation() else { return }
-        Task { @MainActor in
+        operationState.startTask(for: operationID) { @MainActor in
             defer { operationState.finish(operationID) }
             await runBatch(
                 title: "正在迁移目录".localized,
@@ -508,7 +505,7 @@ struct CustomDirsView: View {
     private func relinkSelected() {
         let selectedPairs = relinkablePairs
         guard !selectedPairs.isEmpty, let operationID = beginOperation() else { return }
-        Task { @MainActor in
+        operationState.startTask(for: operationID) { @MainActor in
             defer { operationState.finish(operationID) }
             await runBatch(
                 title: "正在接回目录".localized,
@@ -527,7 +524,7 @@ struct CustomDirsView: View {
     private func restoreSelected() {
         let selectedPairs = restorablePairs
         guard !selectedPairs.isEmpty, let operationID = beginOperation() else { return }
-        Task { @MainActor in
+        operationState.startTask(for: operationID) { @MainActor in
             defer { operationState.finish(operationID) }
             await runBatch(
                 title: "正在还原目录".localized,
@@ -535,8 +532,8 @@ struct CustomDirsView: View {
                 operation: { pair, progressHandler in
                     let item = pair.local.dataDirItem
                     let result = try await DataDirMover().restoreAndComplete(item: item, progressHandler: progressHandler)
-                    let signatureWarnings = await discardUnusedSignatureBackups(bundleIdentifiers: [item.associatedBundleIdentifier])
-                    let warnings = [result.cleanupWarning].compactMap { $0 } + signatureWarnings
+
+                    let warnings = [result.cleanupWarning].compactMap { $0 }
                     return warnings.isEmpty ? nil : warnings.joined(separator: "\n\n")
                 }
             )
@@ -556,7 +553,7 @@ struct CustomDirsView: View {
             ]
         )
 
-        Task { @MainActor in
+        operationState.startTask(for: operationID) { @MainActor in
             let lock = OperationLock()
             let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
@@ -605,6 +602,7 @@ struct CustomDirsView: View {
         do {
             guard acquired else { throw DataOperationSafety.Failure.occupied(selectedPairs[0].config.localPath) }
             for pair in selectedPairs {
+                try Task.checkCancellation()
                 await MainActor.run {
                     progressFileName = pair.config.displayName
                     progressShowsBytes = true

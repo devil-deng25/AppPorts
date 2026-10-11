@@ -4,6 +4,53 @@ import Testing
 @testable import AppPorts
 
 struct DataTransferWorkflowAuditTests {
+    @Test("A failed final save accepts subsequent writes at the activated data entry", arguments: ["migrate", "restore"])
+    func activeWritesAfterFinalSaveFailure(direction: String) async throws {
+        let writer = AuditWriter()
+        let fixture = try Fixture(writer: writer)
+        defer { fixture.remove() }
+        if direction == "restore" { _ = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil) }
+        writer.failTransition = (direction, "awaitingUserVerification")
+        await #expect(throws: (any Error).self) {
+            if direction == "migrate" { try await fixture.mover.migrate(item: fixture.item, to: fixture.external, progressHandler: nil) }
+            else { try await fixture.mover.restore(item: fixture.item, progressHandler: nil) }
+        }
+        let pending = try #require(try fixture.store.transfers().first)
+        let baseline = pending.baseline
+        try Data("new active write".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+        try Data("new document".utf8).write(to: fixture.local.appendingPathComponent("created-after-switch.txt"))
+        let active = direction == "migrate" ? fixture.destination : fixture.local
+        #expect(chmod(active.path, 0o700) == 0)
+        let current = try TreeCopySession.snapshot(at: active)
+        writer.failTransition = nil
+        let cold = DataDirMover(homeDir: fixture.home, store: ContainerMountStore(fileURL: fixture.ledger), runner: fixture.runner)
+        #expect(try await cold.resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) == nil)
+        #expect(try TreeCopySession.snapshot(at: active) == current)
+        #expect(baseline != nil)
+        #expect(try fixture.store.transfers().isEmpty)
+    }
+
+    @Test("Normal restore copies current data even when an interrupted migration's old copy conflicts")
+    func activeRestoreIgnoresOldCopyConflict() async throws {
+        let writer = AuditWriter()
+        let fixture = try Fixture(writer: writer)
+        defer { fixture.remove() }
+        writer.failTransition = ("migrate", "awaitingUserVerification")
+        await #expect(throws: (any Error).self) { try await fixture.mover.migrate(item: fixture.item, to: fixture.external, progressHandler: nil) }
+        let interrupted = try #require(try fixture.store.transfers().first)
+        let old = URL(fileURLWithPath: try #require(interrupted.backupPath))
+        try Data("old copy edited".utf8).write(to: old.appendingPathComponent("a.txt"))
+        try Data("current active value".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+        try Data("latest".utf8).write(to: fixture.local.appendingPathComponent("latest.txt"))
+        writer.failTransition = nil
+        let result = try await fixture.mover.restoreAndComplete(item: fixture.item, progressHandler: nil)
+        #expect(result.cleanupWarning != nil)
+        #expect(try fixture.text("a.txt") == "current active value")
+        #expect(try fixture.text("latest.txt") == "latest")
+        #expect(try String(contentsOf: old.appendingPathComponent("a.txt"), encoding: .utf8) == "old copy edited")
+        #expect(try fixture.store.managedLinks().isEmpty)
+        #expect(try fixture.store.transfers().contains { $0.direction == .restore && $0.isDataSwitchComplete })
+    }
     @Test("Use data on both disks between full moves without retaining old copies")
     func useDataBetweenCycles() async throws {
         let fixture = try Fixture()
@@ -205,7 +252,7 @@ struct DataTransferWorkflowAuditTests {
         let retained = try await fixture.retainedMigration()
         try fixture.checkpoint(retained)
         let document = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: fixture.ledger), format: nil) as? [String: Any])
-        #expect(document["schemaVersion"] as? Int == 6)
+        #expect(document["schemaVersion"] as? Int == 7)
         let cold = ContainerMountStore(fileURL: fixture.ledger)
         var checkpointed = try #require(try cold.transfer(operationID: retained.operationID))
         #expect(checkpointed.cleanupParentIdentity != nil)
@@ -234,7 +281,7 @@ struct DataTransferWorkflowAuditTests {
             } else { _ = try await fixture.mover.restoreAndComplete(item: fixture.item, progressHandler: nil) }
         }
         let interrupted = try #require(try fixture.store.transfers().last)
-        #expect(interrupted.isVerifiedSwitchRecoverable)
+        #expect(interrupted.isVerifiedSwitchRecoverable || interrupted.isPreparationRecoverable)
         #expect(DataTransferGroup(transfer: interrupted).resumeTransfer == interrupted)
         let destinationIdentity = try #require(interrupted.destinationIdentity)
         writer.failTransition = nil
@@ -424,6 +471,213 @@ struct DataTransferWorkflowAuditTests {
         #expect(try fixture.store.transfers().isEmpty)
     }
 
+    @Test("An offline old restore copy permits a new destination and later cleanup of the full location chain",
+          arguments: [false, true])
+    func remigrateWhilePreviousRestoreCopyIsOffline(restoreAgain: Bool) async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        try await fixture.mover.restore(item: fixture.item, progressHandler: nil)
+        let oldRestore = try #require(try fixture.store.transfers().first)
+        let offline = fixture.root.appendingPathComponent("OfflineExternal")
+        try FileManager.default.moveItem(at: fixture.external, to: offline)
+        try Data("current local data".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+        let nextDrive = fixture.root.appendingPathComponent("NextExternal")
+        try FileManager.default.createDirectory(at: nextDrive, withIntermediateDirectories: false)
+        try Data("unrelated".utf8).write(to: nextDrive.appendingPathComponent("sentinel.txt"))
+
+        let migrated = try await fixture.mover.migrateAndComplete(item: fixture.item, to: nextDrive, progressHandler: nil)
+        #expect(migrated.cleanupWarning != nil)
+        let nextMigration = try #require(try fixture.store.transfers().first { $0.direction == .migrate })
+        #expect(nextMigration.priorOperationID == oldRestore.operationID)
+        #expect(nextMigration.isDataSwitchComplete)
+        #expect(nextMigration.retainedCopyRemovedAt != nil)
+        #expect(nextMigration.baseline == nil && nextMigration.sourceBaseline == nil)
+        #expect(!FileManager.default.fileExists(atPath: try #require(nextMigration.backupPath)))
+        #expect(try fixture.text("a.txt") == "current local data")
+        #expect(try fixture.store.managedLink(forOriginalPath: fixture.local.path)?.operationID == nextMigration.operationID)
+        var terminal = nextMigration
+        if restoreAgain {
+            try Data("current data from the second drive".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+            let restored = try await fixture.mover.restoreAndComplete(item: fixture.item, progressHandler: nil)
+            #expect(restored.cleanupWarning != nil)
+            terminal = try #require(try fixture.store.transfers().first { $0.priorOperationID == nextMigration.operationID })
+            #expect(terminal.direction == .restore && terminal.isDataSwitchComplete)
+            #expect(try fixture.store.managedLinks().isEmpty)
+        }
+        let group = try #require(DataTransferGroup.groups(from: fixture.store.transfers()).first)
+        #expect(group.currentTransfer.operationID == terminal.operationID)
+        #expect(group.canCleanup)
+        #expect(group.retainedCopies.map(\.id) == [oldRestore.operationID])
+        let active = try TreeCopySession.snapshot(at: fixture.local.resolvingSymlinksInPath())
+        try FileManager.default.moveItem(at: offline, to: fixture.external)
+        let cold = DataDirMover(homeDir: fixture.home, store: ContainerMountStore(fileURL: fixture.ledger), runner: fixture.runner)
+        try await cold.cleanupRetainedLineage(operationID: terminal.operationID)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try TreeCopySession.snapshot(at: fixture.local.resolvingSymlinksInPath()) == active)
+        #expect(!FileManager.default.fileExists(atPath: fixture.destination.path))
+        #expect(FileManager.default.fileExists(atPath: nextDrive.appendingPathComponent("Payload").path) == !restoreAgain)
+        #expect(try String(contentsOf: nextDrive.appendingPathComponent("sentinel.txt"), encoding: .utf8) == "unrelated")
+    }
+
+    @Test("A deleted new copy keeps its baseline until the removal fact is durably saved")
+    func removalProofFailureCanRetryWithoutDeletingReusedPath() async throws {
+        let writer = AuditWriter()
+        let fixture = try Fixture(writer: writer)
+        defer { fixture.remove() }
+        _ = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        try await fixture.mover.restore(item: fixture.item, progressHandler: nil)
+        let oldRestore = try #require(try fixture.store.transfers().first)
+        let offline = fixture.root.appendingPathComponent("OfflineExternal")
+        try FileManager.default.moveItem(at: fixture.external, to: offline)
+        let nextDrive = fixture.root.appendingPathComponent("NextExternal")
+        try FileManager.default.createDirectory(at: nextDrive, withIntermediateDirectories: false)
+
+        writer.failRemovalProof = true
+        let result = try await fixture.mover.migrateAndComplete(item: fixture.item, to: nextDrive, progressHandler: nil)
+        #expect(result.cleanupWarning != nil)
+        let pending = try #require(try fixture.store.transfers().first { $0.priorOperationID == oldRestore.operationID })
+        let backup = URL(fileURLWithPath: try #require(pending.backupPath))
+        #expect(pending.isDataSwitchComplete && pending.phase == .cleanupRequested)
+        #expect(pending.retainedCopyRemovedAt == nil)
+        #expect(pending.baseline != nil && pending.sourceBaseline != nil && pending.cleanupParentIdentity != nil)
+        #expect(try TreeCopySession.retainedRemovalURL(at: backup, removalID: pending.operationID) == nil)
+        let activeData = try TreeCopySession.snapshot(at: fixture.local.resolvingSymlinksInPath())
+
+        writer.failRemovalProof = false
+        let cold = DataDirMover(homeDir: fixture.home, store: ContainerMountStore(fileURL: fixture.ledger), runner: fixture.runner)
+        // An empty replacement parent must not turn a missing path into proof
+        // that AppPorts deleted it. The original online parent is required.
+        let savedHome = fixture.root.appendingPathComponent("SavedHome")
+        try FileManager.default.moveItem(at: fixture.home, to: savedHome)
+        try FileManager.default.createDirectory(at: fixture.home, withIntermediateDirectories: false)
+        await #expect(throws: (any Error).self) {
+            try await cold.cleanupRetainedTransfer(operationID: pending.operationID)
+        }
+        #expect(try fixture.store.transfer(operationID: pending.operationID)?.retainedCopyRemovedAt == nil)
+        #expect(try fixture.store.transfer(operationID: pending.operationID)?.baseline == pending.baseline)
+        try FileManager.default.removeItem(at: fixture.home)
+        try FileManager.default.moveItem(at: savedHome, to: fixture.home)
+        try await cold.cleanupRetainedTransfer(operationID: pending.operationID)
+        let proof = try #require(try fixture.store.transfer(operationID: pending.operationID))
+        #expect(proof.retainedCopyRemovedAt != nil)
+        #expect(proof.baseline == nil && proof.sourceBaseline == nil && proof.preparationRemovalBaseline == nil)
+        #expect(proof.sourceIdentity == pending.sourceIdentity && proof.destinationIdentity == pending.destinationIdentity)
+        #expect(proof.materialPaths.isEmpty)
+        let group = try #require(DataTransferGroup.groups(from: fixture.store.transfers()).first)
+        #expect(group.retainedCopies.map(\.id) == [oldRestore.operationID])
+
+        // The removed backup name is now free. Completing older A only
+        // retires B's small identity node and must never delete a new occupant.
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
+        try Data("new unrelated content".utf8).write(to: backup.appendingPathComponent("sentinel.txt"))
+        let replacement = try TreeCopySession.snapshot(at: backup)
+        try FileManager.default.moveItem(at: offline, to: fixture.external)
+        try await cold.cleanupRetainedLineage(operationID: pending.operationID)
+        try await cold.cleanupRetainedTransfer(operationID: pending.operationID)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try TreeCopySession.snapshot(at: backup) == replacement)
+        #expect(try TreeCopySession.snapshot(at: fixture.local.resolvingSymlinksInPath()) == activeData)
+        #expect(!FileManager.default.fileExists(atPath: fixture.destination.path))
+    }
+
+    @Test("A new migration after restore still rejects changed local identity and the reserved old destination",
+          arguments: ["local-replaced", "old-offline-target", "old-occupied-target", "old-staging-target"])
+    func remigrationDoesNotBorrowOldRestoreAuthority(change: String) async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        try await fixture.mover.restore(item: fixture.item, progressHandler: nil)
+        let before = try fixture.store.transfers()
+        let restore = try #require(before.first)
+        let offline = fixture.root.appendingPathComponent("OfflineExternal")
+        var target = fixture.root.appendingPathComponent("NextExternal")
+        if change == "old-occupied-target" {
+            target = fixture.external
+            try Data("modified old copy".utf8).write(to: fixture.destination.appendingPathComponent("a.txt"))
+        } else {
+            try FileManager.default.moveItem(at: fixture.external, to: offline)
+            if change == "old-offline-target" { target = fixture.external }
+            if change == "old-staging-target" { target = URL(fileURLWithPath: try #require(restore.stagingPath)) }
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        }
+        if change == "local-replaced" {
+            try FileManager.default.moveItem(at: fixture.local, to: fixture.home.appendingPathComponent("SavedLocal"))
+            try FileManager.default.createDirectory(at: fixture.local, withIntermediateDirectories: false)
+            try Data("another installation's data".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+        }
+        let current = try TreeCopySession.snapshot(at: fixture.local)
+        await #expect(throws: (any Error).self) {
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: target, progressHandler: nil)
+        }
+        #expect(try fixture.store.transfers() == before)
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == current)
+        #expect(try fixture.store.managedLinks().isEmpty)
+        #expect(try !FileManager.default.contentsOfDirectory(atPath: target.path).contains { $0.hasPrefix(".appports-copy-") })
+    }
+
+    @Test("A verified retry keeps its preceding restored-copy identity while the old drive is offline")
+    func remigrationRecoveryKeepsPriorRestore() async throws {
+        let writer = AuditWriter()
+        let fixture = try Fixture(writer: writer)
+        defer { fixture.remove() }
+        _ = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        try await fixture.mover.restore(item: fixture.item, progressHandler: nil)
+        let restored = try #require(try fixture.store.transfers().first)
+        let offline = fixture.root.appendingPathComponent("OfflineExternal")
+        try FileManager.default.moveItem(at: fixture.external, to: offline)
+        let target = fixture.root.appendingPathComponent("NextExternal")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        writer.failTransition = ("migrate", "verified")
+        await #expect(throws: (any Error).self) {
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: target, progressHandler: nil)
+        }
+        let pending = try #require(try fixture.store.transfers().first { $0.priorOperationID == restored.operationID })
+        writer.failTransition = nil
+        let cold = DataDirMover(homeDir: fixture.home, store: ContainerMountStore(fileURL: fixture.ledger), runner: fixture.runner)
+        #expect(try await cold.resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) != nil)
+        #expect(try fixture.store.transfer(operationID: pending.operationID)?.isDataSwitchComplete == true)
+        #expect(try fixture.text("a.txt") == "first")
+        try FileManager.default.moveItem(at: offline, to: fixture.external)
+        try await cold.cleanupRetainedLineage(operationID: pending.operationID)
+        #expect(try fixture.store.transfers().isEmpty)
+    }
+
+    @Test("Cancelling a new destination preserves an older offline copy and releases only the new attempt")
+    func remigrationCancellationPreservesRestoredLineage() async throws {
+        let writer = AuditWriter()
+        let fixture = try Fixture(writer: writer)
+        defer { fixture.remove() }
+        _ = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        try await fixture.mover.restore(item: fixture.item, progressHandler: nil)
+        let restored = try #require(try fixture.store.transfers().first)
+        let localData = try TreeCopySession.snapshot(at: fixture.local)
+        let offline = fixture.root.appendingPathComponent("OfflineExternal")
+        try FileManager.default.moveItem(at: fixture.external, to: offline)
+        let target = fixture.root.appendingPathComponent("NextExternal")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        writer.failTransition = ("migrate", "verified")
+        await #expect(throws: (any Error).self) {
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: target, progressHandler: nil)
+        }
+        let pending = try #require(try fixture.store.transfers().first { $0.priorOperationID == restored.operationID })
+        #expect(pending.isPreparationRecoverable)
+        writer.failTransition = nil
+        let cold = DataDirMover(homeDir: fixture.home, store: ContainerMountStore(fileURL: fixture.ledger), runner: fixture.runner)
+        try await cold.cancelPreparation(operationID: pending.operationID)
+        #expect(try fixture.store.transfers() == [restored])
+        #expect(try fixture.store.managedLinks().isEmpty)
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == localData)
+        #expect(!FileManager.default.fileExists(atPath: try #require(pending.preparationPath)))
+        #expect(try await cold.migrateAndComplete(item: fixture.item, to: target, progressHandler: nil).cleanupWarning != nil)
+        let next = try #require(try fixture.store.transfers().first { $0.priorOperationID == restored.operationID })
+        #expect(next.operationID != pending.operationID && next.retainedCopyRemovedAt != nil)
+        try FileManager.default.moveItem(at: offline, to: fixture.external)
+        try await cold.cleanupRetainedLineage(operationID: next.operationID)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.text("a.txt") == "first")
+    }
+
     @Test("A changed ledger is never overwritten by a failed resume")
     func resumePreservesConcurrentLedgerChange() async throws {
         let writer = AuditWriter()
@@ -550,6 +804,7 @@ struct DataTransferWorkflowAuditTests {
         private let lock = NSLock()
         private var rejectCopying = false
         private var rejectCheckpoint = false
+        private var rejectRemovalProof = false
         private var rejectedTransition: (String, String)?
         private var checkpointAction: (@Sendable () throws -> Void)?
         func onNextCheckpoint(_ action: @escaping @Sendable () throws -> Void) {
@@ -567,6 +822,10 @@ struct DataTransferWorkflowAuditTests {
             get { lock.lock(); defer { lock.unlock() }; return rejectCheckpoint }
             set { lock.lock(); rejectCheckpoint = newValue; lock.unlock() }
         }
+        var failRemovalProof: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return rejectRemovalProof }
+            set { lock.lock(); rejectRemovalProof = newValue; lock.unlock() }
+        }
         func write(_ data: Data, to url: URL) throws {
             lock.lock(); defer { lock.unlock() }
             let document = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
@@ -575,6 +834,7 @@ struct DataTransferWorkflowAuditTests {
                 throw CocoaError(.fileWriteNoPermission)
             }
             if rejectCheckpoint && transfers.contains(where: { $0["cleanupParentIdentity"] != nil }) { throw CocoaError(.fileWriteNoPermission) }
+            if rejectRemovalProof && transfers.contains(where: { $0["retainedCopyRemovedAt"] != nil }) { throw CocoaError(.fileWriteNoPermission) }
             if let rejectedTransition, transfers.contains(where: {
                 $0["direction"] as? String == rejectedTransition.0 && $0["phase"] as? String == rejectedTransition.1
             }) { throw CocoaError(.fileWriteNoPermission) }

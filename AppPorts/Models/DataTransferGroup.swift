@@ -48,7 +48,7 @@ struct DataTransferGroup: Equatable, Identifiable, Sendable {
     var menuTitle: String { displayName + " · " + statusTitle }
 
     var retainedCopies: [RetainedCopy] {
-        transfers.filter(Self.isCompleted).compactMap { transfer in
+        transfers.filter { Self.isCompleted($0) && $0.retainedCopyRemovedAt == nil }.compactMap { transfer in
             if transfer.mode == .mount, transfer.direction == .restore,
                let uuid = transfer.sourceIdentity.volumeUUID {
                 // The recorded private mount point is no longer mounted after
@@ -64,25 +64,28 @@ struct DataTransferGroup: Equatable, Identifiable, Sendable {
     }
 
     var canCleanup: Bool {
-        state != .needsAttention && transfers.allSatisfy { $0.baseline != nil }
-            && retainedCopies.count == transfers.count
+        state != .needsAttention && transfers.allSatisfy { $0.baseline != nil || $0.retainedCopyRemovedAt != nil }
+            && !retainedCopies.isEmpty
+            && retainedCopies.count == transfers.filter({ $0.retainedCopyRemovedAt == nil }).count
     }
 
-    /// One confirmation covers these recorded copies in dependency order.
+    /// One cleanup attempt covers these recorded copies in dependency order.
     /// The service still rechecks every record and filesystem object.
-    var cleanupTransfers: [DataTransferRecord] { canCleanup ? transfers : [] }
+    var cleanupTransfers: [DataTransferRecord] { canCleanup ? transfers.filter { $0.retainedCopyRemovedAt == nil } : [] }
 
+    /// Cancellation is available for all four uncommitted preparations. The
+    /// service decides whether a partial artifact is owned and safe to remove.
     var unlockTransfer: DataTransferRecord? {
-        if transfers.count == 1 && currentTransfer.isUnstartedSymlinkMigration { return currentTransfer }
-        if currentTransfer.isUnstartedSymlinkRestore,
-           transfers.filter({ $0.operationID != currentTransfer.operationID }).allSatisfy(Self.isCompleted) { return currentTransfer }
-        return nil
+        guard isLinear, currentTransfer.isPreparationRecoverable,
+              transfers.filter({ $0.operationID != currentTransfer.operationID }).allSatisfy(Self.isCompleted) else { return nil }
+        return currentTransfer
     }
 
     var resumeTransfer: DataTransferRecord? {
         guard isLinear else { return nil }
         let pending = transfers.filter { !Self.isCompleted($0) }
-        guard pending.count == 1, let transfer = pending.first, transfer.isVerifiedSwitchRecoverable else { return nil }
+        guard pending.count == 1, let transfer = pending.first,
+              transfer.isVerifiedSwitchRecoverable || transfer.isPreparationRecoverable else { return nil }
         if transfer.operationID == currentTransfer.operationID { return transfer }
         // Historical builds permitted a restore after the migration's final
         // save failed. Expose its checked bookkeeping continuation as well.

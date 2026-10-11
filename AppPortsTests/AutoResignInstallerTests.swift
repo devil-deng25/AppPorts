@@ -4,14 +4,14 @@ import Testing
 
 @Suite("Background signing coordination", .serialized)
 struct AutoResignInstallerTests {
-    @Test("Login re-signing is restricted to systems before macOS 27", arguments: [
-        (12, true), (15, true), (26, true), (27, false), (28, false), (99, false), (0, false)
+    @Test("Login re-signing is disabled on every macOS version", arguments: [
+        (12, false), (15, false), (26, false), (27, false), (28, false), (99, false), (0, false)
     ])
     func systemSupport(majorVersion: Int, supported: Bool) {
         #expect(AutoResignInstaller.supportsLoginResigning(macOSMajorVersion: majorVersion) == supported)
     }
 
-    @Test("Older systems retain existing login settings and files", arguments: [true, false])
+    @Test("Older systems also stop their existing login writer", arguments: [true, false])
     func preservesOlderSystem(enabled: Bool) async throws {
         let fixture = try PolicyFixture()
         defer { fixture.cleanup() }
@@ -20,11 +20,11 @@ struct AutoResignInstallerTests {
 
         let disabled = try await fixture.apply(majorVersion: 26) { stopCalls += 1 }
 
-        #expect(!disabled)
-        #expect(stopCalls == 0)
-        #expect(fixture.defaults.bool(forKey: AutoResignInstaller.enabledDefaultsKey) == enabled)
-        #expect(try String(contentsOf: fixture.script, encoding: .utf8) == PolicyFixture.oldScript)
-        #expect(FileManager.default.fileExists(atPath: fixture.agent.path))
+        #expect(disabled)
+        #expect(stopCalls == 1)
+        #expect(!fixture.defaults.bool(forKey: AutoResignInstaller.enabledDefaultsKey))
+        #expect(!FileManager.default.fileExists(atPath: fixture.script.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.agent.path))
     }
 
     @Test("Upgrading clears both stored and legacy-default opt-ins", arguments: [true, false, nil] as [Bool?])
@@ -122,47 +122,23 @@ struct AutoResignInstallerTests {
         #expect(fixture.defaults.string(forKey: AutoResignInstaller.policyErrorDefaultsKey) == nil)
     }
 
-    @Test("The login script rejects unsupported or unknown systems before any signing work", arguments: [
-        ("26.6", true), ("15.7.3", true), ("27.0", false), ("28.1", false),
-        ("", false), ("unknown", false), ("0", false), ("999999999999999999999", false)
-    ])
-    func loginScriptVersionGuard(version: String, mayContinue: Bool) async throws {
-        try await checkLoginScript(version: version, versionCommandStatus: 0, mayContinue: mayContinue)
-    }
-
-    @Test("A failed version query cannot start login re-signing")
-    func loginScriptVersionQueryFailure() async throws {
-        try await checkLoginScript(version: "26.6", versionCommandStatus: 1, mayContinue: false)
-    }
-
-    private func checkLoginScript(version: String, versionCommandStatus: Int, mayContinue: Bool) async throws {
+    @Test("The installed script is unconditionally read-only, including old classic preferences")
+    func loginScriptNeverMutatesApplications() async throws {
         let fixture = try PolicyFixture()
         defer { fixture.cleanup() }
         let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("AppPorts/AppPorts-ReSign.sh")
-        var script = try String(contentsOf: source, encoding: .utf8)
-        let versionProbe = fixture.root.appendingPathComponent("fake-sw-vers")
-        let reachedWork = fixture.root.appendingPathComponent("reached-signing-work")
+        let script = try String(contentsOf: source, encoding: .utf8)
+        #expect(!script.contains("/usr/bin/codesign"))
+        #expect(!script.contains("xattr"))
+        #expect(!script.contains("rm -"))
+        #expect(!script.contains("defaults read"))
         let isolatedScript = fixture.root.appendingPathComponent("login-script.sh")
-
-        func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-        try "#!/bin/bash\nprintf '%s\\n' \(quote(version))\nexit \(versionCommandStatus)\n"
-            .write(to: versionProbe, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: versionProbe.path)
-
-        let versionCommand = "/usr/bin/sw_vers -productVersion"
-        let workStart = "BACKUP_DIR=\"$HOME/Library/Application Support/AppPorts/signature-backups\""
-        try #require(script.contains(versionCommand))
-        try #require(script.contains(workStart))
-        script = script.replacingOccurrences(of: versionCommand, with: quote(versionProbe.path) + " -productVersion")
-        // Instrument the real script's first work statement, then exit before it can read or mutate user data.
-        script = script.replacingOccurrences(of: workStart, with: "printf reached > \(quote(reachedWork.path))\nexit 47\n" + workStart)
         try ("CLASSIC_MODE=1\n" + script).write(to: isolatedScript, atomically: true, encoding: .utf8)
-
         let result = try await ProcessCommandRunner().run(executable: "/bin/bash", arguments: [isolatedScript.path], timeout: 5)
+        #expect(result.status == 0)
         #expect(!result.timedOut)
-        #expect(result.status == (mayContinue ? 47 : 0))
-        #expect(FileManager.default.fileExists(atPath: reachedWork.path) == mayContinue)
+        #expect(try String(contentsOf: fixture.backup, encoding: .utf8) == "keep signature backup")
     }
 
     @Test("An explicitly absent login task needs no stop command")

@@ -2,17 +2,192 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// 签名包含 Mach-O 内嵌数据、嵌套代码和扩展属性，必须保存完整应用，不能只保存证书名称。
+/// Bundle copy and content primitives shared by temporary signing operations
+/// and compatibility reads of historical complete originals.
 enum SignatureSnapshot {
-    static func copy(from source: URL, to destination: URL) throws {
+    /// Capability injection exercises the actual legacy copy path without
+    /// pretending that the host OS itself is an older macOS release.
+    typealias StateSetter = @Sendable (copyfile_state_t, UInt32, UnsafeRawPointer) -> Int32
+
+    /// Fill an exclusively created, recorded root without changing its identity.
+    /// Child copies may use clonefile; capacity must still allow ordinary copies.
+    static func copyContents(from source: URL, into destination: URL, allowCloning: Bool = true,
+                             onDataCopied: (@Sendable (URL, Int64) -> Void)? = nil,
+                             stateSetter: @escaping StateSetter = { copyfile_state_set($0, $1, $2) }) throws {
+        if try !supportsBoundedRecursiveCopy(using: stateSetter, at: source) || hasLargeResourceFork(in: source) {
+            try SignatureCompatibilityCopy.copy(from: source, to: destination, intoExistingRoot: true,
+                allowCloning: allowCloning, onDataCopied: onDataCopied)
+            return
+        }
+        let identity = try DataPathIdentity.capture(destination)
+        guard try info(at: source).st_mode & S_IFMT == S_IFDIR,
+              try info(at: destination).st_mode & S_IFMT == S_IFDIR,
+              try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty else {
+            throw CodeSigner.SigningError.snapshotInvalid
+        }
+        for name in try FileManager.default.contentsOfDirectory(atPath: source.path) {
+            try Task.checkCancellation()
+            guard try DataPathIdentity.capture(destination).matchesFilesystemObject(identity) else {
+                throw CodeSigner.SigningError.applicationChanged
+            }
+            try copy(from: source.appendingPathComponent(name), to: destination.appendingPathComponent(name),
+                     allowCloning: allowCloning, onDataCopied: onDataCopied, stateSetter: stateSetter)
+        }
+        guard try DataPathIdentity.capture(destination).matchesFilesystemObject(identity) else {
+            throw CodeSigner.SigningError.applicationChanged
+        }
+        try copyUsingSystem(from: source, to: destination,
+                            flags: copyfile_flags_t(COPYFILE_METADATA | COPYFILE_NOFOLLOW_SRC),
+                            onDataCopied: onDataCopied, stateSetter: stateSetter)
+    }
+
+    static func entryExists(_ url: URL) throws -> Bool {
+        var value = stat()
+        if lstat(url.path, &value) == 0 { return true }
+        guard errno == ENOENT else { throw posixError(at: url) }
+        return false
+    }
+
+    static func copy(from source: URL, to destination: URL, allowCloning: Bool = true,
+                     onDataCopied: (@Sendable (URL, Int64) -> Void)? = nil,
+                     stateSetter: @escaping StateSetter = { copyfile_state_set($0, $1, $2) }) throws {
+        if try !supportsBoundedRecursiveCopy(using: stateSetter, at: source) || hasLargeResourceFork(in: source) {
+            try SignatureCompatibilityCopy.copy(from: source, to: destination, intoExistingRoot: false,
+                allowCloning: allowCloning, onDataCopied: onDataCopied)
+            return
+        }
+        // A nested mounted volume is not owned by this bundle's transaction.
+        _ = try items(in: source)
         // CLONE 在支持的文件系统上使用写时复制，不支持时 copyfile 正常复制；不跟随链接。
         let flags = copyfile_flags_t(COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC)
-        if copyfile(source.path, destination.path, nil, flags | copyfile_flags_t(COPYFILE_CLONE)) != 0 {
-            // 某些锁定文件被 clone 后立即带 uchg，后续元数据复制会失败；用常规复制重试。
-            try remove(destination)
-            guard copyfile(source.path, destination.path, nil, flags) == 0 else {
-                throw posixError(at: destination)
+        if allowCloning {
+            do {
+                try copyUsingSystem(from: source, to: destination, flags: flags | copyfile_flags_t(COPYFILE_CLONE),
+                                    onDataCopied: onDataCopied, stateSetter: stateSetter)
+                return
+            } catch is CancellationError {
+                // The owning operation retains and later cleans this candidate.
+                // Cancellation must never start a second ordinary-copy attempt.
+                throw CancellationError()
+            } catch {
+                // Only inherited permission/lock metadata errors justify this
+                // historical retry. Mount/identity/I/O errors must not launch
+                // another whole-tree copy after a safety check has failed.
+                let failure = error as NSError
+                guard failure.domain == NSPOSIXErrorDomain,
+                      [Int(EPERM), Int(EACCES)].contains(failure.code) else { throw error }
+                try Task.checkCancellation()
+                try remove(destination)
             }
+        }
+        try copyUsingSystem(from: source, to: destination, flags: flags, onDataCopied: onDataCopied, stateSetter: stateSetter)
+    }
+
+    private static func supportsBoundedRecursiveCopy(using setter: StateSetter, at source: URL) throws -> Bool {
+        try Task.checkCancellation()
+        guard let state = copyfile_state_alloc() else { throw posixError(at: source) }
+        defer { copyfile_state_free(state) }
+        func probe(_ flag: UInt32, _ value: UnsafeRawPointer) throws -> Bool {
+            if setter(state, flag, value) == 0 { return true }
+            // EINVAL is the documented response to an unknown state option.
+            // Other failures are real errors, not permission to weaken guards.
+            guard errno == EINVAL else { throw posixError(at: source) }
+            return false
+        }
+        var bufferBytes: UInt32 = 1_048_576
+        var forbidCrossMount = true
+        let buffer = try probe(UInt32(COPYFILE_STATE_BSIZE), &bufferBytes)
+        let mount = try probe(UInt32(COPYFILE_STATE_FORBID_CROSS_MOUNT), &forbidCrossMount)
+        return buffer && mount
+    }
+
+    private static func hasLargeResourceFork(in source: URL) throws -> Bool {
+        // BSIZE bounds the data fork only. Some libcopyfile versions supporting
+        // both new state options still allocate an entire resource fork as one
+        // xattr. Include hidden compression forks in this pre-write decision.
+        for item in try items(in: source) {
+            try Task.checkCancellation()
+            let size = getxattr(item.path, ResourceForkStream.attributeName, nil, 0, 0,
+                                XATTR_NOFOLLOW | XATTR_SHOWCOMPRESSION)
+            if size > FileDataCopyStream.bufferByteCount { return true }
+            if size < 0, errno != ENOATTR, errno != ENOTSUP { throw posixError(at: item) }
+        }
+        return false
+    }
+
+    private final class CopyContext {
+        let onDataCopied: (@Sendable (URL, Int64) -> Void)?
+        let stateSetter: StateSetter
+        var cancelled = false
+        var failureCode: Int32?
+
+        init(onDataCopied: (@Sendable (URL, Int64) -> Void)?, stateSetter: @escaping StateSetter) {
+            self.onDataCopied = onDataCopied
+            self.stateSetter = stateSetter
+        }
+    }
+
+    /// copyfile's data callback runs after each write, including its own clone
+    /// fallback. Recursive-entry callbacks also stop long trees of tiny files.
+    private static func copyUsingSystem(from source: URL, to destination: URL, flags: copyfile_flags_t,
+                                        onDataCopied: (@Sendable (URL, Int64) -> Void)?,
+                                        stateSetter: @escaping StateSetter) throws {
+        try Task.checkCancellation()
+        guard let state = copyfile_state_alloc() else { throw posixError(at: destination) }
+        defer { copyfile_state_free(state) }
+        let context = CopyContext(onDataCopied: onDataCopied, stateSetter: stateSetter)
+        let callback: copyfile_callback_t = { what, stage, state, sourcePath, _, rawContext in
+            guard let rawContext else { return COPYFILE_QUIT }
+            let context = Unmanaged<CopyContext>.fromOpaque(rawContext).takeUnretainedValue()
+            if Task.isCancelled {
+                context.cancelled = true
+                return COPYFILE_QUIT
+            }
+            if stage == COPYFILE_ERR {
+                // CONTINUE would retry/ignore some copy errors. Keep the original
+                // errno because recursive QUIT does not necessarily set one.
+                context.failureCode = context.failureCode ?? (errno == 0 ? EIO : errno)
+                return COPYFILE_QUIT
+            }
+            if stage == COPYFILE_START, let state {
+                // Recursive copies supply a fresh child state to this event.
+                var bufferBytes: UInt32 = 1_048_576
+                if context.stateSetter(state, UInt32(COPYFILE_STATE_BSIZE), &bufferBytes) != 0 {
+                    context.failureCode = errno == 0 ? EIO : errno
+                    return COPYFILE_QUIT
+                }
+            }
+            if what == COPYFILE_COPY_DATA, stage == COPYFILE_PROGRESS,
+               let sourcePath, let state, let progress = context.onDataCopied {
+                var copied: off_t = 0
+                if copyfile_state_get(state, UInt32(COPYFILE_STATE_COPIED), &copied) != 0 {
+                    context.failureCode = errno == 0 ? EIO : errno
+                    return COPYFILE_QUIT
+                }
+                progress(URL(fileURLWithPath: String(cString: sourcePath)), Int64(copied))
+            }
+            if Task.isCancelled {
+                context.cancelled = true
+                return COPYFILE_QUIT
+            }
+            return COPYFILE_CONTINUE
+        }
+        // A bounded copy buffer also bounds the ordinary-copy cancellation
+        // interval. The context is used only synchronously inside this call.
+        var bufferBytes: UInt32 = 1_048_576
+        var forbidCrossMount = true
+        guard stateSetter(state, UInt32(COPYFILE_STATE_STATUS_CB), unsafeBitCast(callback, to: UnsafeRawPointer.self)) == 0,
+              stateSetter(state, UInt32(COPYFILE_STATE_STATUS_CTX), Unmanaged.passUnretained(context).toOpaque()) == 0,
+              stateSetter(state, UInt32(COPYFILE_STATE_FORBID_CROSS_MOUNT), &forbidCrossMount) == 0,
+              stateSetter(state, UInt32(COPYFILE_STATE_BSIZE), &bufferBytes) == 0 else {
+            throw posixError(at: destination)
+        }
+        let result = copyfile(source.path, destination.path, state, flags)
+        let failureCode = context.failureCode ?? errno
+        if context.cancelled || (result != 0 && failureCode == ECANCELED) { throw CancellationError() }
+        try Task.checkCancellation()
+        guard result == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(failureCode), userInfo: [NSFilePathErrorKey: destination.path])
         }
     }
 
@@ -21,14 +196,27 @@ enum SignatureSnapshot {
         // 造成源路径和副本的相对路径摘要不一致。
         var result: [URL] = []
         var pending = [root]
+        let rootInfo = try info(at: root)
+        try requireOrdinaryRoot(root, info: rootInfo)
         while let item = pending.popLast() {
+            try Task.checkCancellation()
+            let current = try info(at: item)
+            guard current.st_dev == rootInfo.st_dev else { throw TreeCopyError.mountBoundary(item.path) }
             result.append(item)
-            if try info(at: item).st_mode & S_IFMT == S_IFDIR {
+            if current.st_mode & S_IFMT == S_IFDIR {
                 let names = try FileManager.default.contentsOfDirectory(atPath: item.path)
                 pending.append(contentsOf: names.map { item.appendingPathComponent($0) })
             }
         }
         return result.sorted { $0.path < $1.path }
+    }
+
+    /// The mounted root itself cannot be owned as an ordinary app directory.
+    static func requireOrdinaryRoot(_ root: URL, info rootInfo: stat) throws {
+        guard rootInfo.st_mode & S_IFMT == S_IFDIR else { return }
+        var parent = stat()
+        guard stat(root.deletingLastPathComponent().path, &parent) == 0 else { throw posixError(at: root) }
+        guard rootInfo.st_dev == parent.st_dev else { throw TreeCopyError.mountBoundary(root.path) }
     }
 
     static func info(at url: URL) throws -> stat {
@@ -47,6 +235,7 @@ enum SignatureSnapshot {
             hash.update(data: data)
         }
         for url in try items(in: root) {
+            try Task.checkCancellation()
             let stat = try info(at: url)
             let kind = stat.st_mode & S_IFMT
             field(Data(url.path.dropFirst(root.path.count).utf8))
@@ -58,6 +247,7 @@ enum SignatureSnapshot {
                 defer { try? input.close() }
                 var contents = SHA256()
                 while true {
+                    try Task.checkCancellation()
                     // FileHandle 的 NSData 桥接会延迟释放；逐块排空，避免多次应用校验
                     // 把累计读取的 GB 级数据留在同一个同步 actor 任务的自动释放池中。
                     let hasData = try autoreleasepool {
@@ -95,9 +285,42 @@ enum SignatureSnapshot {
             }.sorted()
             field(Data(String(attributes.count).utf8))
             for name in attributes {
+                try Task.checkCancellation()
                 field(Data(name.utf8))
                 let size = getxattr(url.path, name, nil, 0, 0, XATTR_NOFOLLOW)
                 guard size >= 0 else { throw posixError(at: url) }
+                if name == ResourceForkStream.attributeName {
+                    let parent = open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                    guard parent >= 0 else { throw posixError(at: url) }
+                    defer { close(parent) }
+                    let descriptor = openat(parent, url.lastPathComponent,
+                        O_RDONLY | O_CLOEXEC | (kind == S_IFLNK ? O_SYMLINK : O_NOFOLLOW))
+                    guard descriptor >= 0 else { throw posixError(at: url) }
+                    defer { close(descriptor) }
+                    var before = stat
+                    guard fstat(descriptor, &before) == 0 else { throw posixError(at: url) }
+                    guard before.st_dev == stat.st_dev, before.st_ino == stat.st_ino else {
+                        throw CodeSigner.SigningError.applicationChanged
+                    }
+                    let fork = ResourceForkStream.Handle(fileDescriptor: descriptor, parentDescriptor: parent,
+                        name: url.lastPathComponent, path: url.path)
+                    guard try fork.size() == Int64(size) else { throw CodeSigner.SigningError.applicationChanged }
+                    // Preserve the historical field format: UInt64 length,
+                    // then the raw bytes, rather than a hash of the fork hash.
+                    var length = UInt64(size).bigEndian
+                    withUnsafeBytes(of: &length) { hash.update(bufferPointer: $0) }
+                    try ResourceForkStream.forEachChunk(in: fork, byteCount: Int64(size)) { hash.update(bufferPointer: $0) }
+                    var after = before
+                    guard fstat(descriptor, &after) == 0 else { throw posixError(at: url) }
+                    guard try fork.size() == Int64(size), before.st_dev == after.st_dev, before.st_ino == after.st_ino,
+                          before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+                          before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+                          before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+                          before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec else {
+                        throw CodeSigner.SigningError.applicationChanged
+                    }
+                    continue
+                }
                 var data = Data(count: size)
                 let readSize = data.withUnsafeMutableBytes {
                     getxattr(url.path, name, $0.baseAddress, size, 0, XATTR_NOFOLLOW)
@@ -131,22 +354,17 @@ enum SignatureSnapshot {
 
     /// 仅用于我们自己创建的快照和工作副本；不跟随链接解除 uchg。
     static func remove(_ root: URL) throws {
-        guard FileManager.default.fileExists(atPath: root.path) else { return }
-        for url in try items(in: root) {
-            let stat = try info(at: url)
-            if stat.st_flags & UInt32(UF_IMMUTABLE) != 0,
-               lchflags(url.path, stat.st_flags & ~UInt32(UF_IMMUTABLE)) != 0 {
-                throw posixError(at: url)
-            }
-        }
-        try FileManager.default.removeItem(at: root)
+        guard try entryExists(root) else { return }
+        let manifest = try SignatureRemovalManifest.capture(at: root)
+        try manifest.remove(at: root, allowingPartial: false, unlockCopiedFlags: true)
     }
 
     /// Retire a complete original without a partially deleted app remaining in
     /// signature-backups. Child locks do not prevent renaming their parent.
     static func trash(_ root: URL) throws {
+        _ = try items(in: root)
         let original = try info(at: root)
-        guard original.st_mode & S_IFMT == S_IFDIR else { throw CodeSigner.SigningError.snapshotInvalid }
+        guard [S_IFDIR, S_IFREG].contains(original.st_mode & S_IFMT) else { throw CodeSigner.SigningError.snapshotInvalid }
         let wasLocked = original.st_flags & UInt32(UF_IMMUTABLE) != 0
         if wasLocked, lchflags(root.path, original.st_flags & ~UInt32(UF_IMMUTABLE)) != 0 { throw posixError(at: root) }
         do {

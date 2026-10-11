@@ -33,6 +33,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AppOperationState.shared.finishBeforeTerminating {
+            sender.reply(toApplicationShouldTerminate: true)
+        } ? .terminateLater : .terminateNow
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 应用可能被移动过：校准登录代理指向的程序，免得它指向一个已经不存在的路径。
         Task.detached(priority: .utility) {
@@ -64,6 +70,11 @@ struct AppMoverApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        do { try WriterAdmission.registerCurrentWriter() }
+        catch {
+            AppLogger.shared.logError("当前 AppPorts 未取得写入资格", error: error,
+                errorCode: "WRITER-ADMISSION-FAILED")
+        }
         // 以后台挂载代理身份启动时不创建任何窗口，重挂载完成后直接退出。
         if ContainerMountAgentInstaller.isRunningAsAgent {
             ContainerMountAgentInstaller.runAgentAndExit()

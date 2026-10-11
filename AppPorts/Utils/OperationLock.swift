@@ -3,6 +3,7 @@
 //  AppPorts
 //
 
+import Darwin
 import Foundation
 
 /// 跨进程互斥锁：让「登录代理」和「AppPorts 主应用」不要同时去动同一批挂载点。
@@ -34,11 +35,35 @@ final class OperationLock: @unchecked Sendable {
     }
 
     private let fileURL: URL
+    private let writerAdmissionCheck: () throws -> Void
     private let stateLock = NSLock()
     private var descriptor: Int32 = -1
+    private var lastAdmissionFailure: String?
 
-    init(fileURL: URL = OperationLock.defaultFileURL) {
+    init(fileURL: URL = OperationLock.defaultFileURL, writerAdmissionCheck: (() throws -> Void)? = nil) {
         self.fileURL = fileURL
+        self.writerAdmissionCheck = writerAdmissionCheck ?? {
+            try WriterAdmission.prepareForWrite(dataDirectory: fileURL.deletingLastPathComponent())
+        }
+    }
+
+    deinit { release() }
+
+    /// Distinguishes a live incompatible writer from ordinary lock contention.
+    var admissionFailureReason: String? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return lastAdmissionFailure
+    }
+
+    func recheckWriterAdmission() throws {
+        stateLock.lock(); defer { stateLock.unlock() }
+        do {
+            try writerAdmissionCheck()
+            lastAdmissionFailure = nil
+        } catch {
+            lastAdmissionFailure = error.localizedDescription
+            throw error
+        }
     }
 
     /// 当前是否被**别的进程**持有。只探测、不拿锁，用来记日志判断谁在让路。
@@ -62,10 +87,18 @@ final class OperationLock: @unchecked Sendable {
     func tryAcquire() -> Bool {
         stateLock.lock()
         defer { stateLock.unlock() }
+        guard checkAdmission() else { return false }
         if descriptor >= 0 { return true }
 
         guard let candidate = openDescriptor() else { return false }
         guard flock(candidate, LOCK_EX | LOCK_NB) == 0 else {
+            _ = close(candidate)
+            return false
+        }
+        // An older main app or directly launched agent can appear while this
+        // operation waits for the file lock; inspect the live process list again.
+        guard checkAdmission() else {
+            _ = flock(candidate, LOCK_UN)
             _ = close(candidate)
             return false
         }
@@ -78,6 +111,7 @@ final class OperationLock: @unchecked Sendable {
         let deadline = Date().addingTimeInterval(timeout)
         while true {
             if tryAcquire() { return true }
+            if admissionFailureReason != nil || Task.isCancelled { return false }
             guard Date() < deadline else { return false }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
@@ -95,12 +129,31 @@ final class OperationLock: @unchecked Sendable {
 
     // MARK: - 私有辅助
 
+    /// Only called while stateLock is held. A rejected attempt never owns or
+    /// releases another OperationLock instance's descriptor.
+    private func checkAdmission() -> Bool {
+        do {
+            try writerAdmissionCheck()
+            lastAdmissionFailure = nil
+            return true
+        } catch {
+            lastAdmissionFailure = error.localizedDescription
+            return false
+        }
+    }
+
     private func openDescriptor() -> Int32? {
         let directory = fileURL.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
-        let candidate = open(fileURL.path, O_CREAT | O_RDWR, 0o644)
-        return candidate >= 0 ? candidate : nil
+        let candidate = open(fileURL.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o644)
+        guard candidate >= 0 else { return nil }
+        var info = stat()
+        guard fstat(candidate, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
+            _ = close(candidate)
+            return nil
+        }
+        return candidate
     }
 }

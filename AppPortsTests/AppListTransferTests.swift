@@ -96,7 +96,8 @@ extension AppListTransferTests {
         let service = AppMigrationService(portalCreationOverride: { app, external in
             if failPortal { throw NSError(domain: "AppListTransferTests", code: 1) }
             try fm.createSymbolicLink(at: app.path, withDestinationURL: external)
-        }, dockShortcutUpdater: { _, _ in 0 })
+        }, dockShortcutUpdater: { _, _ in 0 }, transferStore: AppTransferStore(directoryURL: root.appendingPathComponent("Transfers")),
+            signatureFactStore: SignatureFactStore(backupDirectoryURL: root.appendingPathComponent("Signatures")))
         let app = AppItem(name: "Foo.app", path: localURL, bundleURL: localURL, status: AppStatus.local)
         var local = [app]
         var external: [AppItem] = []

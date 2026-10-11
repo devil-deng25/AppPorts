@@ -32,9 +32,10 @@ struct DataOperationSafety: Sendable {
         self.runner = runner
     }
 
-    func requireNewMigration(at source: URL, destination: URL? = nil, bundleIdentifier: String? = nil) async throws {
+    func requireNewMigration(at source: URL, destination: URL? = nil, bundleIdentifier: String? = nil,
+                             ownedTransferIDs: Set<UUID> = []) async throws {
         try requirePolicy(at: source)
-        try requireNoOverlap(at: source)
+        try requireNoOverlap(at: source, ownedTransferIDs: ownedTransferIDs)
         if let destination {
             guard !DataPathTopology.overlaps(DataPathTopology.relationship(source.path, destination.path)) else {
                 throw Failure.conflict(destination.path)

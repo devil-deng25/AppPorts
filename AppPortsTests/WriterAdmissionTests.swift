@@ -1,0 +1,217 @@
+import Darwin
+import XCTest
+@testable import AppPorts
+
+final class WriterAdmissionTests: XCTestCase {
+    private final class Fixture {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("WriterAdmissionTests-" + UUID().uuidString)
+        let current = WriterProcessIdentity(processID: 101, userID: getuid(), startSeconds: 1,
+                                            startMicroseconds: 10, executablePath: "/synthetic/current/AppPorts")
+        let other = WriterProcessIdentity(processID: 202, userID: getuid(), startSeconds: 2,
+                                          startMicroseconds: 20, executablePath: "/synthetic/agent/AppPorts")
+        var processes: [WriterProcessIdentity] = []
+
+        init() { processes = [current] }
+        deinit { try? FileManager.default.removeItem(at: directory) }
+
+        func admission(as process: WriterProcessIdentity? = nil) -> WriterAdmission {
+            WriterAdmission(dataDirectory: directory, currentProcess: { process ?? self.current },
+                            processSnapshot: { self.processes })
+        }
+
+        func write(_ presence: WriterPresence, using admission: WriterAdmission) throws {
+            try DurableFileIO.write(try PropertyListEncoder().encode(presence),
+                                    to: admission.presenceURL(processID: presence.process.processID))
+        }
+    }
+
+    func testCompatibleMainAndDirectAgentInstancesCanShareTheDataset() throws {
+        let fixture = Fixture()
+        fixture.processes = [fixture.current, fixture.other]
+        let main = fixture.admission()
+        try main.registerCurrentProcess()
+        XCTAssertThrowsError(try main.checkCurrentWriters())
+        try fixture.admission(as: fixture.other).registerCurrentProcess()
+        XCTAssertNoThrow(try main.checkCurrentWriters())
+    }
+
+    func testInstalledNewVersionDoesNotAuthorizeAnAlreadyRunningOldInstance() throws {
+        let fixture = Fixture()
+        let installed = fixture.directory.appendingPathComponent("Replaced.app")
+        try FileManager.default.createDirectory(at: installed.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "com.shimoko.AppPorts", "CFBundleVersion": "999"],
+                                           format: .xml, options: 0).write(to: installed.appendingPathComponent("Contents/Info.plist"))
+        let old = WriterProcessIdentity(processID: 202, userID: getuid(), startSeconds: 2, startMicroseconds: 20,
+                                        executablePath: installed.appendingPathComponent("Contents/MacOS/AppPorts").path)
+        fixture.processes = [fixture.current, old]
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        XCTAssertThrowsError(try admission.checkCurrentWriters()) { error in
+            XCTAssertTrue(error.localizedDescription.contains("202"))
+            XCTAssertTrue(error.localizedDescription.contains(old.executablePath))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installed.appendingPathComponent("Contents/Info.plist").path))
+    }
+
+    func testStalePresenceCannotAuthorizePIDReuseOrAnExecutableAtAnotherPath() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        try fixture.admission(as: fixture.other).registerCurrentProcess()
+        let reused = WriterProcessIdentity(processID: fixture.other.processID, userID: getuid(), startSeconds: 3,
+                                           startMicroseconds: 20, executablePath: fixture.other.executablePath)
+        let differentExecutable = WriterProcessIdentity(processID: fixture.other.processID, userID: getuid(), startSeconds: 2,
+                                                        startMicroseconds: 20, executablePath: "/synthetic/old/AppPorts")
+        for process in [reused, differentExecutable] {
+            fixture.processes = [fixture.current, process]
+            XCTAssertThrowsError(try admission.checkCurrentWriters())
+        }
+        fixture.processes = [fixture.current]
+        XCTAssertNoThrow(try admission.checkCurrentWriters(), "A dead instance's stale record is not a live writer")
+    }
+
+    func testRegistrationForAnotherDatasetCannotAuthorizeThisDataset() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let presence = WriterPresence(process: fixture.current, dataDirectoryPath: fixture.directory.appendingPathComponent("other").path,
+                                      capabilities: [WriterAdmission.requiredCapability])
+        try fixture.write(presence, using: admission)
+        XCTAssertThrowsError(try admission.checkCurrentWriters())
+    }
+
+    func testMatchingProcessWithoutRequiredRuntimeCapabilityIsRejected() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let presence = WriterPresence(process: fixture.current,
+                                      dataDirectoryPath: fixture.directory.resolvingSymlinksInPath().path,
+                                      capabilities: ["old-writer"])
+        try fixture.write(presence, using: admission)
+        XCTAssertThrowsError(try admission.checkCurrentWriters())
+    }
+
+    func testMalformedOrLinkedPresenceDoesNotPermitWriting() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let record = admission.presenceURL(processID: fixture.current.processID)
+        let saved = fixture.directory.appendingPathComponent("saved-presence.plist")
+        try FileManager.default.copyItem(at: record, to: saved)
+        try Data("not a property list".utf8).write(to: record)
+        XCTAssertThrowsError(try admission.checkCurrentWriters())
+        try FileManager.default.removeItem(at: record)
+        try FileManager.default.createSymbolicLink(at: record, withDestinationURL: saved)
+        XCTAssertThrowsError(try admission.checkCurrentWriters())
+        XCTAssertEqual(try Data(contentsOf: saved), try Data(contentsOf: record), "The rejected link target is preserved")
+    }
+
+    func testFailedOrIncompleteProcessInspectionFailsClosed() throws {
+        let fixture = Fixture()
+        let failed = WriterAdmission(dataDirectory: fixture.directory, currentProcess: { fixture.current },
+                                     processSnapshot: { throw WriterAdmissionError.inspectionFailed(202, "unreadable") })
+        try failed.registerCurrentProcess()
+        XCTAssertThrowsError(try failed.checkCurrentWriters())
+        fixture.processes = []
+        XCTAssertThrowsError(try fixture.admission().checkCurrentWriters())
+    }
+
+    func testLateWriterIsRejectedAtTheNextOperationBoundaryWithoutReleasingTheOwnersLock() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let url = fixture.directory.appendingPathComponent("operation.lock")
+        let owner = OperationLock(fileURL: url, writerAdmissionCheck: { try admission.checkCurrentWriters() })
+        let observer = OperationLock(fileURL: url)
+        defer { owner.release(); observer.release() }
+        XCTAssertTrue(owner.tryAcquire())
+        fixture.processes.append(fixture.other)
+        XCTAssertThrowsError(try owner.recheckWriterAdmission())
+        XCTAssertNotNil(owner.admissionFailureReason)
+        XCTAssertFalse(observer.tryAcquire())
+        fixture.processes.removeAll { $0 == fixture.other }
+        XCTAssertNoThrow(try owner.recheckWriterAdmission())
+        XCTAssertNil(owner.admissionFailureReason)
+        owner.release()
+        XCTAssertTrue(observer.tryAcquire())
+    }
+
+    func testWriterAppearingAfterFlockRejectsAndReleasesOnlyTheCandidateDescriptor() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        var checks = 0
+        let url = fixture.directory.appendingPathComponent("operation.lock")
+        let interrupted = OperationLock(fileURL: url, writerAdmissionCheck: {
+            checks += 1
+            if checks == 2 { fixture.processes.append(fixture.other) }
+            try admission.checkCurrentWriters()
+        })
+        XCTAssertFalse(interrupted.tryAcquire())
+        XCTAssertEqual(checks, 2)
+        XCTAssertNotNil(interrupted.admissionFailureReason)
+        let next = OperationLock(fileURL: url)
+        defer { next.release() }
+        XCTAssertTrue(next.tryAcquire(), "A failed post-lock admission check must release its candidate descriptor")
+        interrupted.release()
+        let observer = OperationLock(fileURL: url)
+        XCTAssertFalse(observer.tryAcquire(), "A later rejected release cannot affect the successor")
+    }
+
+    func testRejectedAdmissionDoesNotWaitOrReleaseAnotherOperationsLock() async throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        fixture.processes.append(fixture.other)
+        let url = fixture.directory.appendingPathComponent("operation.lock")
+        let owner = OperationLock(fileURL: url)
+        defer { owner.release() }
+        XCTAssertTrue(owner.tryAcquire())
+        let denied = OperationLock(fileURL: url, writerAdmissionCheck: { try admission.checkCurrentWriters() })
+        let started = Date()
+        let acquired = await denied.acquire(timeout: 30)
+        XCTAssertFalse(acquired)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+        XCTAssertNotNil(denied.admissionFailureReason)
+        denied.release()
+        let observer = OperationLock(fileURL: url)
+        XCTAssertFalse(observer.tryAcquire())
+    }
+
+    func testKernelProbeReadsCurrentProcessIdentityWithoutTouchingTheDefaultDataset() throws {
+        let identity = try WriterAdmission.currentProcessIdentity()
+        XCTAssertEqual(identity.processID, getpid())
+        XCTAssertEqual(identity.userID, getuid())
+        XCTAssertGreaterThan(identity.startSeconds, 0)
+        XCTAssertTrue(identity.executablePath.hasPrefix("/"))
+        XCTAssertTrue(try WriterAdmission.runningAppPortsProcesses().contains(identity))
+    }
+
+    func testKernelProbeDetectsADirectlyLaunchedUnregisteredExecutable() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("WriterAdmissionProcess-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("AppPorts")
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: executable)
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["30"]
+        try process.run()
+        defer { if process.isRunning { process.terminate() }; process.waitUntilExit() }
+        let current = try WriterAdmission.currentProcessIdentity()
+        var observed: WriterProcessIdentity?
+        for _ in 0..<100 {
+            observed = try WriterAdmission.runningAppPortsProcesses().first { $0.processID == process.processIdentifier }
+            if observed != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let running = try XCTUnwrap(observed)
+        XCTAssertEqual(running.executablePath, executable.resolvingSymlinksInPath().path)
+        let admission = WriterAdmission(dataDirectory: directory.appendingPathComponent("isolated-data"),
+            processSnapshot: { try WriterAdmission.runningAppPortsProcesses().filter { [current.processID, running.processID].contains($0.processID) } })
+        try admission.registerCurrentProcess()
+        XCTAssertThrowsError(try admission.checkCurrentWriters()) { error in
+            XCTAssertTrue(error.localizedDescription.contains(String(running.processID)))
+        }
+    }
+}

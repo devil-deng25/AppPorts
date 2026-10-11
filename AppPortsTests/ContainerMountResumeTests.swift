@@ -4,6 +4,30 @@ import Testing
 @testable import AppPorts
 
 struct ContainerMountResumeTests {
+    @Test("Activated mount and restored local trees accept writes before final recovery", arguments: [Checkpoint.migrationCommitted, .restoreFinalized])
+    func activeWritesAfterFinalSaveFailure(checkpoint: Checkpoint) async throws {
+        let fixture = try Fixture(checkpoint: checkpoint)
+        defer { fixture.remove() }
+        if checkpoint == .migrationCommitted {
+            await #expect(throws: (any Error).self) { try await fixture.migrate() }
+        } else {
+            let migration = try await fixture.mover().migrateAndComplete(item: fixture.item, externalRootURL: fixture.external,
+                appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+            await #expect(throws: (any Error).self) {
+                try await fixture.mover().restore(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil)
+            }
+        }
+        let pending = try #require(try fixture.store.transfers().first)
+        try Data("new active value".utf8).write(to: fixture.source.appendingPathComponent("payload.txt"))
+        try Data("new document".utf8).write(to: fixture.source.appendingPathComponent("created-after-switch.txt"))
+        #expect(chmod(fixture.source.path, 0o700) == 0)
+        let active = try TreeCopySession.snapshot(at: fixture.source)
+        let created = fixture.runner.commands(prefix: ["-A"])
+        #expect(try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) == nil)
+        #expect(try TreeCopySession.snapshot(at: fixture.source) == active)
+        #expect(fixture.runner.commands(prefix: ["-A"]) == created)
+        #expect(try fixture.store.transfers().isEmpty)
+    }
     @Test("Verified mount migration resumes its original operation without creating or copying another volume", arguments: [
         Checkpoint.migrationVerified, .migrationUnmounted, .migrationMoved, .migrationCommitted
     ])
@@ -13,7 +37,7 @@ struct ContainerMountResumeTests {
         await #expect(throws: (any Error).self) { try await fixture.migrate() }
         let pending = try #require(try fixture.store.transfers().first)
         let mount = try #require(pending.recoveryMountRecord)
-        #expect(pending.isVerifiedSwitchRecoverable)
+        #expect(pending.isVerifiedSwitchRecoverable || pending.isPreparationRecoverable)
         let created = fixture.runner.commands(prefix: ["-A"])
 
         let warning = try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil)
@@ -40,7 +64,7 @@ struct ContainerMountResumeTests {
             try await fixture.mover().restore(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil)
         }
         let pending = try #require(try fixture.store.transfers().first { $0.direction == .restore })
-        #expect(pending.isVerifiedSwitchRecoverable)
+        #expect(pending.isVerifiedSwitchRecoverable || pending.isPreparationRecoverable)
         let copiedIdentity = try #require(pending.destinationIdentity)
         let created = fixture.runner.commands(prefix: ["-A"])
 
@@ -99,7 +123,7 @@ struct ContainerMountResumeTests {
                 try await fixture.mover().restore(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil)
             }
         }
-        let pending = try #require(try fixture.store.transfers().first { $0.isVerifiedSwitchRecoverable })
+        let pending = try #require(try fixture.store.transfers().first { $0.isVerifiedSwitchRecoverable || $0.isPreparationRecoverable })
         let staged = URL(fileURLWithPath: try #require(pending.stagingPath))
         try Data("changed copy".utf8).write(to: staged.appendingPathComponent("payload.txt"))
         let original = try TreeCopySession.snapshot(at: fixture.source)
@@ -255,7 +279,10 @@ struct ContainerMountResumeTests {
         #expect(probe.didProbe)
         #expect(runner.commands(prefix: ["-u"]).isEmpty)
         #expect(try fixture.payload(at: source) == "original")
-        #expect(try fixture.store.transfer(operationID: pending.operationID)?.isVerifiedSwitchRecoverable == true)
+        let unchanged = try #require(try fixture.store.transfer(operationID: pending.operationID))
+        #expect(unchanged == pending)
+        #expect(unchanged.isPreparationRecoverable)
+        #expect(unchanged.sourceBaseline != nil && unchanged.baseline == nil)
     }
 
     private final class DiskInfoInterception: ShellCommandRunning, @unchecked Sendable {

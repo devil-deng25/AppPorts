@@ -349,8 +349,8 @@ struct DataTransferStoreTests {
         #expect(throws: ContainerMountStore.StoreError.self) { try fixture.store.updateTransfer(restore) }
     }
 
-    @Test("An unstarted restore retries with its original operation identity and paths")
-    func unstartedRestoreResumesSameIntent() throws {
+    @Test("An unstarted restore retries with its original operation identity and paths", arguments: [false, true])
+    func unstartedRestoreResumesSameIntent(sourceInspected: Bool) throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let mount = fixture.mount("A")
@@ -360,6 +360,10 @@ struct DataTransferStoreTests {
         restore.legacyRootOwnership = .init(uid: geteuid(), gid: getegid())
         restore.legacyMountFlags = UInt32(MNT_IGNORE_OWNERSHIP | MNT_DONTBROWSE | MNT_NODEV)
         try fixture.store.updateTransfer(restore)
+        if sourceInspected {
+            restore.sourceIdentity = DataPathIdentity(device: 3, inode: 600, volumeUUID: mount.volumeUUID)
+            try fixture.store.updateTransfer(restore)
+        }
         restore.phase = .needsRecovery
         restore.recoverableReason = "Ownership inspection failed before copying"
         try fixture.store.updateTransfer(restore)
@@ -385,7 +389,7 @@ struct DataTransferStoreTests {
     }
 
     @Test("Copy evidence or a changed restore shape cannot take the unstarted retry route",
-          arguments: ["sourceIdentity", "destinationIdentity", "backupIdentity", "baseline", "createdVolume",
+          arguments: ["destinationIdentity", "backupIdentity", "baseline", "createdVolume",
                       "activePath", "destinationPath", "missingStaging", "missingBackup", "copying"])
     func startedRestoreCannotResume(kind: String) throws {
         let fixture = try Fixture()
@@ -394,7 +398,7 @@ struct DataTransferStoreTests {
         try fixture.store.upsert(mount)
         var restore = fixture.restore(mount)
         switch kind {
-        case "sourceIdentity", "copying": restore.sourceIdentity = DataPathIdentity(device: 3, inode: 600, volumeUUID: mount.volumeUUID)
+        case "copying": restore.sourceIdentity = DataPathIdentity(device: 3, inode: 600, volumeUUID: mount.volumeUUID)
         case "destinationIdentity": restore.destinationIdentity = DataPathIdentity(device: 1, inode: 901)
         case "backupIdentity": restore.backupIdentity = DataPathIdentity(device: 3, inode: 600)
         case "baseline": restore.baseline = Data("evidence-copy-started".utf8)
@@ -645,25 +649,31 @@ struct DataTransferStoreTests {
         try fixture.store.updateTransfer(restore)
         try fixture.store.beginRestore(transfer: restore, removingMount: nil)
         try fixture.store.finalizeTransfer(operationID: restore.operationID, baseline: Data("restore-baseline".utf8))
-        // The terminal restore must also remain: earlier copies depend on its
-        // active local identity even though deleting it leaves valid topology.
-        #expect(throws: ContainerMountStore.StoreError.self) {
-            try fixture.store.requestCleanup(operationID: restore.operationID)
-        }
-        #expect(try fixture.store.transfer(operationID: restore.operationID)?.phase == .awaitingUserVerification)
-        // The middle record is still the proof connecting the original migration to restore.
-        // Refuse its deletion intent before any physical cleanup can occur.
-        #expect(throws: ContainerMountStore.StoreError.self) {
-            try fixture.store.requestCleanup(operationID: normalization.operationID)
-        }
-        #expect(try fixture.store.transfer(operationID: normalization.operationID)?.phase == .awaitingUserVerification)
-        try fixture.store.requestCleanup(operationID: initial.operationID)
-        try fixture.store.finishTransfer(operationID: initial.operationID, deletionConfirmed: true)
-        try fixture.store.requestCleanup(operationID: normalization.operationID)
-        try fixture.store.finishTransfer(operationID: normalization.operationID, deletionConfirmed: true)
-        #expect(try fixture.store.transfers().map(\.operationID) == [restore.operationID])
+        // Later physical copies can be removed first. Only their small source
+        // and destination identity links remain for the retained oldest copy.
         try fixture.store.requestCleanup(operationID: restore.operationID)
         try fixture.store.finishTransfer(operationID: restore.operationID, deletionConfirmed: true)
+        let terminalProof = try #require(try fixture.store.transfer(operationID: restore.operationID))
+        #expect(terminalProof.retainedCopyRemovedAt != nil)
+        #expect(terminalProof.baseline == nil && terminalProof.sourceBaseline == nil)
+        #expect(terminalProof.topologyEntries.map(\.path) == [restore.originalPath])
+        #expect(try fixture.store.completedLocation(after: initial.operationID).operationID == restore.operationID)
+        var resurrected = terminalProof
+        resurrected.retainedCopyRemovedAt = nil
+        resurrected.baseline = Data("invented old copy".utf8)
+        #expect(throws: ContainerMountStore.StoreError.self) { try fixture.store.updateTransfer(resurrected) }
+        var forged = try #require(try fixture.store.transfer(operationID: initial.operationID))
+        forged.retainedCopyRemovedAt = Date()
+        #expect(throws: ContainerMountStore.StoreError.self) { try fixture.store.updateTransfer(forged) }
+        try fixture.store.requestCleanup(operationID: normalization.operationID)
+        try fixture.store.finishTransfer(operationID: normalization.operationID, deletionConfirmed: true)
+        let reopened = ContainerMountStore(fileURL: fixture.file)
+        #expect(try reopened.transfers().count == 3)
+        #expect(try reopened.completedLocation(after: initial.operationID).operationID == restore.operationID)
+        let document = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: fixture.file), format: nil) as? [String: Any])
+        #expect(document["schemaVersion"] as? Int == 8)
+        try reopened.requestCleanup(operationID: initial.operationID)
+        try reopened.finishTransfer(operationID: initial.operationID, deletionConfirmed: true)
         #expect(try fixture.store.transfers().isEmpty)
     }
 

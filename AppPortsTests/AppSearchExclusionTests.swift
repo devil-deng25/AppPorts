@@ -11,6 +11,7 @@ final class AppSearchExclusionTests: XCTestCase {
     private var destination: URL { AppSearchExclusionService.library(in: externalRoot).appendingPathComponent("Example.app") }
     private var item: AppItem { AppItem(name: "Example.app", path: external, status: AppStatus.linked) }
     private var store: AppSearchRecordStore { AppSearchRecordStore(fileURL: root.appendingPathComponent("records.json")) }
+    private var transferStore: AppTransferStore { AppTransferStore(directoryURL: root.appendingPathComponent("Transfers")) }
 
     override func setUpWithError() throws {
         root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("Exclusion-\(UUID())")
@@ -20,12 +21,19 @@ final class AppSearchExclusionTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        for url in [external, destination] { try? fm.setAttributes([.immutable: false], ofItemAtPath: url.path) }
+        unlockOwnedExclusionFixture()
         try? fm.removeItem(at: root)
     }
 
-    private func service(fileManager: FileManager = .default) -> AppMigrationService {
-        AppMigrationService(fileManager: fileManager, dockShortcutUpdater: { _, _ in 0 }, runningApplications: { [] })
+    private func service(fileManager: FileManager = .default,
+                         dockShortcutUpdater: AppMigrationService.DockShortcutUpdater? = nil,
+                         dockShortcutRetryUpdater: AppMigrationService.DockShortcutUpdater? = nil,
+                         writerAdmissionCheck: (() throws -> Void)? = nil,
+                         runningApplications: @escaping () -> [AppRunningState.RunningApplication] = { [] }) -> AppMigrationService {
+        AppMigrationService(fileManager: fileManager, dockShortcutUpdater: dockShortcutUpdater ?? { _, _ in 0 },
+            dockShortcutRetryUpdater: dockShortcutRetryUpdater, transferStore: transferStore,
+            signatureFactStore: SignatureFactStore(backupDirectoryURL: root.appendingPathComponent("Signatures")),
+            writerAdmissionCheck: writerAdmissionCheck, runningApplications: runningApplications)
     }
 
     private func makeApp(_ url: URL, identifier: String = "org.example.exclusion") throws {
@@ -200,15 +208,52 @@ final class AppSearchExclusionTests: XCTestCase {
         return report
     }
 
+    func testConversionRejectsIncompatibleWriterBeforeCreatingLibraryOrChangingApp() async throws {
+        let before = try TreeCopySession.snapshot(at: external)
+        let mover = service(writerAdmissionCheck: {
+            throw NSError(domain: "AppPortsTests.WriterAdmission", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Incompatible exclusion writer fixture"])
+        })
+        do {
+            _ = try await mover.excludeFromSearch(app: item, externalRoot: externalRoot, localEntries: [], store: store)
+            XCTFail("An incompatible live writer must block search exclusion")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Incompatible exclusion writer fixture"))
+        }
+        XCTAssertEqual(try TreeCopySession.snapshot(at: external), before)
+        XCTAssertFalse(fm.fileExists(atPath: destination.deletingLastPathComponent().path))
+        XCTAssertTrue(try store.records().isEmpty)
+    }
+
+    func testConversionPreservesUnknownUserImmutableFlagWithoutMovingApp() async throws {
+        try link()
+        try fm.setAttributes([.immutable: true], ofItemAtPath: external.path)
+        let before = try SignatureSnapshot.fingerprint(of: external)
+        let localBefore = try TreeCopySession.snapshot(at: local)
+        let recordsBefore = try store.records()
+        do {
+            _ = try await service().excludeFromSearch(app: item, externalRoot: externalRoot,
+                                                     localEntries: [local], store: store)
+            XCTFail("An unowned immutable root must not be temporarily unlocked")
+        } catch {
+            XCTAssertEqual((error as NSError).domain, "AppPorts.AppTransfer")
+        }
+        XCTAssertEqual(try SignatureSnapshot.fingerprint(of: external), before)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: local), localBefore)
+        XCTAssertEqual(try store.records(), recordsBefore)
+        XCTAssertFalse(fm.fileExists(atPath: destination.path))
+        XCTAssertNotEqual(try SignatureSnapshot.info(at: external).st_flags & UInt32(UF_IMMUTABLE), 0)
+    }
+
     func testConversionPreservesBundleAndDocumentAndRetargetsExistingPortal() async throws {
         try link()
         let data = try Data(contentsOf: external.appendingPathComponent("Contents/Info.plist"))
         let identity = try AppSearchExclusionService.FileIdentity.read(external)
         let document = externalRoot.appendingPathComponent("Notes.txt")
         try Data("searchable document".utf8).write(to: document)
-        try fm.setAttributes([.immutable: true], ofItemAtPath: external.path)
+        try AppUpdateProtectionStore(transferStore: transferStore).protect(external)
         var dockPaths: [URL] = []
-        let mover = AppMigrationService(dockShortcutUpdater: { source, destination in
+        let mover = service(dockShortcutUpdater: { source, destination in
             dockPaths = [source, destination]; return 1
         }, runningApplications: { [] })
         let result = try await mover.excludeFromSearch(app: item, externalRoot: externalRoot, localEntries: [local], store: store)
@@ -245,8 +290,11 @@ final class AppSearchExclusionTests: XCTestCase {
                 setxattr(url.path, attributeName, $0.baseAddress, $0.count, 0, XATTR_NOFOLLOW)
             }
             guard status == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
-            try fm.setAttributes([.immutable: true], ofItemAtPath: url.path)
         }
+        // PkgInfo's preexisting flag belongs to the user; only the subsequently
+        // recorded flags may be suspended and moved by AppPorts.
+        try fm.setAttributes([.immutable: true], ofItemAtPath: pkgInfo.path)
+        try AppUpdateProtectionStore(transferStore: transferStore).protect(external)
         try runFixtureCodesign(["--verify", "--strict", external.path])
         let originalIdentity = try AppSearchExclusionService.FileIdentity.read(external)
         let originalPkgInfoIdentity = try AppSearchExclusionService.FileIdentity.read(pkgInfo)
@@ -287,6 +335,10 @@ final class AppSearchExclusionTests: XCTestCase {
             $0.hasPrefix(".appports-exclusion-") && $0.hasSuffix(".json")
         }
         XCTAssertTrue(pendingJournals.isEmpty, "Successful exclusion must retire its recovery journal")
+        XCTAssertTrue(service().unlockExternalApp(at: destination))
+        XCTAssertEqual(try SignatureSnapshot.info(at: destination).st_flags & UInt32(UF_IMMUTABLE), 0)
+        XCTAssertNotEqual(try SignatureSnapshot.info(at: movedPkgInfo).st_flags & UInt32(UF_IMMUTABLE), 0,
+                          "Relocation must not claim the user's original immutable flag")
     }
 
     private func fixtureFlags(in bundle: URL) throws -> [String: UInt32] {
@@ -403,7 +455,7 @@ final class AppSearchExclusionTests: XCTestCase {
     }
 
     func testRunningAppIsRejectedAtExecutionTime() async throws {
-        let mover = AppMigrationService(dockShortcutUpdater: { _, _ in XCTFail("No Dock write"); return 0 },
+        let mover = service(dockShortcutUpdater: { _, _ in XCTFail("No Dock write"); return 0 },
             runningApplications: { [.init(bundleURL: self.external, bundleIdentifier: "org.example.exclusion")] })
         do {
             _ = try await mover.excludeFromSearch(app: item, externalRoot: externalRoot, localEntries: [], store: store)
@@ -415,7 +467,7 @@ final class AppSearchExclusionTests: XCTestCase {
 
     func testFailedPortalInstallRollsBackPathsRecordsAndLock() async throws {
         try link()
-        try fm.setAttributes([.immutable: true], ofItemAtPath: external.path)
+        try AppUpdateProtectionStore(transferStore: transferStore).protect(external)
         let originalRecords = try store.records()
         let failing = FailingPortalInstallFileManager(local: local)
         do {
@@ -438,7 +490,7 @@ final class AppSearchExclusionTests: XCTestCase {
             "bundle-identifier": "org.example.exclusion", "file-label": "Example"
         ]]]
         let dock = DockShortcutService(store: .init(read: { tiles }, write: { tiles = $0 }, isManaged: { false }), reload: {})
-        let mover = AppMigrationService(dockShortcutUpdater: { try dock.redirectShortcuts(from: $0, to: $1) }, runningApplications: { [] })
+        let mover = service(dockShortcutUpdater: { try dock.redirectShortcuts(from: $0, to: $1) }, runningApplications: { [] })
         let result = try await mover.excludeFromSearch(app: item, externalRoot: externalRoot, localEntries: [local], store: store)
         XCTAssertTrue(result.dockSynchronized)
         XCTAssertEqual(tiles.count, 1)
@@ -461,7 +513,7 @@ final class AppSearchExclusionTests: XCTestCase {
             guard writesAllowed else { throw NSError(domain: "DockRetryTest", code: 1) }
             tiles = $0
         }, isManaged: { false }), reload: {})
-        let mover = AppMigrationService(dockShortcutUpdater: { try dock.redirectShortcuts(from: $0, to: $1) },
+        let mover = service(dockShortcutUpdater: { try dock.redirectShortcuts(from: $0, to: $1) },
             dockShortcutRetryUpdater: { try dock.redirectShortcuts(from: $0, to: $1, requiringBundleIdentity: true) }, runningApplications: { [] })
         let first = try await mover.excludeFromSearch(app: item, externalRoot: externalRoot, localEntries: [local], store: store)
         XCTAssertFalse(first.dockSynchronized)
@@ -480,7 +532,7 @@ final class AppSearchExclusionTests: XCTestCase {
         _ = try await service().excludeFromSearch(app: item, externalRoot: externalRoot, localEntries: [], store: store)
         try makeApp(external, identifier: "org.user.new-application")
         var redirects: [(URL, URL)] = []
-        let mover = AppMigrationService(dockShortcutUpdater: { redirects.append(($0, $1)); return 0 }, runningApplications: { [] })
+        let mover = service(dockShortcutUpdater: { redirects.append(($0, $1)); return 0 }, runningApplications: { [] })
         let moved = AppItem(name: "Example.app", path: destination, status: AppStatus.unlinked)
         _ = try await mover.excludeFromSearch(app: moved, externalRoot: externalRoot, localEntries: [], store: store)
         XCTAssertEqual(redirects.map { $0.0.path }, [destination.path])
@@ -495,7 +547,7 @@ final class AppSearchExclusionTests: XCTestCase {
         ]]]
         var writes = 0
         let dock = DockShortcutService(store: .init(read: { original }, write: { _ in writes += 1 }, isManaged: { false }), reload: {})
-        let mover = AppMigrationService(dockShortcutUpdater: { _, _ in XCTFail("Retry must use identity-checked updater"); return 0 },
+        let mover = service(dockShortcutUpdater: { _, _ in XCTFail("Retry must use identity-checked updater"); return 0 },
             dockShortcutRetryUpdater: { try dock.redirectShortcuts(from: $0, to: $1, requiringBundleIdentity: true) }, runningApplications: { [] })
         let moved = AppItem(name: "Example.app", path: destination, status: AppStatus.unlinked)
         let result = try await mover.excludeFromSearch(app: moved, externalRoot: externalRoot, localEntries: [], store: store)
@@ -525,7 +577,7 @@ final class AppSearchExclusionTests: XCTestCase {
         let records = try store.records()
         let identity = try AppSearchExclusionService.FileIdentity.read(destination)
         var retryCount = 0
-        let mover = AppMigrationService(dockShortcutUpdater: { _, _ in XCTFail("Must use retry updater"); return 0 },
+        let mover = service(dockShortcutUpdater: { _, _ in XCTFail("Must use retry updater"); return 0 },
             dockShortcutRetryUpdater: { _, target in
                 XCTAssertEqual(target.path, self.destination.path)
                 retryCount += 1
@@ -566,7 +618,7 @@ final class AppSearchExclusionTests: XCTestCase {
         try link()
         _ = try await service().excludeFromSearch(app: item, externalRoot: externalRoot, localEntries: [local], store: store)
         let identity = try AppSearchExclusionService.FileIdentity.read(destination)
-        let mover = AppMigrationService(dockShortcutUpdater: { _, _ in 0 },
+        let mover = service(dockShortcutUpdater: { _, _ in 0 },
             runningApplications: { [.init(bundleURL: self.destination, bundleIdentifier: "org.example.exclusion")] })
         let moved = AppItem(name: "Example.app", path: destination, status: AppStatus.linked)
         let result = try await mover.excludeFromSearch(app: moved, externalRoot: externalRoot, localEntries: [local], store: store)
@@ -579,7 +631,7 @@ final class AppSearchExclusionTests: XCTestCase {
         try link()
         let journal = try writeJournal(source: external, portals: [journalPortal(at: local)])
         let records = try store.records()
-        let mover = AppMigrationService(dockShortcutUpdater: { _, _ in XCTFail("No Dock write"); return 0 }, runningApplications: { [] })
+        let mover = service(dockShortcutUpdater: { _, _ in XCTFail("No Dock write"); return 0 }, runningApplications: { [] })
         for path in [external, destination] {
             if path == destination { try fm.moveItem(at: external, to: destination) }
             do {

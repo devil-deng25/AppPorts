@@ -186,7 +186,7 @@ final class OperationLockTests: XCTestCase {
         // its guard accidentally. Both guard/throw and if/return stop execution.
         let operations = ["migrateAndComplete", "restoreAndComplete", "normalizeManagedLinkAndComplete",
                           "createLink", "mount", "unmount", "resumeVerifiedTransfer", "cancelUnstartedRestore",
-                          "cancelUnstartedMigration", "cleanupRetainedTransfer", "retryCleanup", "discardCleanupRecord"]
+                          "cancelUnstartedMigration", "cancelPreparation", "cleanupRetainedTransfer", "retryCleanup", "discardCleanupRecord"]
         for function in dataDirsViewSource.components(separatedBy: "\n    private func ").dropFirst() {
             guard let mutation = operations.compactMap({ function.range(of: ".\($0)(") })
                 .min(by: { $0.lowerBound < $1.lowerBound }) else { continue }
@@ -196,7 +196,8 @@ final class OperationLockTests: XCTestCase {
                 continue
             }
             let callSite = function[acquire.upperBound..<mutation.lowerBound]
-            guard let rejection = callSite.range(of: "if !lockAcquired {") ?? callSite.range(of: "guard lockAcquired else {") else {
+            guard let rejection = callSite.range(of: "if !lockAcquired {") ?? callSite.range(of: "guard lockAcquired else {")
+                    ?? callSite.range(of: "guard acquired else {") else {
                 XCTFail("\(name) must reject a failed lock acquisition before its first data operation")
                 continue
             }

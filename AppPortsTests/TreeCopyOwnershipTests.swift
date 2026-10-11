@@ -249,6 +249,81 @@ struct TreeCopyOwnershipTests {
         }
     }
 
+    @Test("A restored directory can move to another target while its real noowners source image is detached")
+    func remigrationWithOfflineRestoreCopy() async throws {
+        try await withImage { image in
+            let home = image.root.appendingPathComponent("home")
+            let local = home.appendingPathComponent("Payload")
+            let nextRoot = image.root.appendingPathComponent("next-target")
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: nextRoot, withIntermediateDirectories: false)
+            try await makeTree(at: local)
+            let item = DataDirItem(name: "Payload", path: local, type: .custom, priority: .optional, description: "")
+            let ledger = image.root.appendingPathComponent("remigration.plist")
+            let store = ContainerMountStore(fileURL: ledger)
+            let mover = DataDirMover(homeDir: home, store: store, runner: OwnershipTestIdleRunner())
+            #expect(try await mover.migrateAndComplete(item: item, to: image.mountPoint, progressHandler: nil).cleanupWarning == nil)
+            try await mover.restore(item: item, progressHandler: nil)
+            let restore = try #require(try store.transfers().first)
+            let oldRoot = URL(fileURLWithPath: try #require(restore.backupPath))
+            let oldIdentity = try DataPathIdentity.capture(oldRoot)
+            try await image.detach()
+            try #require(!FileManager.default.fileExists(atPath: oldRoot.path))
+            try Data("new local content".utf8).write(to: local.appendingPathComponent("after-restore.txt"))
+            let result = try await mover.migrateAndComplete(item: item, to: nextRoot, progressHandler: nil)
+            #expect(result.cleanupWarning != nil)
+            let next = try #require(try store.transfers().first { $0.priorOperationID == restore.operationID })
+            #expect(next.isDataSwitchComplete)
+            #expect(try String(contentsOf: local.appendingPathComponent("after-restore.txt"), encoding: .utf8) == "new local content")
+            let activeIdentity = try DataPathIdentity.capture(local.resolvingSymlinksInPath())
+            try await image.remount(ignoringOwnership: true)
+            #expect(try DataPathIdentity.capture(oldRoot).matchesFilesystemObject(oldIdentity))
+            let cold = DataDirMover(homeDir: home, store: ContainerMountStore(fileURL: ledger), runner: OwnershipTestIdleRunner())
+            try await cold.cleanupRetainedLineage(operationID: next.operationID)
+            #expect(try store.transfers().isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: oldRoot.path))
+            #expect(try DataPathIdentity.capture(local.resolvingSymlinksInPath()) == activeIdentity)
+            #expect(try String(contentsOf: local.appendingPathComponent("after-restore.txt"), encoding: .utf8) == "new local content")
+            #expect(try await cold.restoreAndComplete(item: item, progressHandler: nil).cleanupWarning == nil)
+            #expect(try store.transfers().isEmpty)
+            #expect(try store.managedLinks().isEmpty)
+        }
+    }
+
+    @Test("A preserved material record can be dismissed after real noowners disconnect and reconnect without deleting data")
+    func preservedMaterialRecordLifecycleAfterReconnect() async throws {
+        try await withImage { image in
+            let source = image.root.appendingPathComponent("LocalSource")
+            let candidate = image.mountPoint.appendingPathComponent("UserKeptMaterial")
+            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: candidate, withIntermediateDirectories: false)
+            try Data("authoritative source".utf8).write(to: source.appendingPathComponent("payload"))
+            try Data("unique material".utf8).write(to: candidate.appendingPathComponent("payload"))
+            let store = ContainerMountStore(fileURL: image.root.appendingPathComponent("materials.plist"))
+            var transfer = DataTransferRecord(mode: .symlink, direction: .migrate, appName: "Material Fixture",
+                dataDirType: "custom", originalPath: source.path, activePath: source.path,
+                destinationPath: image.mountPoint.appendingPathComponent("Unpublished").path,
+                sourceIdentity: try DataPathIdentity.capture(source))
+            transfer.preparationPath = candidate.path
+            try store.beginTransfer(transfer)
+            try store.endUnswitchedTransfer(transfer, preserving: "material deliberately kept") { }
+            let material = try #require(try store.preservedMaterials().first)
+            let bytes = try Data(contentsOf: image.root.appendingPathComponent("materials.plist"))
+            let service = DataTransferMaterialService(store: store)
+            try await image.detach()
+            #expect(try await service.recheckPreservedMaterial(id: material.id) == .absenceUnverified)
+            #expect(try Data(contentsOf: image.root.appendingPathComponent("materials.plist")) == bytes)
+            try await image.remount(ignoringOwnership: true)
+            #expect(try await service.recheckPreservedMaterial(id: material.id) == .listedPathsStillExist([candidate.path]))
+            #expect(try await service.removePreservedMaterialRecord(id: material.id,
+                confirmation: .keepAllFilesAndVolumes) == .recordRemoved)
+            #expect(try store.preservedMaterials().isEmpty)
+            #expect(DiskUtility.isMountPoint(image.mountPoint))
+            #expect(try String(contentsOf: candidate.appendingPathComponent("payload"), encoding: .utf8) == "unique material")
+            #expect(try String(contentsOf: source.appendingPathComponent("payload"), encoding: .utf8) == "authoritative source")
+        }
+    }
+
     @Test("DataDirMover migrates, restores and cleans its retained lineage on noowners")
     func migrationServiceRoundTrip() async throws {
         try await withImage { image in
@@ -270,7 +345,7 @@ struct TreeCopyOwnershipTests {
             #expect(try Data(contentsOf: backup.appendingPathComponent("nested/payload")) == Data("verified data".utf8))
             #expect(try Data(contentsOf: external.appendingPathComponent("nested/payload")) == Data("verified data".utf8))
             let document = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: ledger), format: nil) as? [String: Any])
-            #expect(document["schemaVersion"] as? Int == 5)
+            #expect(document["schemaVersion"] as? Int == 7)
 
             try await mover.restore(item: item, progressHandler: nil)
             let restoration = try #require(try store.transfers().first { $0.direction == .restore })

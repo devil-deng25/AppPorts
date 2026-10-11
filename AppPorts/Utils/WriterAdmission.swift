@@ -1,0 +1,274 @@
+import Darwin
+import Foundation
+
+/// This identity comes from the kernel, not the version currently installed at
+/// the executable's path. Replacing an app on disk does not upgrade its process.
+struct WriterProcessIdentity: Codable, Equatable, Sendable {
+    let processID: Int32
+    let userID: UInt32
+    let startSeconds: UInt64
+    let startMicroseconds: UInt64
+    let executablePath: String
+}
+
+struct WriterPresence: Codable, Equatable, Sendable {
+    let process: WriterProcessIdentity
+    let dataDirectoryPath: String
+    let capabilities: Set<String>
+}
+
+enum WriterAdmissionError: LocalizedError {
+    case incompatibleWriter(WriterProcessIdentity, String)
+    case inspectionFailed(Int32?, String)
+    case defaultDataInTests
+
+    var errorDescription: String? {
+        switch self {
+        case let .incompatibleWriter(process, reason):
+            return String(format: "仍有无法确认写入兼容性的 AppPorts 进程（PID %@，%@）：%@。请退出该进程后重试；现有副本已保留。".localized,
+                          String(process.processID), process.executablePath, reason)
+        case let .inspectionFailed(pid, reason):
+            if let pid {
+                return String(format: "无法确认运行中的 AppPorts 写入进程（PID %@）：%@。已暂停写入并保留现有副本。".localized,
+                              String(pid), reason)
+            }
+            return String(format: "无法确认运行中的 AppPorts 写入进程：%@。已暂停写入并保留现有副本。".localized, reason)
+        case .defaultDataInTests:
+            return "测试进程不能写入用户的 AppPorts 数据目录；请注入独立测试目录。".localized
+        }
+    }
+}
+
+/// Small, process-lifetime capability registration. This is an admission check
+/// for live writers, not a schema/version gate or an operation journal. A stale
+/// registration cannot authorize a reused PID or another data directory.
+final class WriterAdmission {
+    static let requiredCapability = "appports-verified-writer-v3"
+    static var defaultDataDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AppPorts", isDirectory: true)
+    }
+
+    private static var live: WriterAdmission { WriterAdmission(dataDirectory: defaultDataDirectory) }
+    private let dataDirectory: URL
+    private let currentProcess: () throws -> WriterProcessIdentity
+    private let processSnapshot: () throws -> [WriterProcessIdentity]
+
+    init(dataDirectory: URL,
+         currentProcess: @escaping () throws -> WriterProcessIdentity = { try currentProcessIdentity() },
+         processSnapshot: @escaping () throws -> [WriterProcessIdentity] = { try runningAppPortsProcesses() }) {
+        self.dataDirectory = Self.canonical(dataDirectory)
+        self.currentProcess = currentProcess
+        self.processSnapshot = processSnapshot
+    }
+
+    /// Called before main/--mount-agent startup. XCTest uses injected datasets
+    /// and must not create even presence metadata in the user's real dataset.
+    static func registerCurrentWriter() throws {
+        guard !isRunningUnitTests else { return }
+        try live.registerCurrentProcess()
+    }
+
+    /// Production stores share this one dataset. Injected stores are isolated;
+    /// tests of admission itself use an instance with a synthetic process list.
+    static func recheck(dataDirectory: URL) throws {
+        guard canonical(dataDirectory) == canonical(defaultDataDirectory) else { return }
+        guard !isRunningUnitTests else { throw WriterAdmissionError.defaultDataInTests }
+        try live.checkCurrentWriters()
+    }
+
+    static func prepareForWrite(dataDirectory: URL) throws {
+        guard canonical(dataDirectory) == canonical(defaultDataDirectory) else { return }
+        guard !isRunningUnitTests else { throw WriterAdmissionError.defaultDataInTests }
+        try live.registerCurrentProcess()
+        try live.checkCurrentWriters()
+    }
+
+    func registerCurrentProcess() throws {
+        let process = try currentProcess()
+        let presence = WriterPresence(process: process, dataDirectoryPath: dataDirectory.path,
+                                      capabilities: [Self.requiredCapability])
+        try preparePresenceDirectory()
+        if (try? readPresence(processID: process.processID)) == presence { return }
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        try DurableFileIO.write(try encoder.encode(presence), to: presenceURL(processID: process.processID))
+    }
+
+    func checkCurrentWriters() throws {
+        let processes = try processSnapshot()
+        let current = try currentProcess()
+        guard processes.contains(current) else {
+            throw WriterAdmissionError.inspectionFailed(current.processID, "进程列表中缺少当前写入实例".localized)
+        }
+        for process in processes {
+            let presence: WriterPresence
+            do { presence = try readPresence(processID: process.processID) }
+            catch {
+                throw WriterAdmissionError.incompatibleWriter(process, "该运行实例没有可验证的写入能力登记".localized)
+            }
+            guard presence.process == process else {
+                throw WriterAdmissionError.incompatibleWriter(process, "登记与当前进程身份或启动时间不符".localized)
+            }
+            guard presence.dataDirectoryPath == dataDirectory.path else {
+                throw WriterAdmissionError.incompatibleWriter(process, "登记属于另一个数据目录".localized)
+            }
+            guard presence.capabilities.contains(Self.requiredCapability) else {
+                throw WriterAdmissionError.incompatibleWriter(process, "该运行实例不支持当前安全写入约定".localized)
+            }
+        }
+    }
+
+    func presenceURL(processID: Int32) -> URL {
+        presenceDirectory.appendingPathComponent(String(processID) + ".plist")
+    }
+
+    private var presenceDirectory: URL { dataDirectory.appendingPathComponent(".writer-presence", isDirectory: true) }
+
+    private func preparePresenceDirectory() throws {
+        try FileManager.default.createDirectory(at: presenceDirectory, withIntermediateDirectories: true,
+                                               attributes: [.posixPermissions: 0o700])
+        var info = stat()
+        guard lstat(presenceDirectory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
+              info.st_uid == getuid() else {
+            throw WriterAdmissionError.inspectionFailed(nil, "写入能力登记目录的身份无法确认".localized)
+        }
+    }
+
+    private func readPresence(processID: Int32) throws -> WriterPresence {
+        let url = presenceURL(processID: processID)
+        let directory = open(presenceDirectory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard directory >= 0 else { throw CocoaError(.fileReadNoSuchFile) }
+        defer { _ = close(directory) }
+        var directoryInfo = stat()
+        guard fstat(directory, &directoryInfo) == 0, directoryInfo.st_uid == getuid() else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let descriptor = openat(directory, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard descriptor >= 0 else { throw CocoaError(.fileReadNoSuchFile) }
+        defer { _ = close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+              info.st_uid == getuid(), info.st_size > 0, info.st_size <= 65_536 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        var bytes = [UInt8](repeating: 0, count: Int(info.st_size))
+        var offset = 0
+        try bytes.withUnsafeMutableBytes { buffer in
+            while offset < buffer.count {
+                let count = Darwin.read(descriptor, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                if count < 0, errno == EINTR { continue }
+                guard count > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                offset += count
+            }
+        }
+        return try PropertyListDecoder().decode(WriterPresence.self, from: Data(bytes))
+    }
+
+    static func currentProcessIdentity() throws -> WriterProcessIdentity {
+        try identity(processID: getpid())
+    }
+
+    /// libproc also sees an executable launched directly as --mount-agent; a
+    /// list of GUI applications alone would miss that writer. Bundle identity
+    /// is used only to recognize candidates, never to infer their capability.
+    static func runningAppPortsProcesses() throws -> [WriterProcessIdentity] {
+        let pids = try currentUserProcessIDs()
+        var result: [WriterProcessIdentity] = []
+        for pid in pids {
+            var info = proc_bsdinfo()
+            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+            let infoResult = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size)
+            if infoResult != size, processHasExited(pid) { continue }
+            let path = executablePath(processID: pid)
+            let name = withUnsafeBytes(of: info.pbi_name) { bytes in
+                String(decoding: bytes.prefix(while: { $0 != 0 }), as: UTF8.self)
+            }
+            let namedAppPorts = name.caseInsensitiveCompare("AppPorts") == .orderedSame
+            let relevant = pid == getpid() || namedAppPorts || path.map(isAppPortsExecutable) == true
+            if path == nil, infoResult != size {
+                throw WriterAdmissionError.inspectionFailed(pid, "内核进程信息暂不可读".localized)
+            }
+            guard relevant else { continue }
+            guard infoResult == size, let path else {
+                if processHasExited(pid) { continue }
+                throw WriterAdmissionError.inspectionFailed(pid, "运行实例的启动时间或可执行文件路径暂不可读".localized)
+            }
+            // Detect a PID disappearing/reappearing while it is inspected.
+            let observed = makeIdentity(processID: pid, info: info, path: path)
+            do {
+                guard try identity(processID: pid) == observed else {
+                    throw WriterAdmissionError.inspectionFailed(pid, "检查期间进程身份发生变化".localized)
+                }
+            } catch {
+                if processHasExited(pid) { continue }
+                throw error
+            }
+            result.append(observed)
+        }
+        return result.sorted { $0.processID < $1.processID }
+    }
+
+    private static func currentUserProcessIDs() throws -> [Int32] {
+        let stride = MemoryLayout<Int32>.stride
+        var capacity = max(128, Int(proc_listpids(UInt32(PROC_UID_ONLY), getuid(), nil, 0)) / stride + 64)
+        for _ in 0..<4 {
+            var buffer = [Int32](repeating: 0, count: capacity)
+            let byteCount = buffer.withUnsafeMutableBytes {
+                proc_listpids(UInt32(PROC_UID_ONLY), getuid(), $0.baseAddress, Int32($0.count))
+            }
+            guard byteCount > 0 else {
+                throw WriterAdmissionError.inspectionFailed(nil, "无法列出当前用户的运行进程".localized)
+            }
+            let count = Int(byteCount) / stride
+            if count < capacity { return Array(Set(buffer.prefix(count).filter { $0 > 0 })).sorted() }
+            capacity *= 2
+        }
+        throw WriterAdmissionError.inspectionFailed(nil, "运行进程列表持续变化，无法完成兼容检查".localized)
+    }
+
+    private static func identity(processID: Int32) throws -> WriterProcessIdentity {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(processID, PROC_PIDTBSDINFO, 0, &info, size) == size,
+              let path = executablePath(processID: processID) else {
+            throw WriterAdmissionError.inspectionFailed(processID, "无法读取内核进程身份".localized)
+        }
+        return makeIdentity(processID: processID, info: info, path: path)
+    }
+
+    private static func makeIdentity(processID: Int32, info: proc_bsdinfo, path: String) -> WriterProcessIdentity {
+        WriterProcessIdentity(processID: processID, userID: info.pbi_uid,
+                              startSeconds: info.pbi_start_tvsec, startMicroseconds: info.pbi_start_tvusec,
+                              executablePath: path)
+    }
+
+    private static func executablePath(processID: Int32) -> String? {
+        // PROC_PIDPATHINFO_MAXSIZE is a C expression macro not imported by Swift.
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let length = buffer.withUnsafeMutableBytes { proc_pidpath(processID, $0.baseAddress, UInt32($0.count)) }
+        guard length > 0 else { return nil }
+        return URL(fileURLWithPath: String(cString: buffer)).standardizedFileURL.path
+    }
+
+    private static func isAppPortsExecutable(_ path: String) -> Bool {
+        let executable = URL(fileURLWithPath: path)
+        if executable.lastPathComponent.caseInsensitiveCompare("AppPorts") == .orderedSame { return true }
+        var ancestor = executable.deletingLastPathComponent()
+        while ancestor.path != "/" {
+            if ancestor.pathExtension.lowercased() == "app" {
+                return Bundle(url: ancestor)?.bundleIdentifier == "com.shimoko.AppPorts"
+            }
+            ancestor.deleteLastPathComponent()
+        }
+        return false
+    }
+
+    private static func processHasExited(_ pid: Int32) -> Bool { kill(pid, 0) != 0 && errno == ESRCH }
+    private static func canonical(_ url: URL) -> URL { url.standardizedFileURL.resolvingSymlinksInPath() }
+    private static var isRunningUnitTests: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }
+}

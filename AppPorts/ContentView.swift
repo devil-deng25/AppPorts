@@ -230,14 +230,16 @@ struct ContentView: View {
     // 受保护应用迁移预警（App Store / root 拥有，自动迁移可能因权限失败）
     @State private var protectedAppsRequest: WarningSheetRequest?
     // 经典模式下重签名沙盒应用前的二次确认
-    @State private var classicResignRequest: WarningSheetRequest?
-    @State private var pendingClassicResignApp: AppItem? = nil
-    @State private var pendingClassicResignTarget: DataMigrationWorkflow.SigningTarget?
+    @State private var showCopyManagement = false
+    @State private var manualResignRequest: WarningSheetRequest?
+    @State private var pendingManualResignApp: AppItem? = nil
+    @State private var pendingManualResignTarget: DataMigrationWorkflow.SigningTarget?
     @State private var pendingProtectedApps: [AppItem] = []
     @State private var pendingMigrationAfterWarning: [AppItem] = []
 
     // 自更新应用迁移确认（Sparkle/Electron，锁定模式保护）
     @State private var selfUpdaterRequest: WarningSheetRequest?
+    @State private var appReplacementRequest: WarningSheetRequest?
     @State private var pendingSelfUpdaterApps: [AppItem] = []
     @State private var pendingRemainingAppsForSelfUpdater: [AppItem] = []
     @State private var selfUpdaterIsLinkIn = false // true = 链接回本地, false = 迁移到外部
@@ -293,7 +295,6 @@ struct ContentView: View {
     @State private var selectedDataDirsApp: AppItem? = nil
     @State private var isDataDirsScanning = false
     @State private var dataDirsRefreshTrigger = 0
-    @AppStorage("autoResignEnabled") private var autoResignEnabled = false
     @AppStorage(MigrationPreferences.classicDataMigrationKey) private var classicDataMigrationEnabled = false
 
     // 签名被替换的应用：启动提醒与修复面板
@@ -391,6 +392,10 @@ struct ContentView: View {
             stopMonitoringExternal()
             stopObservingVolumeMounts()
         }
+        .onChange(of: operationState.recordsRevision) { _ in
+            guard isVisible else { return }
+            scanBothAppsAtomic()
+        }
         .onChange(of: operationState.isBusy) { isBusy in
             // 补上操作期间延后的监控刷新，也初始化操作期间新打开的窗口。
             if !isBusy, needsAppRescan || localScanState.request == nil || externalScanState.request == nil {
@@ -432,7 +437,8 @@ struct ContentView: View {
         }
         .warningSheet($signatureRepairReminderRequest)
         .warningSheet($signatureRestoreSourceRequest)
-        .warningSheet($classicResignRequest)
+        .warningSheet($manualResignRequest)
+        .sheet(isPresented: $showCopyManagement) { CopyManagementView() }
         .sheet(item: $signatureRepairApp) { app in
             signatureRepairSheet(for: app)
         }
@@ -443,6 +449,7 @@ struct ContentView: View {
         .warningSheet($protectedAppsRequest)
         // 自更新应用迁移确认弹窗
         .warningSheet($selfUpdaterRequest)
+        .warningSheet($appReplacementRequest)
         // App Store 外部安装引导弹窗
         .warningSheet($masGuidanceRequest)
         // App Store 设置页面
@@ -696,21 +703,12 @@ struct ContentView: View {
                     selectedTab: $selectedDataDirsTab,
                     selectedApp: $selectedDataDirsApp,
                     isScanning: $isDataDirsScanning,
-                    autoResignEnabled: $autoResignEnabled,
                     classicModeActive: classicModeActive,
                     refreshTrigger: dataDirsRefreshTrigger,
                     onSelectExternalDrive: openPanelForExternalDrive,
                     onRepairSignature: { app in signatureRepairApp = app },
-                    onResignApp: { app, silent in performSingleResign(app: app, silent: silent) },
-                    onRestoreSignature: performRestoreSignature,
-                    onBackupSignature: performBackupSignature,
-                    resolveRealAppURL: resolveRealAppURL(for:),
-                    onResignAppAtURL: { url, sandboxedAppApproved in
-                        try await performResign(at: url, bundleID: getBundleIdentifier(from: url), allowSandboxed: classicModeActive && sandboxedAppApproved)
-                    },
-                    onBackupSignatureForURL: { url in
-                        try await performBackupSignature(at: url, bundleID: getBundleIdentifier(from: url))
-                    }
+                    onResignApp: { app in performSingleResign(app: app) },
+                    resolveRealAppURL: resolveRealAppURL(for:)
                 )
             } else if mainTab == .customDirs {
                 CustomDirsView()
@@ -845,6 +843,12 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .disabled(operationState.isBusy || externalDriveURL == nil)
         }
+
+        Button { showCopyManagement = true } label: {
+            Label("副本管理".localized, systemImage: "doc.on.doc")
+        }
+        .buttonStyle(.borderless)
+        .accessibilityIdentifier("copy-management")
 
         // App Store Settings Button（始终显示）
         Button(action: { showAppStoreSettings = true }) {
@@ -1052,36 +1056,6 @@ struct ContentView: View {
 
     private var dataDirsToolbarControls: some View {
         HStack(spacing: 10) {
-            if classicModeActive {
-            HStack(spacing: 6) {
-                Image(systemName: autoResignEnabled ? "seal.fill" : "seal")
-                    .font(.system(size: 12))
-                    .foregroundColor(autoResignEnabled ? .teal : .secondary)
-
-                Text("迁移后重签名".localized)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary)
-
-                Toggle("迁移后重签名".localized, isOn: $autoResignEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-
-                HelpButton(content: """
-                **什么是重签名？**
-
-                迁移应用包外的数据目录不会修改应用的代码签名，通常不需要重签名。
-
-                此选项仅在经典模式下生效。开启后，AppPorts 会先完整备份关联应用，再在数据迁移完成后执行 **Ad-hoc 自签名**，作为用户主动选择的兼容性尝试。
-
-                **通常不需要开启。** 重签名会替换应用的开发者签名并移除部分授权。新版会先保存完整原始应用，可用「恢复原始签名」还原，不需要开发者私钥。
-
-                **沙盒应用默认不重签名**：经典模式需确认风险，系统升级后应用可能无法启动。恢复签名前应先还原经典模式迁移的容器数据；容器数据请优先使用「挂载迁移」。
-                """.localized)
-            }
-            .help("仅在经典模式下，先完整备份关联应用，再在数据迁移后重签；通常不需要开启".localized)
-            }
-
             if selectedDataDirsTab == .appDirs, let app = selectedDataDirsApp, app.isResigned {
                 Button(action: { performRestoreSignature(app: app) }) {
                     Label("恢复原始签名".localized, systemImage: "arrow.counterclockwise")
@@ -1727,12 +1701,16 @@ struct ContentView: View {
             scanBothAppsAtomic()
         }
         let directories = [localAppsURL] + customLocalScanPaths.map { URL(fileURLWithPath: $0) }
-        return await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             let snapshot = await searchExclusionSnapshot(root: root, localDirectories: directories)
             let current = AppSearchExclusionService.inspect(apps: snapshot.apps, externalRoot: root, localEntries: snapshot.entries)
             if current.operationError != nil { return current }
             var report = AppSearchExclusionReport()
             for app in snapshot.apps {
+                if Task.isCancelled {
+                    report.operationError = "操作已停止，可从当前记录继续。".localized
+                    break
+                }
                 if let observed = current.entries.first(where: { $0.id == app.id }),
                    observed.outcome != .pending && observed.outcome != .dockWarning {
                     report.entries.append(observed)
@@ -1747,6 +1725,9 @@ struct ContentView: View {
                         : "应用存储位置已排除索引，Dock 快捷方式同步失败。".localized
                     report.entries.append(.init(id: app.id, name: app.displayName, iconURL: result.destination,
                         outcome: result.dockSynchronized ? .completed : .dockWarning, message: message))
+                } catch is CancellationError {
+                    report.operationError = "操作已停止，可从当前记录继续。".localized
+                    break
                 } catch {
                     report.entries.append(.init(id: app.id, name: app.displayName, iconURL: app.displayURL,
                                                 outcome: .failed, message: error.localizedDescription))
@@ -1754,7 +1735,9 @@ struct ContentView: View {
                 }
             }
             return report
-        }.value
+        }
+        operationState.registerCancellation(for: token) { task.cancel() }
+        return await withTaskCancellationHandler(operation: { await task.value }, onCancel: { task.cancel() })
     }
 
     /// Publish completed operations before scheduling a fresh scan.
@@ -1771,13 +1754,17 @@ struct ContentView: View {
         needsAppRescan = true
     }
 
-    func moveAndLink(appToMove: AppItem, destinationURL: URL, lockExternal: Bool = true, progressHandler: FileCopier.ProgressHandler?) async throws {
+    @discardableResult
+    func moveAndLink(appToMove: AppItem, destinationURL: URL, lockExternal: Bool = true,
+                     replacementChoice: AppMigrationService.ReplacementChoice? = nil,
+                     progressHandler: FileCopier.ProgressHandler?) async throws -> AppTransferResult {
         let service = AppMigrationService()
-        try await service.moveAndLink(
+        return try await service.moveAndLink(
             appToMove: appToMove,
             destinationURL: destinationURL,
             isRunning: isAppRunning(url: appToMove.displayURL),
             lockExternal: lockExternal,
+            replacementChoice: replacementChoice,
             deleteSourceFallback: AppMigrationService.removeItemViaFinder(at:),
             progressHandler: progressHandler
         )
@@ -1785,7 +1772,14 @@ struct ContentView: View {
 
     func performMoveOutWholeSymlink(_ app: AppItem) {
         guard let dest = externalDriveURL else { return }
-        let destURL = AppSearchExclusionService.destination(for: app, in: dest)
+        confirmUnrecognizedAppReplacements(apps: [app], destination: dest) { choices in
+            executeMoveOutWholeSymlink(app, destination: dest, replacementChoice: choices[app.id])
+        }
+    }
+
+    private func executeMoveOutWholeSymlink(_ app: AppItem, destination: URL,
+                                            replacementChoice: AppMigrationService.ReplacementChoice?) {
+        let destURL = AppSearchExclusionService.destination(for: app, in: destination)
         AppLogger.shared.logContext(
             "用户请求传统链接迁移",
             details: [("app_name", app.displayName), ("destination", destURL.path)]
@@ -1801,16 +1795,17 @@ struct ContentView: View {
         progressTitle = "正在迁移应用...".localized
         showProgress = true
 
-        Task { @MainActor in
+        let task = Task { @MainActor in
             defer { operationState.finish(activityToken) }
             do {
                 let service = AppMigrationService(portalCreationOverride: { appItem, externalURL in
                     try FileManager.default.createSymbolicLink(at: appItem.path, withDestinationURL: externalURL)
                 })
-                try await service.moveAndLink(
+                let result = try await service.moveAndLink(
                     appToMove: app,
                     destinationURL: destURL,
                     isRunning: isAppRunning(url: app.displayURL),
+                    replacementChoice: replacementChoice,
                     deleteSourceFallback: AppMigrationService.removeItemViaFinder(at:),
                     progressHandler: { progress in
                         await MainActor.run {
@@ -1821,6 +1816,9 @@ struct ContentView: View {
                     }
                 )
                 recordCompletedTransfer(.movedOut(app, destination: destURL, isMASExternal: false))
+                if let message = result.pendingMessage {
+                    showError(title: "应用已迁移，仍有待办".localized, message: message)
+                }
                 AppLogger.shared.logContext("传统链接迁移成功", details: [("app_name", app.displayName)])
             } catch {
                 AppLogger.shared.logError("传统链接迁移失败", error: error, context: [("app_name", app.displayName)])
@@ -1834,6 +1832,7 @@ struct ContentView: View {
                 scanBothAppsAtomic()
             }
         }
+        operationState.registerCancellation(for: activityToken) { task.cancel() }
     }
 
     func linkApp(appToLink: AppItem, destinationURL: URL) throws {
@@ -2106,9 +2105,50 @@ struct ContentView: View {
         return "\(appName): \(error.localizedDescription)"
     }
     
+    /// Resolve all version choices before creating any candidate in this batch.
+    /// The service revalidates the selected source and target under its lock.
+    private func confirmUnrecognizedAppReplacements(
+        apps: [AppItem], destination: URL,
+        completion: @escaping ([String: AppMigrationService.ReplacementChoice]) -> Void
+    ) {
+        do {
+            let service = AppMigrationService()
+            var choices: [String: AppMigrationService.ReplacementChoice] = [:]
+            var paths: [String] = []
+            for app in apps {
+                let target = AppSearchExclusionService.destination(for: app, in: destination)
+                if let choice = try service.replacementChoice(for: app, destinationURL: target),
+                   choice.versionComparison == .unrecognized {
+                    choices[app.id] = choice
+                    paths.append(app.displayName + "\n" + choice.sourceURL.path + "\n→ " + choice.destinationURL.path)
+                }
+            }
+            guard !choices.isEmpty else { completion([:]); return }
+            let confirmedChoices = choices
+            appReplacementRequest = WarningSheetRequest(
+                title: "选择要保留的应用版本".localized,
+                icon: "arrow.triangle.swap", tint: .orange,
+                intro: "以下位置已有同一应用，但无法自动比较版本。继续会使用本地版本；新副本校验完成后才替换并清理外盘旧版。".localized,
+                detail: paths.joined(separator: "\n\n"),
+                actions: [WarningAction("使用本地版本并继续".localized, style: .preferred) {
+                    completion(confirmedChoices)
+                }]
+            )
+        } catch {
+            showError(title: "无法迁移".localized, message: error.localizedDescription)
+        }
+    }
+
     /// 批量迁移应用
-    func executeBatchMove(apps: [AppItem], destination: URL, lockExternal: Bool = true) {
+    func executeBatchMove(apps: [AppItem], destination: URL, lockExternal: Bool = true,
+                          replacementChoices: [String: AppMigrationService.ReplacementChoice]? = nil) {
         guard !apps.isEmpty else { return }
+        guard let replacementChoices else {
+            confirmUnrecognizedAppReplacements(apps: apps, destination: destination) { choices in
+                executeBatchMove(apps: apps, destination: destination, lockExternal: lockExternal, replacementChoices: choices)
+            }
+            return
+        }
         let batchID = AppLogger.shared.makeOperationID(prefix: "batch-move-out")
         AppLogger.shared.logContext(
             "开始批量迁移应用",
@@ -2128,10 +2168,12 @@ struct ContentView: View {
         showProgress = true
         
         var errors: [String] = []
+        var completionWarnings: [String] = []
         
-        Task { @MainActor in
+        let task = Task { @MainActor in
             defer { operationState.finish(activityToken) }
             for app in apps {
+                if Task.isCancelled { break }
                 await MainActor.run {
                     progressAppName = app.name
                     progressCurrent += 1
@@ -2151,13 +2193,15 @@ struct ContentView: View {
                 )
                 
                 do {
-                    try await moveAndLink(appToMove: app, destinationURL: destURL, lockExternal: lockExternal) { progress in
+                    let result = try await moveAndLink(appToMove: app, destinationURL: destURL, lockExternal: lockExternal,
+                                                       replacementChoice: replacementChoices[app.id]) { progress in
                         await MainActor.run {
                             self.progressBytes = progress.copiedBytes
                             self.progressTotalBytes = progress.totalBytes
                             self.progressFileName = progress.currentFile
                         }
                     }
+                    if let message = result.pendingMessage { completionWarnings.append(app.displayName + ": " + message) }
                     recordCompletedTransfer(.movedOut(app, destination: destURL,
                                                        isMASExternal: app.isAppStoreApp && AppMigrationService.isMASExternalInstallSupported))
                     AppLogger.shared.logContext(
@@ -2182,7 +2226,9 @@ struct ContentView: View {
                 scanBothAppsAtomic()
 
                 if !errors.isEmpty {
-                    showError(title: "部分迁移失败".localized, message: errors.joined(separator: "\n"))
+                    showError(title: "部分迁移失败".localized, message: (errors + completionWarnings).joined(separator: "\n\n"))
+                } else if !completionWarnings.isEmpty {
+                    showError(title: "应用已迁移，仍有待办".localized, message: completionWarnings.joined(separator: "\n\n"))
                 }
             }
             AppLogger.shared.logContext(
@@ -2194,8 +2240,9 @@ struct ContentView: View {
                 ]
             )
         }
+        operationState.registerCancellation(for: activityToken) { task.cancel() }
     }
-    
+
     func performLinkIn() {
         // 获取所有选中且可链接的应用
         let validApps = selectedExternalApps.compactMap { id in
@@ -2243,9 +2290,10 @@ struct ContentView: View {
         progressTotal = appsToLink.count
         progressCurrent = 0
         
-        Task { @MainActor in
+        operationState.startTask(for: activityToken) { @MainActor in
             defer { operationState.finish(activityToken) }
             for item in appsToLink {
+                if Task.isCancelled { break }
                 let appName = item.sourcePath.lastPathComponent
                 await MainActor.run {
                     progressAppName = appName
@@ -2345,15 +2393,18 @@ struct ContentView: View {
         progressFileName = ""
         showProgress = true
 
-        Task { @MainActor in
+        operationState.startTask(for: activityToken) { @MainActor in
             defer {
                 showProgress = false
                 operationState.finish(activityToken)
             }
             do {
-                let updatedCount = try await Task.detached(priority: .userInitiated) {
-                    try AppMigrationService().repairDockShortcuts(for: app)
-                }.value
+                let repair = Task.detached(priority: .userInitiated) {
+                    try Task.checkCancellation()
+                    return try AppMigrationService().repairDockShortcuts(for: app)
+                }
+                let updatedCount = try await withTaskCancellationHandler(operation: { try await repair.value },
+                    onCancel: { repair.cancel() })
                 AppLogger.shared.logContext(
                     "用户修复 Dock 固定项完成",
                     details: [("app_name", app.displayName), ("updated_count", String(updatedCount))]
@@ -2363,6 +2414,8 @@ struct ContentView: View {
                     ? "已更新现有 Dock 固定项，位置保持不变。Dock 将短暂刷新；从 Dock 打开此应用需要连接外部存储。".localized
                     : "没有需要更新的 Dock 固定项。如果还未固定此应用，请打开应用后选择“在程序坞中保留”。".localized
                 showAlert = true
+            } catch is CancellationError {
+                // The service checks cancellation before changing Dock items.
             } catch {
                 AppLogger.shared.logError(
                     "修复 Dock 固定项失败", error: error, errorCode: "APP-DOCK-REPAIR-FAILED",
@@ -2411,7 +2464,7 @@ struct ContentView: View {
         progressTitle = "还原".localized
         showProgress = true
         
-        Task { @MainActor in
+        let task = Task { @MainActor in
             defer { operationState.finish(activityToken) }
             do {
                 let result = try await moveBack(app: target, localDestinationURL: destination) { progress in
@@ -2424,6 +2477,9 @@ struct ContentView: View {
                 recordCompletedTransfer(.movedBack(target, localDestination: destination,
                                                     externalSourceRemains: result.externalSourceRemains,
                                                     retiredLocalURLs: result.retiredLocalPortalURLs))
+                if let message = result.transferResult.pendingMessage {
+                    showError(title: "应用已还原，仍有待办".localized, message: message)
+                }
                 AppLogger.shared.logContext(
                     "单个应用还原成功",
                     details: [("operation_id", operationID), ("app_name", target.displayName)]
@@ -2446,6 +2502,7 @@ struct ContentView: View {
                 scanBothAppsAtomic()
             }
         }
+        operationState.registerCancellation(for: activityToken) { task.cancel() }
     }
 
     /// 批量迁移回本地
@@ -2474,10 +2531,12 @@ struct ContentView: View {
         showProgress = true
         
         var errors: [String] = []
+        var completionWarnings: [String] = []
         
-        Task { @MainActor in
+        let task = Task { @MainActor in
             defer { operationState.finish(activityToken) }
             for app in validApps {
+                if Task.isCancelled { break }
                 await MainActor.run {
                     progressAppName = app.displayName
                     progressCurrent += 1
@@ -2501,6 +2560,7 @@ struct ContentView: View {
                             self.progressFileName = progress.currentFile
                         }
                     }
+                    if let message = result.transferResult.pendingMessage { completionWarnings.append(app.displayName + ": " + message) }
                     recordCompletedTransfer(.movedBack(app, localDestination: destination,
                                                         externalSourceRemains: result.externalSourceRemains,
                                                         retiredLocalURLs: result.retiredLocalPortalURLs))
@@ -2526,7 +2586,9 @@ struct ContentView: View {
                 scanBothAppsAtomic()
 
                 if !errors.isEmpty {
-                    showError(title: "部分迁移失败".localized, message: errors.joined(separator: "\n"))
+                    showError(title: "部分迁移失败".localized, message: (errors + completionWarnings).joined(separator: "\n\n"))
+                } else if !completionWarnings.isEmpty {
+                    showError(title: "应用已还原，仍有待办".localized, message: completionWarnings.joined(separator: "\n\n"))
                 }
             }
             AppLogger.shared.logContext(
@@ -2538,8 +2600,9 @@ struct ContentView: View {
                 ]
             )
         }
+        operationState.registerCancellation(for: activityToken) { task.cancel() }
     }
-    
+
     func getMoveBackButtonTitle() -> String {
         if selectedExternalApps.isEmpty {
             return "迁移回本地".localized
@@ -2552,66 +2615,18 @@ struct ContentView: View {
         return String(format: "迁移 %lld 个应用".localized, Int64(selectedExternalApps.count))
     }
     
-    // MARK: - 签名备份/恢复逻辑
-
-    /// 迁移前备份完整原始应用（不执行签名），确保之后可恢复原始签名与授权
-    func performBackupSignature(app: AppItem) {
-        guard let activityToken = operationState.begin() else { return }
-        Task { @MainActor in
-            defer { operationState.finish(activityToken) }
-            do {
-                let realURL = try resolveRealAppURL(for: app)
-                try await performBackupSignature(at: realURL, bundleID: getBundleIdentifier(from: realURL))
-            } catch {
-                AppLogger.shared.logError(
-                    "备份原始应用失败",
-                    error: error,
-                    errorCode: "BACKUP-SIGNATURE-FAILED",
-                    context: [("app_name", app.displayName)],
-                    relatedURLs: [("target_app", app.displayURL)]
-                )
-            }
-        }
-    }
+    // MARK: - 独立签名与官方修复
 
     func performSingleResign(
         app: AppItem,
-        silent: Bool = false,
-        approvedSandboxedTarget: DataMigrationWorkflow.SigningTarget? = nil
+        approvedTarget: DataMigrationWorkflow.SigningTarget? = nil
     ) {
         guard !isAppRunning(url: app.displayURL) else {
             showError(title: "签名失败".localized, message: AppMoverError.appIsRunning.localizedDescription)
             return
         }
-        // 经典模式允许对沙盒应用重签名，但每次都要说明后果；非经典模式由 CodeSigner 拒绝。
-        if classicModeActive, !silent,
-           let target = try? DataMigrationWorkflow.signingTarget(at: app.displayURL),
-           target.isSandboxed, approvedSandboxedTarget != target {
-            pendingClassicResignApp = app
-            pendingClassicResignTarget = target
-            classicResignRequest = WarningSheetRequest(
-                title: "对沙盒应用重签名".localized,
-                intro: classicResignConfirmMessage,
-                acknowledgementTitle: "我已了解以上风险".localized,
-                onCancel: {
-                    pendingClassicResignApp = nil
-                    pendingClassicResignTarget = nil
-                },
-                actions: [
-                    WarningAction("仍然重签名".localized, style: .destructive, requiresAcknowledgement: true) {
-                        confirmClassicResign()
-                    }
-                ]
-            )
-            return
-        }
-        AppLogger.shared.logContext(
-            "用户请求重签名单个应用",
-            details: [("app_name", app.displayName), ("path", app.path.path), ("silent", silent ? "true" : "false")]
-        )
-
         guard let activityToken = operationState.begin() else { return }
-        progressTitle = "重签名此应用".localized
+        progressTitle = approvedTarget == nil ? "正在检查应用…".localized : "重签名此应用".localized
         progressAppName = app.displayName
         progressCurrent = 1
         progressTotal = 1
@@ -2619,34 +2634,52 @@ struct ContentView: View {
         progressTotalBytes = 0
         progressFileName = ""
         showProgress = true
-        Task { @MainActor in
+        let task = Task { @MainActor in
             defer {
                 showProgress = false
                 operationState.finish(activityToken)
             }
             do {
-                let target = try DataMigrationWorkflow.signingTarget(at: app.displayURL)
-                if let approvedSandboxedTarget, approvedSandboxedTarget != target {
+                let target: DataMigrationWorkflow.SigningTarget
+                if let approvedTarget {
+                    target = approvedTarget
+                } else {
+                    let inspection = Task.detached(priority: .userInitiated) {
+                        try DataMigrationWorkflow.signingTarget(at: app.displayURL)
+                    }
+                    target = try await withTaskCancellationHandler(operation: { try await inspection.value },
+                        onCancel: { inspection.cancel() })
+                }
+                try Task.checkCancellation()
+                guard approvedTarget != nil else {
+                    pendingManualResignApp = app
+                    pendingManualResignTarget = target
+                    manualResignRequest = WarningSheetRequest(
+                        title: "手动重签名".localized,
+                        intro: manualResignConfirmMessage,
+                        onCancel: {
+                            pendingManualResignApp = nil
+                            pendingManualResignTarget = nil
+                        },
+                        actions: [WarningAction("重签名".localized, style: .destructive) { confirmManualResign() }]
+                    )
+                    return
+                }
+                guard try resolveRealAppURL(for: app) == target.url else {
                     throw CodeSigner.SigningError.applicationChanged
                 }
-                let sandboxedAppApproved = target.isSandboxed
-                    && classicModeActive && approvedSandboxedTarget == target
-                try await performResign(at: target.url, bundleID: getBundleIdentifier(from: target.url), allowSandboxed: sandboxedAppApproved)
+                // The service checks the selected object and content again under
+                // its operation lock before it creates or commits a candidate.
+                try await performResign(target: target, allowSandboxed: target.isSandboxed)
+            } catch is CancellationError {
+                // A committed result is returned by the service, not reported as cancellation.
             } catch {
-                AppLogger.shared.logError(
-                    "重签名失败（应用可能无法通过 macOS 签名校验）",
-                    error: error,
-                    errorCode: "RESIGN-FAILED",
-                    context: [("app_name", app.displayName), ("path", app.path.path), ("silent", silent ? "true" : "false")],
-                    relatedURLs: [("target_app", app.displayURL)]
-                )
-                if !silent {
-                    await MainActor.run {
-                        showError(title: "签名失败".localized, message: error.localizedDescription)
-                    }
-                }
+                AppLogger.shared.logError("手动重签名失败", error: error,
+                    errorCode: "RESIGN-FAILED", relatedURLs: [("target_app", app.displayURL)])
+                showError(title: "签名失败".localized, message: error.localizedDescription)
             }
         }
+        operationState.registerCancellation(for: activityToken) { task.cancel() }
     }
 
     func performRestoreSignature(app: AppItem) {
@@ -2667,23 +2700,13 @@ struct ContentView: View {
         progressTotalBytes = 0
         progressFileName = ""
         showProgress = true
-        Task { @MainActor in
+        let task = Task { @MainActor in
             defer {
                 showProgress = false
                 operationState.finish(activityToken)
             }
             let signer = CodeSigner()
             do {
-                // 恢复沙盒身份后，符号链接不能再用于访问容器外的数据。
-                let directories = await DataDirScanner().scanLibraryDirs(for: app)
-                let hasLinkedContainers = directories.contains {
-                    ($0.type == .containers || $0.type == .groupContainers)
-                        && [DataDirStatus.linked, DataDirStatus.needsNormalization, DataDirStatus.existingSymlink].contains($0.status)
-                        && $0.linkedDestination != nil
-                }
-                guard !hasLinkedContainers else {
-                    throw CodeSigner.SigningError.restoreFailed("请先在「应用数据」中还原经典模式迁移的容器目录，再恢复签名。恢复沙盒身份后，应用无法通过符号链接读取容器外的数据。".localized)
-                }
                 let realURL = try resolveRealAppURL(for: app)
                 guard let bundleID = getBundleIdentifier(from: realURL) else {
                     throw CodeSigner.SigningError.restoreFailed("无法读取应用 Bundle Identifier".localized)
@@ -2693,21 +2716,33 @@ struct ContentView: View {
                     details: [("app_name", app.displayName), ("real_path", realURL.path), ("bundle_id", bundleID)]
                 )
                 guard !isAppRunning(url: realURL) else { throw AppMoverError.appIsRunning }
-                try await signer.restoreSignature(appURL: realURL, bundleIdentifier: bundleID, originalApplication: originalApplication)
+                let requirements = try await signer.recoveryRequirements(appURL: realURL, bundleIdentifier: bundleID, originalApplication: originalApplication)
+                try await SignatureRecoveryDependencyCheck.requireSafeRestore(requirements)
+                let result = try await signer.restoreSignature(appURL: realURL, bundleIdentifier: bundleID, originalApplication: originalApplication)
+                if let warning = result.cleanupWarning {
+                    showError(title: "应用已恢复，副本待清理".localized, message: warning)
+                }
                 await MainActor.run {
                     scanLocalApps()
                     scanExternalApps()
                 }
+            } catch CodeSigner.SigningError.noBackupFound {
+                offerOriginalApplication(for: app, reason: "没有内置原版备份，请选择同版本官方原件。".localized)
             } catch CodeSigner.SigningError.legacyBackupIncomplete {
                 offerOriginalApplication(for: app, reason: CodeSigner.SigningError.legacyBackupIncomplete.localizedDescription)
             } catch CodeSigner.SigningError.applicationChanged {
                 offerOriginalApplication(for: app, reason: CodeSigner.SigningError.applicationChanged.localizedDescription)
+            } catch CodeSigner.SigningError.snapshotInvalid {
+                offerOriginalApplication(for: app, reason: CodeSigner.SigningError.snapshotInvalid.localizedDescription)
+            } catch is DecodingError {
+                offerOriginalApplication(for: app, reason: CodeSigner.SigningError.snapshotInvalid.localizedDescription)
             } catch {
                 await MainActor.run {
                     showError(title: "恢复签名失败".localized, message: error.localizedDescription)
                 }
             }
         }
+        operationState.registerCancellation(for: activityToken) { task.cancel() }
     }
 
     private func offerOriginalApplication(for app: AppItem, reason: String) {
@@ -2750,58 +2785,19 @@ struct ContentView: View {
         return URL(fileURLWithPath: rawPath, relativeTo: url.deletingLastPathComponent()).standardizedFileURL
     }
 
-    /// 对指定 URL 执行重签名（用于数据目录迁移后签名真实应用）
-    func performResign(at url: URL, bundleID: String?, allowSandboxed: Bool = false) async throws {
-        AppLogger.shared.logContext(
-            "重签名真实应用",
-            details: [("path", url.path), ("bundle_id", bundleID ?? "nil"), ("allow_sandboxed", allowSandboxed ? "true" : "false")]
+    /// Manual signing is independent of every migration action.
+    func performResign(target: DataMigrationWorkflow.SigningTarget, allowSandboxed: Bool) async throws {
+        let result = try await CodeSigner().sign(
+            appURL: target.url,
+            bundleIdentifier: getBundleIdentifier(from: target.url),
+            allowSandboxed: allowSandboxed,
+            expectedFingerprint: target.fingerprint,
+            expectedIdentity: target.identity
         )
-
-        let signer = CodeSigner()
-        do {
-            try await signer.sign(appURL: url, bundleIdentifier: bundleID, allowSandboxed: allowSandboxed)
-            AppLogger.shared.logContext(
-                "重签名成功",
-                details: [("path", url.path), ("bundle_id", bundleID ?? "nil")]
-            )
-            await MainActor.run {
-                scanLocalApps()
-                scanExternalApps()
-            }
-        } catch {
-            AppLogger.shared.logError(
-                "重签名失败（应用可能无法通过 macOS 签名校验）",
-                error: error,
-                errorCode: "RESIGN-FAILED",
-                context: [("path", url.path), ("bundle_id", bundleID ?? "nil")],
-                relatedURLs: [("target_app", url)]
-            )
-            throw error
+        if let warning = result.cleanupWarning {
+            showError(title: "签名已完成，副本待清理".localized, message: warning)
         }
-    }
-
-    /// 对指定 URL 备份原始签名（用于数据目录迁移前）
-    func performBackupSignature(at url: URL, bundleID: String?) async throws {
-        guard let bundleID else {
-            throw CodeSigner.SigningError.backupFailed("无法读取应用 Bundle Identifier".localized)
-        }
-        let signer = CodeSigner()
-        do {
-            try await signer.backupOriginalSignature(appURL: url, bundleIdentifier: bundleID)
-            AppLogger.shared.logContext(
-                "数据迁移前备份完整原始应用",
-                details: [("path", url.path), ("bundle_id", bundleID)]
-            )
-        } catch {
-            AppLogger.shared.logError(
-                "数据迁移前备份原始应用失败，已中止迁移",
-                error: error,
-                errorCode: "DATA-BACKUP-SIGNATURE-FAILED",
-                context: [("path", url.path), ("bundle_id", bundleID)],
-                relatedURLs: [("target_app", url)]
-            )
-            throw error
-        }
+        scanBothAppsAtomic()
     }
 
     // MARK: - Monitoring Helpers
@@ -2973,18 +2969,18 @@ struct ContentView: View {
         return String(format: "AppPorts 曾用 Ad-hoc 签名替换了 %lld 个应用的开发者签名：\n\n%@\n\n在 macOS 27 上它们可能无法打开。能正常打开的可以先不处理；打不开的点右侧的「修复」按钮。".localized, count, names)
     }
 
-    private var classicResignConfirmMessage: String {
-        String(format: "「%@」是沙盒应用。经典模式会先完整备份原应用，再重签并移除沙盒、应用组和钥匙串授权。在 macOS 27 上此应用可能无法打开；需要恢复时，先还原容器数据，再恢复原始签名。".localized, pendingClassicResignTarget?.url.lastPathComponent ?? "")
+    private var manualResignConfirmMessage: String {
+        pendingManualResignTarget?.confirmationMessage ?? ""
     }
 
-    private func confirmClassicResign() {
-        let app = pendingClassicResignApp
-        let approvedTarget = pendingClassicResignTarget
-        pendingClassicResignApp = nil
-        pendingClassicResignTarget = nil
+    private func confirmManualResign() {
+        let app = pendingManualResignApp
+        let approvedTarget = pendingManualResignTarget
+        pendingManualResignApp = nil
+        pendingManualResignTarget = nil
         guard let app, let approvedTarget else { return }
         DispatchQueue.main.async {
-            self.performSingleResign(app: app, approvedSandboxedTarget: approvedTarget)
+            self.performSingleResign(app: app, approvedTarget: approvedTarget)
         }
     }
 
@@ -2998,7 +2994,10 @@ struct ContentView: View {
                 selectedDataDirsTab = .appDirs
                 withAnimation { mainTab = .dataDirs }
             },
-            onDismiss: { signatureRepairApp = nil }
+            onDismiss: { signatureRepairApp = nil },
+            onChooseOfficialOriginal: { target in
+                offerOriginalApplication(for: target, reason: "选择同版本的官方原版应用".localized)
+            }
         )
     }
 

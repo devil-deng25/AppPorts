@@ -22,6 +22,8 @@ final class ContainerRestoreParentSafetyTests: XCTestCase {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         let moved = fixture.root.appendingPathComponent("RelocatedParent")
+        let original = try TreeCopySession.snapshot(at: fixture.source)
+        let originalIdentity = try DataPathIdentity.capture(fixture.source)
         do {
             try await fixture.migrator().restore(record: fixture.record, estimatedTotalBytes: 0) { progress in
                 guard progress.currentFile == "正在切换本地入口...".localized else { return }
@@ -32,8 +34,15 @@ final class ContainerRestoreParentSafetyTests: XCTestCase {
         } catch DataOperationSafety.Failure.conflict { }
         XCTAssertEqual(try fixture.store.recordsStrict(), [fixture.record])
         XCTAssertTrue(fixture.disk.calls.isEmpty)
-        XCTAssertEqual(try fixture.store.transfers().first?.phase, .needsRecovery)
-        XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent("Business/payload")), "original")
+        let pending = try XCTUnwrap(try fixture.store.transfers().first)
+        XCTAssertEqual(pending.phase, .needsRecovery)
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: fixture.parent.path), moved.path)
+        let retainedSource = moved.appendingPathComponent("Business")
+        XCTAssertEqual(try DataPathIdentity.capture(retainedSource), originalIdentity)
+        try TreeCopySession.verifyUnchanged(at: retainedSource, against: original)
+        let stagedCopy = moved.appendingPathComponent(URL(fileURLWithPath: try XCTUnwrap(pending.stagingPath)).lastPathComponent)
+        let copied = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: XCTUnwrap(pending.baseline))
+        try TreeCopySession.verifyCopy(at: stagedCopy, against: copied)
     }
 
     private final class RejectDiskCommands: ShellCommandRunning, @unchecked Sendable {

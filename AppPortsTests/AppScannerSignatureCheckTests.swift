@@ -14,6 +14,46 @@ struct AppScannerSignatureCheckTests {
 
     private static let developerIdentity = "Developer ID Application: Example Corp (AAAA111111)"
 
+    @Test("Small installation facts expose replacement status without a complete backup")
+    func replacementWithoutBackup() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let root = try workspace.makeSearchRoot()
+        let app = try workspace.makeApp(in: root, named: "FactOnly.app", identifier: "com.appports.tests.fact-only", adHoc: true)
+        let info = try SignatureInspector.inspect(at: app)
+        let fingerprint = try SignatureSnapshot.fingerprint(of: app)
+        let developer = OriginalDeveloperIdentity(authority: Self.developerIdentity, teamIdentifier: "AAAA111111",
+            designatedRequirement: "identifier com.appports.tests.fact-only", certificateSHA256: String(repeating: "b", count: 64))
+        try SignatureFactStore(backupDirectoryURL: workspace.backups).write(.init(installationID: UUID(), applicationPath: app.path,
+            applicationIdentity: DataPathIdentity.capture(app), version: SignatureAppVersion.read(at: app),
+            originalDeveloper: developer, originalFingerprint: "original-content-fact", currentFingerprint: fingerprint,
+            currentCodeDirectoryHash: info.codeDirectoryHash, signatureWasReplaced: true,
+            lastOperationID: UUID(), updatedAt: Date()))
+        let second = root.appendingPathComponent("SameIDSecondInstallation.app")
+        try SignatureSnapshot.copy(from: app, to: second)
+        #expect(!CodeSigner.hasSignatureBackups(backupDirectoryURL: workspace.backups))
+        #expect(CodeSigner.hasSignatureRecords(backupDirectoryURL: workspace.backups))
+        let scanner = AppScanner(backupDirectoryURL: workspace.backups)
+        let result = await scanner.signatureReplacedApps(searchRoots: [root])
+        #expect(result.count == 1)
+        let reported = try #require(result.first?.bundleURL)
+        #expect(try DataPathIdentity.capture(reported).matchesFilesystemObject(DataPathIdentity.capture(app)))
+        #expect(await scanner.checkSigningStatus(bundleURL: second) == .clean)
+    }
+
+    @Test("A name-only legacy identity remains inspectable without certifying a replacement installation")
+    func legacyIdentityIsNotObjectEvidence() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let root = try workspace.makeSearchRoot()
+        let app = try workspace.makeApp(in: root, named: "Legacy.app", identifier: "com.appports.tests.legacy-unbound", adHoc: true)
+        try workspace.writeBackup(bundleID: "com.appports.tests.legacy-unbound", identity: Self.developerIdentity,
+                                  originalPath: app.path, bindInstallation: false)
+        let status = await AppScanner(backupDirectoryURL: workspace.backups).checkSigningStatus(bundleURL: app)
+        #expect(status.signatureCheckUnavailable)
+        #expect(!status.signatureReplaced)
+    }
+
     @Test("只报告原始签名非 ad-hoc、当前仍是 ad-hoc 的应用")
     func reportsOnlyReplacedApps() async throws {
         let workspace = try Workspace()
@@ -279,13 +319,18 @@ struct AppScannerSignatureCheckTests {
             return app
         }
 
-        func writeBackup(bundleID: String, identity: String, originalPath: String) throws {
-            let record: [String: Any] = [
+        func writeBackup(bundleID: String, identity: String, originalPath: String, bindInstallation: Bool = true) throws {
+            var record: [String: Any] = [
                 "bundleIdentifier": bundleID,
                 "signingIdentity": identity,
                 "originalPath": originalPath,
                 "backupDate": Date()
             ]
+            let app = URL(fileURLWithPath: originalPath)
+            if bindInstallation, let object = try? DataPathIdentity.capture(app), let version = try? SignatureAppVersion.read(at: app) {
+                record["applicationIdentity"] = try PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(object), format: nil)
+                record["version"] = try PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(version), format: nil)
+            }
             let data = try PropertyListSerialization.data(fromPropertyList: record, format: .xml, options: 0)
             try data.write(to: backups.appendingPathComponent("\(bundleID).plist"))
         }

@@ -25,7 +25,9 @@ actor DataDirMover {
     private let homeDir: URL
     private let store: ContainerMountStore
     private let safety: DataOperationSafety
+    private let mountMigrator: ContainerVolumeMigrator?
     private let failSymlinkCreation: Bool
+    private let synchronizeDirectory: @Sendable (URL, Bool) throws -> Void
     private var runningMigrations: Set<UUID> = []
     private var runningRestores: Set<UUID> = []
     private var runningCleanups: Set<UUID> = []
@@ -45,11 +47,17 @@ actor DataDirMover {
 
     init(homeDir: URL = URL(fileURLWithPath: NSHomeDirectory()),
          failSymlinkCreation: Bool = false, failSourceBackupCleanup: Bool = false,
-         store: ContainerMountStore = .shared, runner: any ShellCommandRunning = ProcessCommandRunner()) {
+         store: ContainerMountStore = .shared, runner: any ShellCommandRunning = ProcessCommandRunner(),
+         mountMigrator: ContainerVolumeMigrator? = nil,
+         synchronizeDirectory: @escaping @Sendable (URL, Bool) throws -> Void = {
+             try DurableFileIO.syncDirectory(at: $0, resolvingAlias: $1)
+         }) {
         self.homeDir = homeDir.standardizedFileURL
         self.store = store
         self.safety = DataOperationSafety(homeDirectory: homeDir, store: store, runner: runner)
+        self.mountMigrator = mountMigrator
         self.failSymlinkCreation = failSymlinkCreation
+        self.synchronizeDirectory = synchronizeDirectory
         // Kept source-compatible with older callers. Success now always retains the original.
         _ = failSourceBackupCleanup
     }
@@ -72,10 +80,9 @@ actor DataDirMover {
         let path = item.path.standardizedFileURL.path
         guard completingPaths.insert(path).inserted else { throw DataOperationSafety.Failure.occupied(path) }
         defer { completingPaths.remove(path) }
-        let alreadyRestored = !isSymbolicLink(at: item.path)
         let operationID = try await restoreRetainingOriginal(item: item, progressHandler: progressHandler)
         return await completeSuccessfulTransfer(operationID: operationID, direction: .restore,
-            progressHandler: progressHandler, requireUnchangedActive: !alreadyRestored)
+            progressHandler: progressHandler, requireUnchangedActive: false)
     }
 
     /// Low-level recovery callers may deliberately retain the verified original.
@@ -84,7 +91,7 @@ actor DataDirMover {
     }
 
     private func migrateRetainingOriginal(item: DataDirItem, to externalBaseURL: URL,
-                                          progressHandler: FileCopier.ProgressHandler?) async throws -> UUID {
+                                          progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
         let source = item.path.standardizedFileURL
         let destination = externalBaseURL.appendingPathComponent(source.lastPathComponent).standardizedFileURL
         try requirePolicy(source)
@@ -92,17 +99,22 @@ actor DataDirMover {
         guard !DiskUtility.isMountPoint(source) else { throw DataOperationSafety.Failure.conflict(source.path) }
         guard try !entryExists(destination) else { throw DataDirError.destinationExists(destination) }
         try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
-        try await safety.requireNewMigration(at: source, destination: destination, bundleIdentifier: item.associatedBundleIdentifier)
+        let restored = try completedRestoreLineage(at: source)
+        try await safety.requireNewMigration(at: source, destination: destination,
+            bundleIdentifier: item.associatedBundleIdentifier, ownedTransferIDs: Set(restored.map(\.operationID)))
         // Reject known permission failures before reserving a recovery record.
         // Directory creation still happens only after the durable intent below.
         let destinationVolumeUUID = try preflightWritePermission(at: externalBaseURL)
-        let id = UUID()
+        let id = reusingOperationID ?? UUID()
+        let candidate = externalBaseURL.appendingPathComponent(".appports-copy-\(id.uuidString)").standardizedFileURL
         let backup = source.deletingLastPathComponent().appendingPathComponent(".appports-migration-backup-\(source.lastPathComponent)-\(id)")
         var transfer = DataTransferRecord(operationID: id, mode: .symlink, direction: .migrate, sourceID: item.id,
             appName: item.associatedAppName ?? item.name, bundleIdentifier: item.associatedBundleIdentifier,
             dataDirType: item.type.rawValue, originalPath: source.path, activePath: source.path,
             destinationPath: destination.path, backupPath: backup.path,
-            sourceIdentity: try DataPathIdentity.capture(source), destinationVolumeUUID: destinationVolumeUUID)
+            sourceIdentity: try DataPathIdentity.capture(source), destinationVolumeUUID: destinationVolumeUUID,
+            priorOperationID: restored.last?.operationID)
+        transfer.preparationPath = candidate.path
         try store.beginTransfer(transfer)
         runningMigrations.insert(id)
         defer { runningMigrations.remove(id) }
@@ -113,13 +125,16 @@ actor DataDirMover {
             }
             transfer.phase = .copying
             try store.updateTransfer(transfer)
-            let baseline = try await copy(from: source, to: destination, final: destination, progress: progressHandler)
+            let baseline = try await copy(from: source, to: candidate, final: destination, operationID: id, progress: progressHandler)
+            transfer = try store.transfer(operationID: id) ?? transfer
             try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
-            try installMarker(source: source, destination: destination, type: item.type, baseline: baseline)
-            transfer.destinationIdentity = try DataPathIdentity.capture(destination)
             transfer.baseline = try PropertyListEncoder().encode(baseline)
             transfer.phase = .verified
             try store.updateTransfer(transfer)
+            try moveTree(candidate, to: destination)
+            try syncDirectory(at: destination.deletingLastPathComponent())
+            try installMarker(source: source, destination: destination, type: item.type, baseline: baseline)
+            try syncTree(at: destination)
             await progressHandler?(.init(copiedBytes: baseline.logicalBytes, totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized))
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: item.associatedBundleIdentifier)
             try requireIdentity(source, transfer.sourceIdentity)
@@ -128,7 +143,8 @@ actor DataDirMover {
             try TreeCopySession.verifyCopy(at: destination, against: baseline)
             transfer.phase = .switching
             try store.updateTransfer(transfer)
-            try DataTreeRelocator.move(source, to: backup)
+            try moveTree(source, to: backup)
+            try syncDirectory(at: source.deletingLastPathComponent())
             transfer.backupIdentity = try DataPathIdentity.capture(backup)
             try requireIdentity(backup, transfer.sourceIdentity)
             try store.updateTransfer(transfer)
@@ -138,13 +154,11 @@ actor DataDirMover {
             do { try createSymbolicLink(at: source, withDestinationURL: destination) }
             catch {
                 // The backup is still complete; never overwrite a competing entry during rollback.
-                if try !entryExists(source) { try DataTreeRelocator.move(backup, to: source) }
+                if try !entryExists(source) { try moveTree(backup, to: source) }
                 throw DataDirError.symlinkFailed(error)
             }
             transfer.activePath = destination.path
-            try requireMarker(at: backup, for: source, type: item.type, allowOwned: false)
-            try TreeCopySession.verifyUnchanged(at: backup, against: baseline)
-            try TreeCopySession.verifyCopy(at: destination, against: baseline)
+            try syncDirectory(at: source.deletingLastPathComponent())
             try store.commitMigration(record: nil, transfer: transfer)
             invalidateSizeCache(for: source)
             invalidateSizeCache(for: destination)
@@ -173,7 +187,7 @@ actor DataDirMover {
     }
 
     private func restoreRetainingOriginal(item: DataDirItem,
-                                          progressHandler: FileCopier.ProgressHandler?) async throws -> UUID {
+                                          progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
         let local = item.path.standardizedFileURL
         try finishUnstartedRestoreIfNeeded(at: local)
         let indexed = try store.managedLink(forOriginalPath: local.path)
@@ -205,7 +219,7 @@ actor DataDirMover {
         try safety.requireNoOverlap(at: external, ownedTransferIDs: ownedIDs, ownedLinkPath: indexed?.originalPath)
         try requireLocalRestoreParent(local)
         try await safety.requireNoKnownWriters(at: external, bundleIdentifier: item.associatedBundleIdentifier ?? indexed?.bundleIdentifier)
-        let id = UUID()
+        let id = reusingOperationID ?? UUID()
         let staging = local.deletingLastPathComponent().appendingPathComponent(".appports-restore-\(id)")
         let copyURL = staging.appendingPathComponent("data")
         var transfer = DataTransferRecord(operationID: id, mode: .symlink, direction: .restore, sourceID: item.id,
@@ -213,15 +227,20 @@ actor DataDirMover {
             dataDirType: item.type.rawValue, originalPath: local.path, activePath: external.path, destinationPath: local.path,
             backupPath: external.path, stagingPath: staging.path, sourceIdentity: sourceIdentity,
             backupIdentity: sourceIdentity, priorOperationID: prior)
+        transfer.preparationPath = copyURL.path
+        transfer.stagingParentIdentity = try DataPathIdentity.capture(staging.deletingLastPathComponent())
         try store.beginTransfer(transfer)
         runningRestores.insert(id)
         defer { runningRestores.remove(id) }
         do {
             try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+            try syncDirectory(at: staging.deletingLastPathComponent())
+            transfer.stagingIdentity = try DataPathIdentity.capture(staging)
+            try store.updateTransfer(transfer)
             transfer.phase = .copying
             try store.updateTransfer(transfer)
-            let baseline = try await copy(from: external, to: copyURL, final: local, progress: progressHandler)
-            transfer.destinationIdentity = try DataPathIdentity.capture(copyURL)
+            let baseline = try await copy(from: external, to: copyURL, final: local, operationID: id, progress: progressHandler)
+            transfer = try store.transfer(operationID: id) ?? transfer
             transfer.baseline = try PropertyListEncoder().encode(baseline)
             transfer.phase = .verified
             try store.updateTransfer(transfer)
@@ -235,10 +254,8 @@ actor DataDirMover {
             transfer.phase = .switching
             try requireIdentity(copyURL, transfer.destinationIdentity!)
             try switchEntry(local: local, expectedLink: linkIdentity, replacement: copyURL, staging: staging)
-            try TreeCopySession.applyRootMetadata(at: local, from: baseline, ownershipRole: .destination)
             transfer.activePath = local.path
-            try TreeCopySession.verifyUnchanged(at: external, against: baseline)
-            try TreeCopySession.verifyCopy(at: local, against: baseline)
+            try syncTree(at: local)
             try store.updateTransfer(transfer)
             try store.finalizeTransfer(operationID: id, baseline: transfer.baseline!)
             invalidateSizeCache(for: local)
@@ -310,7 +327,7 @@ actor DataDirMover {
         let target = localPath.resolvingSymlinksInPath()
         try await safety.requireNoKnownWriters(at: target)
         try requireIdentity(localPath, identity)
-        try fileManager.removeItem(at: localPath)
+        try removeEntry(at: localPath)
     }
 
     func normalizeManagedLinkAndComplete(localPath: URL, currentExternalPath: URL, normalizedExternalPath: URL,
@@ -330,7 +347,7 @@ actor DataDirMover {
     }
 
     private func normalizeRetainingOriginal(localPath: URL, currentExternalPath: URL, normalizedExternalPath: URL,
-                                            progressHandler: FileCopier.ProgressHandler?) async throws -> UUID? {
+                                            progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID? {
         let local = localPath.standardizedFileURL
         let source = currentExternalPath.standardizedFileURL
         let destination = normalizedExternalPath.standardizedFileURL
@@ -353,26 +370,37 @@ actor DataDirMover {
         try safety.requireNoManagedDescendants(at: source)
         try await safety.requireNoKnownWriters(at: source, bundleIdentifier: old?.bundleIdentifier)
         try requireIdentity(source, sourceIdentity)
-        let id = UUID()
+        let id = reusingOperationID ?? UUID()
         let staging = local.deletingLastPathComponent().appendingPathComponent(".appports-normalize-\(id)")
+        let candidate = destination.deletingLastPathComponent().appendingPathComponent(".appports-copy-\(id)")
         let linkIdentity = try DataPathIdentity.capture(local)
         var transfer = DataTransferRecord(operationID: id, mode: .symlink, direction: .migrate, sourceID: local.path,
             appName: old?.appName ?? local.lastPathComponent, bundleIdentifier: old?.bundleIdentifier ?? inferredBundleIdentifier(local),
             dataDirType: type.rawValue, originalPath: local.path, activePath: source.path, destinationPath: destination.path,
             backupPath: source.path, stagingPath: staging.path, sourceIdentity: sourceIdentity, backupIdentity: sourceIdentity,
             priorOperationID: old?.operationID)
+        transfer.preparationPath = candidate.path
+        transfer.stagingParentIdentity = try DataPathIdentity.capture(staging.deletingLastPathComponent())
+        transfer.destinationVolumeUUID = try preflightWritePermission(at: destination.deletingLastPathComponent())
         try store.beginTransfer(transfer)
+        runningMigrations.insert(id)
+        defer { runningMigrations.remove(id) }
         do {
             try checkWritePermission(at: destination.deletingLastPathComponent())
             try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+            try syncDirectory(at: staging.deletingLastPathComponent())
+            transfer.stagingIdentity = try DataPathIdentity.capture(staging)
             transfer.phase = .copying
             try store.updateTransfer(transfer)
-            let baseline = try await copy(from: source, to: destination, final: destination, progress: progressHandler)
-            try installMarker(source: local, destination: destination, type: type, baseline: baseline)
-            transfer.destinationIdentity = try DataPathIdentity.capture(destination)
+            let baseline = try await copy(from: source, to: candidate, final: destination, operationID: id, progress: progressHandler)
+            transfer = try store.transfer(operationID: id) ?? transfer
             transfer.baseline = try PropertyListEncoder().encode(baseline)
             transfer.phase = .verified
             try store.updateTransfer(transfer)
+            try moveTree(candidate, to: destination)
+            try syncDirectory(at: destination.deletingLastPathComponent())
+            try installMarker(source: local, destination: destination, type: type, baseline: baseline)
+            try syncTree(at: destination)
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: transfer.bundleIdentifier)
             try requireIdentity(source, sourceIdentity)
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
@@ -383,8 +411,8 @@ actor DataDirMover {
             try switchEntry(local: local, expectedLink: linkIdentity, replacement: newLink, staging: staging)
             transfer.activePath = destination.path
             try requireIdentity(source, sourceIdentity)
-            try TreeCopySession.verifyUnchanged(at: source, against: baseline)
-            try TreeCopySession.verifyCopy(at: destination, against: baseline)
+            try requireIdentity(destination, transfer.destinationIdentity!)
+            try syncDirectory(at: local.deletingLastPathComponent())
             try store.commitMigration(record: nil, transfer: transfer)
             invalidateSizeCache(for: source)
             invalidateSizeCache(for: destination)
@@ -395,6 +423,10 @@ actor DataDirMover {
     /// Release a failed initial migration without deleting or moving any files.
     /// The caller holds the same outer operation lock used by migration itself.
     func cancelUnstartedMigration(operationID: UUID) async throws {
+        if try store.transfer(operationID: operationID)?.isPreparationRecoverable == true {
+            try await cancelPreparation(operationID: operationID)
+            return
+        }
         guard !runningMigrations.contains(operationID) else {
             throw DataOperationSafety.Failure.occupied(operationID.uuidString)
         }
@@ -407,6 +439,10 @@ actor DataDirMover {
     }
 
     func cancelUnstartedRestore(operationID: UUID) async throws {
+        if try store.transfer(operationID: operationID)?.isPreparationRecoverable == true {
+            try await cancelPreparation(operationID: operationID)
+            return
+        }
         guard !runningRestores.contains(operationID) else { throw DataOperationSafety.Failure.occupied(operationID.uuidString) }
         guard let expected = try store.transfer(operationID: operationID) else {
             throw ContainerMountStore.StoreError.missingTransfer(operationID)
@@ -414,10 +450,234 @@ actor DataDirMover {
         try cancelUnstartedRestore(expected)
     }
 
+    func cancelPreparation(operationID: UUID, preserveUnclaimedMaterials: Bool = false) async throws {
+        guard let expected = try store.transfer(operationID: operationID) else { return }
+        guard !runningMigrations.contains(operationID), !runningRestores.contains(operationID),
+              completingPaths.insert(expected.originalPath).inserted else {
+            throw DataOperationSafety.Failure.occupied(expected.originalPath)
+        }
+        defer { completingPaths.remove(expected.originalPath) }
+        try await cancelPreparation(expected, preserveUnclaimedMaterials: preserveUnclaimedMaterials)
+    }
+
+    private func restartPreparation(_ expected: DataTransferRecord,
+                                    progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
+        guard completingPaths.insert(expected.originalPath).inserted else {
+            throw DataOperationSafety.Failure.occupied(expected.originalPath)
+        }
+        defer { completingPaths.remove(expected.originalPath) }
+        try await cancelPreparation(expected, preserveUnclaimedMaterials: false)
+        let local = URL(fileURLWithPath: expected.originalPath)
+        let item = DataDirItem(name: local.lastPathComponent, path: local,
+            type: DataDirType(rawValue: expected.dataDirType) ?? .custom, priority: .recommended,
+            description: "", associatedAppName: expected.appName, associatedBundleIdentifier: expected.bundleIdentifier)
+        let id: UUID
+        if expected.direction == .restore {
+            id = try await restoreRetainingOriginal(item: item, progressHandler: progressHandler, reusingOperationID: expected.operationID)
+        } else if expected.activePath == expected.originalPath {
+            id = try await migrateRetainingOriginal(item: item,
+                to: URL(fileURLWithPath: expected.destinationPath).deletingLastPathComponent(),
+                progressHandler: progressHandler, reusingOperationID: expected.operationID)
+        } else {
+            guard let newID = try await normalizeRetainingOriginal(localPath: local,
+                currentExternalPath: URL(fileURLWithPath: expected.activePath),
+                normalizedExternalPath: URL(fileURLWithPath: expected.destinationPath), progressHandler: progressHandler,
+                reusingOperationID: expected.operationID) else { return nil }
+            id = newID
+        }
+        return await completeSuccessfulTransfer(operationID: id, direction: expected.direction,
+            progressHandler: progressHandler, requireUnchangedActive: false).cleanupWarning
+    }
+
+    /// Cancellation proves the authoritative source and the unchanged record;
+    /// it does not mistake a missing verified baseline for an empty target.
+    private func preparationSource(_ transfer: DataTransferRecord, verifyContents: Bool, checkLedger: Bool = true) throws -> URL {
+        guard transfer.mode == .symlink, transfer.isPreparationRecoverable else {
+            throw DataOperationSafety.Failure.conflict(transfer.originalPath)
+        }
+        if checkLedger {
+            guard try store.transfer(operationID: transfer.operationID) == transfer,
+                  !(try store.transfers()).contains(where: { $0.priorOperationID == transfer.operationID }) else {
+                throw DataOperationSafety.Failure.conflict(transfer.originalPath)
+            }
+        }
+        let local = URL(fileURLWithPath: transfer.originalPath)
+        let source = URL(fileURLWithPath: transfer.activePath)
+        guard !isSymbolicLink(at: source), !DiskUtility.isMountPoint(source) || source != local else {
+            throw DataOperationSafety.Failure.conflict(source.path)
+        }
+        try requireIdentity(source, transfer.sourceIdentity)
+        if transfer.direction == .migrate, source == local {
+            guard let backup = transfer.backupPath, try !entryExists(URL(fileURLWithPath: backup)) else {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+        } else {
+            if isSymbolicLink(at: local) {
+                guard linkPoints(local, to: source) else { throw DataOperationSafety.Failure.conflict(local.path) }
+            } else {
+                guard try !entryExists(local) else { throw DataOperationSafety.Failure.conflict(local.path) }
+                if checkLedger {
+                    guard let indexed = try store.managedLink(forOriginalPath: local.path),
+                          indexed.operationID == transfer.priorOperationID,
+                          indexed.destinationPath == source.path,
+                          indexed.destinationIdentity.matchesFilesystemObject(transfer.sourceIdentity) else {
+                        throw DataOperationSafety.Failure.conflict(local.path)
+                    }
+                }
+            }
+        }
+        if verifyContents, let encoded = transfer.sourceBaseline {
+            try verifyRetainedTree(source, identity: transfer.sourceIdentity,
+                                  baseline: PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded))
+        }
+        return source
+    }
+
+    private func cancelPreparation(_ expected: DataTransferRecord, preserveUnclaimedMaterials: Bool) async throws {
+        var transfer = expected
+        let source = try preparationSource(transfer, verifyContents: !preserveUnclaimedMaterials)
+        if preserveUnclaimedMaterials {
+            try store.endUnswitchedTransfer(transfer,
+                preserving: "已结束未切换的尝试；以下材料仍保留，未确认归属的内容不会自动删除。".localized) {
+                _ = try preparationSource(transfer, verifyContents: false, checkLedger: false)
+            }
+            return
+        }
+        let root: URL
+        if let path = transfer.preparationPath { root = URL(fileURLWithPath: path) }
+        else if transfer.direction == .restore, let staging = transfer.stagingPath {
+            root = URL(fileURLWithPath: staging).appendingPathComponent("data")
+        } else { root = URL(fileURLWithPath: transfer.destinationPath) }
+        let parent = root.deletingLastPathComponent()
+        if transfer.direction == .restore, transfer.preparationRemovalBaseline != nil,
+           let grandparentIdentity = transfer.stagingParentIdentity, try !entryExists(parent) {
+            try requireIdentity(parent.deletingLastPathComponent(), grandparentIdentity)
+            try syncDirectory(at: parent.deletingLastPathComponent())
+            try store.endUnswitchedTransfer(transfer) {
+                _ = try preparationSource(transfer, verifyContents: true, checkLedger: false)
+            }
+            return
+        }
+        // A legacy no-target intent retains its established strict absence check.
+        if transfer.sourceBaseline == nil, transfer.destinationIdentity == nil {
+            if transfer.isUnstartedSymlinkMigration, transfer.preparationPath == nil {
+                try store.cancelUnstartedMigration(transfer) { try requireUnstartedMigrationFilesystem(transfer) }
+                return
+            }
+            if transfer.isUnstartedSymlinkRestore {
+                try cancelUnstartedRestore(transfer)
+                return
+            }
+        }
+        if let expectedParent = transfer.preparationParentIdentity {
+            try requireIdentity(parent, expectedParent)
+        } else if transfer.direction == .migrate, let uuid = transfer.destinationVolumeUUID {
+            try requireDestinationVolume(at: parent, expected: uuid)
+        }
+        let actual = try TreeCopySession.retainedRemovalURL(at: root, removalID: transfer.operationID)
+        if let actual {
+            guard let identity = transfer.destinationIdentity, let encoded = transfer.sourceBaseline,
+                  transfer.preparationParentIdentity != nil,
+                  !isSymbolicLink(at: actual), !DiskUtility.isMountPoint(actual) else {
+                throw DataOperationSafety.Failure.inspection(actual.path)
+            }
+            try requireIdentity(actual, identity)
+            try await safety.requireNoKnownWriters(at: source, bundleIdentifier: transfer.bundleIdentifier)
+            try await safety.requireNoKnownWriters(at: actual, bundleIdentifier: nil)
+            _ = try preparationSource(transfer, verifyContents: true)
+            try requireIdentity(actual, identity)
+            try requireIdentity(parent, transfer.preparationParentIdentity!)
+            let wasRemoving = transfer.preparationRemovalBaseline != nil
+            let removal: TreeCopySnapshot
+            if let saved = transfer.preparationRemovalBaseline {
+                removal = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: saved)
+            } else {
+                // Product markers are not payload. A partial symlink candidate
+                // has not installed one, so an unexpected marker is a conflict.
+                guard try !entryExists(markerURL(for: actual)) else { throw DataOperationSafety.Failure.conflict(actual.path) }
+                removal = try TreeCopySession.partialCopySnapshot(at: actual, source: source,
+                    against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded),
+                    sourceVolumeUUID: transfer.sourceIdentity.volumeUUID)
+                transfer.preparationRemovalBaseline = try PropertyListEncoder().encode(removal)
+                transfer.preparationRemovalParentIdentity = try DataPathIdentity.capture(parent)
+                try store.updateTransfer(transfer)
+            }
+            try syncTree(at: source)
+            try store.recheckWriterAdmission()
+            try TreeCopySession.removeVerifiedCopy(at: root, against: removal, allowPartialRemoval: wasRemoving,
+                expectedVolumeUUID: identity.volumeUUID, removalID: transfer.operationID)
+            try syncDirectory(at: parent)
+        } else if transfer.destinationIdentity != nil {
+            guard let expectedParent = transfer.preparationRemovalParentIdentity else {
+                throw DataOperationSafety.Failure.inspection(root.path)
+            }
+            try requireIdentity(parent, expectedParent)
+            try syncDirectory(at: parent)
+        }
+        if transfer.direction == .migrate, root.path != transfer.destinationPath {
+            guard try !entryExists(URL(fileURLWithPath: transfer.destinationPath)) else {
+                throw DataOperationSafety.Failure.conflict(transfer.destinationPath)
+            }
+        }
+        if let path = transfer.stagingPath {
+            let staging = URL(fileURLWithPath: path)
+            if try entryExists(staging) {
+                guard let identity = transfer.stagingIdentity, let parentIdentity = transfer.stagingParentIdentity,
+                      !isSymbolicLink(at: staging), !DiskUtility.isMountPoint(staging) else {
+                    throw DataOperationSafety.Failure.inspection(path)
+                }
+                try requireIdentity(staging, identity)
+                try requireIdentity(staging.deletingLastPathComponent(), parentIdentity)
+                try store.recheckWriterAdmission()
+                guard try fileManager.contentsOfDirectory(atPath: path).isEmpty, rmdir(path) == 0 else {
+                    throw DataOperationSafety.Failure.conflict(path)
+                }
+                try syncDirectory(at: staging.deletingLastPathComponent())
+            }
+        }
+        try store.endUnswitchedTransfer(transfer) {
+            _ = try preparationSource(transfer, verifyContents: true, checkLedger: false)
+        }
+    }
+
+    private func publishVerifiedPreparation(_ transfer: DataTransferRecord, baseline: TreeCopySnapshot) throws {
+        guard transfer.direction == .migrate,
+              let path = transfer.preparationPath, let identity = transfer.destinationIdentity else { return }
+        let candidate = URL(fileURLWithPath: path)
+        let final = URL(fileURLWithPath: transfer.destinationPath)
+        let local = URL(fileURLWithPath: transfer.originalPath)
+        if try entryExists(candidate) {
+            let sourceStillActive = transfer.stagingPath == nil ? !isSymbolicLink(at: local)
+                : transfer.backupPath.map { linkPoints(local, to: URL(fileURLWithPath: $0)) } == true
+            guard try !entryExists(final), sourceStillActive,
+                  let parent = transfer.preparationParentIdentity else { throw DataOperationSafety.Failure.conflict(final.path) }
+            try requireIdentity(candidate.deletingLastPathComponent(), parent)
+            try requireIdentity(candidate, identity)
+            try TreeCopySession.verifyCopy(at: candidate, against: baseline)
+            try syncTree(at: candidate)
+            try moveTree(candidate, to: final)
+            try syncDirectory(at: final.deletingLastPathComponent())
+        }
+        try requireIdentity(final, identity)
+        if !linkPoints(local, to: final), try !entryExists(markerURL(for: final)) {
+            try installMarker(source: local, destination: final,
+                type: DataDirType(rawValue: transfer.dataDirType) ?? .custom, baseline: baseline)
+            try syncTree(at: final)
+        }
+    }
+
     /// Continue a copy that was already verified before a switch or ledger write
     /// failed. Reuse its operation ID; never create a second copy or reservation.
     func resumeVerifiedTransfer(operationID: UUID, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
         guard var transfer = try store.transfer(operationID: operationID) else { return nil }
+        if transfer.isPreparationRecoverable {
+            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false))
+            guard try store.transfer(operationID: operationID) == transfer else {
+                throw DataOperationSafety.Failure.conflict(transfer.originalPath)
+            }
+            if let verified = try await promoteCompletePreparation(transfer) { transfer = verified }
+            else { return try await restartPreparation(transfer, progressHandler: progressHandler) }
+        }
         guard transfer.mode == .symlink,
               !runningMigrations.contains(operationID), !runningRestores.contains(operationID),
               completingPaths.insert(transfer.originalPath).inserted else {
@@ -439,12 +699,13 @@ actor DataDirMover {
         let backup = URL(fileURLWithPath: transfer.backupPath!)
         var lastSaved = transfer
         do {
+            try publishVerifiedPreparation(transfer, baseline: baseline)
             await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false))
             let before = try verifiedSwitchState(transfer, baseline: baseline)
-            if transfer.direction != .restore || !before.alreadySwitched {
+            if !before.alreadySwitched {
                 try await safety.requireNoKnownWriters(at: before.source, bundleIdentifier: transfer.bundleIdentifier)
+                try await safety.requireNoKnownWriters(at: before.destination, bundleIdentifier: transfer.bundleIdentifier)
             }
-            try await safety.requireNoKnownWriters(at: before.destination, bundleIdentifier: transfer.bundleIdentifier)
             guard try store.transfer(operationID: operationID) == transfer,
                   try verifiedSwitchState(transfer, baseline: baseline) == before else {
                 throw DataOperationSafety.Failure.conflict(local.path)
@@ -460,7 +721,7 @@ actor DataDirMover {
 
             if transfer.direction == .migrate, transfer.stagingPath == nil {
                 if before.source == local {
-                    try DataTreeRelocator.move(local, to: backup)
+                    try moveTree(local, to: backup)
                 }
                 try requireIdentity(backup, transfer.sourceIdentity)
                 transfer.backupIdentity = try transfer.backupIdentity ?? DataPathIdentity.capture(backup)
@@ -488,11 +749,12 @@ actor DataDirMover {
                 try finishRecoveredStaging(staging, source: backup, original: local)
             }
             if transfer.direction == .restore {
-                try TreeCopySession.applyRootMetadata(at: local, from: baseline, ownershipRole: .destination)
                 transfer.activePath = local.path
             } else { transfer.activePath = transfer.destinationPath }
             let switched = try verifiedSwitchState(transfer, baseline: baseline)
             guard switched.alreadySwitched else { throw DataOperationSafety.Failure.inspection(local.path) }
+            try syncTree(at: switched.destination)
+            try syncDirectory(at: local.deletingLastPathComponent())
             if transfer.direction == .restore {
                 try store.updateTransfer(transfer)
                 lastSaved = transfer
@@ -505,7 +767,31 @@ actor DataDirMover {
             try recordFailure(&transfer, error: error)
         }
         return await completeSuccessfulTransfer(operationID: operationID, direction: transfer.direction,
-            progressHandler: progressHandler).cleanupWarning
+            progressHandler: progressHandler, requireUnchangedActive: false).cleanupWarning
+    }
+
+    private func promoteCompletePreparation(_ expected: DataTransferRecord) async throws -> DataTransferRecord? {
+        guard let encoded = expected.sourceBaseline, let identity = expected.destinationIdentity,
+              expected.preparationRemovalBaseline == nil, let path = expected.preparationPath,
+              let parent = expected.preparationParentIdentity else { return nil }
+        let source = try preparationSource(expected, verifyContents: true)
+        let candidate = URL(fileURLWithPath: path)
+        guard try entryExists(candidate) else { return nil }
+        try requireIdentity(candidate, identity)
+        try requireIdentity(candidate.deletingLastPathComponent(), parent)
+        let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
+        do { try TreeCopySession.verifyCopy(at: candidate, against: baseline) }
+        catch { return nil }
+        try await safety.requireNoKnownWriters(at: source, bundleIdentifier: expected.bundleIdentifier)
+        _ = try preparationSource(expected, verifyContents: true)
+        try TreeCopySession.verifyCopy(at: candidate, against: baseline)
+        try syncTree(at: candidate)
+        var verified = expected
+        verified.baseline = encoded
+        verified.phase = .verified
+        verified.recoverableReason = nil
+        try store.updateTransfer(verified)
+        return verified
     }
 
     /// Older builds could restore a switched migration whose final record save
@@ -652,11 +938,13 @@ actor DataDirMover {
         if transfer.direction != .restore || !switched {
             guard !isSymbolicLink(at: source) else { throw DataOperationSafety.Failure.conflict(source.path) }
             try requireIdentity(source, transfer.sourceIdentity)
-            try requireMarker(at: source, for: local, type: type, allowOwned: transfer.stagingPath != nil)
-            try verifyRetainedTree(source, identity: transfer.sourceIdentity, baseline: baseline)
+            if !switched {
+                try requireMarker(at: source, for: local, type: type, allowOwned: transfer.stagingPath != nil)
+                try verifyRetainedTree(source, identity: transfer.sourceIdentity, baseline: baseline)
+            }
         }
         if transfer.direction == .migrate { try requireMarker(at: copy, for: local, type: type, allowOwned: true) }
-        try TreeCopySession.verifyCopy(at: copy, against: baseline)
+        if !switched { try TreeCopySession.verifyCopy(at: copy, against: baseline) }
         return VerifiedSwitchState(source: source, destination: copy, alreadySwitched: switched, localLinkIdentity: localLink)
     }
 
@@ -673,8 +961,10 @@ actor DataDirMover {
         guard Set(names).isSubset(of: ["previous-entry"]) else { throw DataOperationSafety.Failure.conflict(staging.path) }
         if names.contains("previous-entry") {
             let previous = staging.appendingPathComponent("previous-entry")
+            try store.recheckWriterAdmission()
             guard linkPoints(previous, to: source, originallyAt: original), unlink(previous.path) == 0 else { throw DataOperationSafety.Failure.conflict(previous.path) }
         }
+        try store.recheckWriterAdmission()
         guard rmdir(staging.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     }
 
@@ -704,33 +994,61 @@ actor DataDirMover {
             let source = URL(fileURLWithPath: backupPath)
             let local = URL(fileURLWithPath: expected.originalPath)
             let staging = URL(fileURLWithPath: stagingPath)
+            let parent = staging.deletingLastPathComponent()
             // The indexed source may legitimately be an external volume root.
             // Cancellation only removes our empty local staging directory.
-            guard !isSymbolicLink(at: source) else {
-                throw DataOperationSafety.Failure.conflict(source.path)
-            }
-            try requireIdentity(source, expected.sourceIdentity)
-            if isSymbolicLink(at: local) {
-                guard DataPathTopology.relationship(local.path, source.path) == .same else {
-                    throw DataOperationSafety.Failure.conflict(local.path)
+            func requireUnswitchedSourceAndEntry() throws {
+                guard !isSymbolicLink(at: source) else {
+                    throw DataOperationSafety.Failure.conflict(source.path)
                 }
-            } else {
-                guard try !entryExists(local), let indexed,
-                      indexed.operationID == expected.priorOperationID,
-                      indexed.destinationPath == source.path,
-                      indexed.destinationIdentity.matchesFilesystemObject(expected.sourceIdentity) else {
-                    throw DataOperationSafety.Failure.conflict(local.path)
+                try requireIdentity(source, expected.sourceIdentity)
+                if isSymbolicLink(at: local) {
+                    guard DataPathTopology.relationship(local.path, source.path) == .same else {
+                        throw DataOperationSafety.Failure.conflict(local.path)
+                    }
+                } else {
+                    guard try !entryExists(local), let indexed,
+                          indexed.operationID == expected.priorOperationID,
+                          indexed.destinationPath == source.path,
+                          indexed.destinationIdentity.matchesFilesystemObject(expected.sourceIdentity) else {
+                        throw DataOperationSafety.Failure.conflict(local.path)
+                    }
                 }
             }
+            try requireUnswitchedSourceAndEntry()
+            guard let parentIdentity = expected.stagingParentIdentity else {
+                // Legacy intents without a staging claim may end only while
+                // the entry is absent; its name never authorizes removal.
+                guard expected.stagingIdentity == nil, try !entryExists(staging) else {
+                    throw DataOperationSafety.Failure.inspection(staging.path)
+                }
+                return
+            }
+            try requireIdentity(parent, parentIdentity)
             if try entryExists(staging) {
-                guard existingDirectory(at: staging), !isSymbolicLink(at: staging), !DiskUtility.isMountPoint(staging),
-                      try fileManager.contentsOfDirectory(atPath: staging.path).isEmpty else {
+                guard let identity = expected.stagingIdentity else {
+                    throw DataOperationSafety.Failure.inspection(staging.path)
+                }
+                guard existingDirectory(at: staging), !isSymbolicLink(at: staging), !DiskUtility.isMountPoint(staging) else {
+                    throw DataOperationSafety.Failure.conflict(staging.path)
+                }
+                try requireIdentity(staging, identity)
+                guard try fileManager.contentsOfDirectory(atPath: staging.path).isEmpty else {
                     throw DataOperationSafety.Failure.conflict(staging.path)
                 }
                 // rmdir is atomic and refuses any file arriving after inspection.
+                try store.recheckWriterAdmission()
+                try requireIdentity(parent, parentIdentity)
+                try requireIdentity(staging, identity)
                 guard rmdir(staging.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             }
-            try requireIdentity(source, expected.sourceIdentity)
+            // A cold retry after rmdir must finish this same parent barrier
+            // before the store forgets the only cancellation intent.
+            try requireIdentity(parent, parentIdentity)
+            try syncDirectory(at: parent)
+            try requireIdentity(parent, parentIdentity)
+            guard try !entryExists(staging) else { throw DataOperationSafety.Failure.conflict(staging.path) }
+            try requireUnswitchedSourceAndEntry()
         }
     }
 
@@ -738,13 +1056,23 @@ actor DataDirMover {
     /// Keep every predecessor until its own retained copy has been removed.
     func cleanupRetainedLineage(operationID: UUID) async throws {
         let lineage = try retainedLineage(endingAt: operationID)
+        var firstFailure: Error?
         for transfer in lineage {
-            try await cleanupRetainedTransfer(operationID: transfer.operationID)
+            try Task.checkCancellation()
+            do {
+                if transfer.mode == .symlink { try await cleanupRetainedTransfer(operationID: transfer.operationID) }
+                else { try await retainedMountService().cleanupRetainedTransfer(operationID: transfer.operationID) }
+            } catch {
+                if error is CancellationError { throw error }
+                try Task.checkCancellation()
+                firstFailure = firstFailure ?? error
+            }
         }
+        if let firstFailure { throw firstFailure }
     }
 
     private func completeSuccessfulTransfer(operationID: UUID, direction: DataTransferRecord.Direction,
-                                             progressHandler: FileCopier.ProgressHandler?, requireUnchangedActive: Bool = true) async -> CompletionResult {
+                                             progressHandler: FileCopier.ProgressHandler?, requireUnchangedActive: Bool = false) async -> CompletionResult {
         do {
             await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized,
                                         showsByteProgress: false))
@@ -766,27 +1094,21 @@ actor DataDirMover {
                                                 progressHandler: FileCopier.ProgressHandler?) async throws {
         let local = item.path.standardizedFileURL
         guard !isSymbolicLink(at: local) else { return }
-        let transfers = try store.transfers()
-        let related = transfers.filter { $0.originalPath == local.path }
-        let terminalRestores = related.filter { transfer in
-            transfer.mode == .symlink && transfer.direction == .restore
-                && [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase)
-                && !transfers.contains(where: { $0.priorOperationID == transfer.operationID })
-        }
-        guard !terminalRestores.isEmpty else { return }
-        guard terminalRestores.count == 1, let terminal = terminalRestores.first else {
-            throw DataOperationSafety.Failure.conflict(local.path)
-        }
-        let lineage = try retainedLineage(endingAt: terminal.operationID)
-        guard Set(lineage.map(\.operationID)) == Set(related.map(\.operationID)) else {
-            throw DataOperationSafety.Failure.conflict(local.path)
-        }
+        let lineage = try completedRestoreLineage(at: local)
+        guard let terminal = lineage.last else { return }
 
-        // A same-named directory is only reclaimable when it is the recorded
-        // retained source in this completed chain; never adopt arbitrary data.
+        // Reclaim the same recorded destination when it is available. A failed
+        // old-copy cleanup is not a prerequisite for moving the current local
+        // data elsewhere; the next intent keeps this exact identity lineage.
         let destination = externalBaseURL.appendingPathComponent(local.lastPathComponent).standardizedFileURL
-        if try entryExists(destination), !lineage.contains(where: { $0.backupPath == destination.path }) {
-            throw DataDirError.destinationExists(destination)
+        if try entryExists(destination) {
+            guard let retained = lineage.first(where: { $0.retainedCopyRemovedAt == nil && $0.backupPath == destination.path }) else {
+                throw DataDirError.destinationExists(destination)
+            }
+            guard let identity = retained.backupIdentity,
+                  try DataPathIdentity.capture(destination).matchesFilesystemObject(identity) else {
+                throw CompletionError.previousRestoreNeedsCleanup(DataOperationSafety.Failure.conflict(destination.path).localizedDescription)
+            }
         }
         do {
             await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized,
@@ -797,10 +1119,42 @@ actor DataDirMover {
             try await verifyAutomaticCleanup(lineage, requireUnchangedActive: false)
             try await cleanupRetainedLineage(operationID: terminal.operationID)
         } catch {
-            // No new intent exists until the old, independently verified copies
-            // are handled; normal edits to restored local data are permitted.
-            throw CompletionError.previousRestoreNeedsCleanup(error.localizedDescription)
+            try Task.checkCancellation()
+            // A still-occupied or reserved destination is rejected by the new
+            // migration's ordinary checks. No failed cleanup is called deleted.
+            if try entryExists(destination) {
+                throw CompletionError.previousRestoreNeedsCleanup(error.localizedDescription)
+            }
         }
+    }
+
+    /// A completed restore may remain solely to identify its old external copy.
+    /// Its current local object, not path equality or an old content snapshot,
+    /// authorizes a later migration after legitimate local application writes.
+    private func completedRestoreLineage(at local: URL) throws -> [DataTransferRecord] {
+        let transfers = try store.transfers()
+        let related = transfers.filter { $0.originalPath == local.path }
+        let terminalRestores = related.filter { transfer in
+            transfer.direction == .restore
+                && [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase)
+                && !transfers.contains(where: { $0.priorOperationID == transfer.operationID })
+        }
+        guard !terminalRestores.isEmpty else { return [] }
+        guard terminalRestores.count == 1, let terminal = terminalRestores.first else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        let lineage = try retainedLineage(endingAt: terminal.operationID)
+        guard Set(lineage.map(\.operationID)) == Set(related.map(\.operationID)) else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        guard terminal.activePath == local.path, terminal.destinationPath == local.path,
+              !isSymbolicLink(at: local), !DiskUtility.isMountPoint(local),
+              try store.managedLink(forOriginalPath: local.path) == nil,
+              let identity = terminal.destinationIdentity else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        try requireIdentity(local, identity)
+        return lineage
     }
 
     /// Oldest first, following durable identities instead of timestamps or path
@@ -813,18 +1167,16 @@ actor DataDirMover {
         var lineage: [DataTransferRecord] = []
         while true {
             guard visited.insert(current.operationID).inserted,
-                  current.mode == .symlink, current.originalPath == originalPath,
+                  current.originalPath == originalPath,
                   [.awaitingUserVerification, .cleanupRequested].contains(current.phase),
-                  current.baseline != nil, current.destinationIdentity != nil,
+                  current.baseline != nil || current.retainedCopyRemovedAt != nil, current.destinationIdentity != nil,
                   current.backupPath != nil, current.backupIdentity != nil else {
                 throw DataOperationSafety.Failure.inspection(originalPath)
             }
             lineage.append(current)
             guard let priorID = current.priorOperationID,
                   let prior = transfers.first(where: { $0.operationID == priorID }) else { break }
-            guard prior.direction == .migrate,
-                  let identity = prior.destinationIdentity,
-                  identity.matchesFilesystemObject(current.sourceIdentity) else {
+            guard current.followsLocation(of: prior) else {
                 throw DataOperationSafety.Failure.conflict(originalPath)
             }
             current = prior
@@ -837,7 +1189,7 @@ actor DataDirMover {
     private func verifyAutomaticCleanup(_ lineage: [DataTransferRecord], requireUnchangedActive: Bool = true) async throws {
         guard let terminal = lineage.last else { return }
         guard !(try store.transfers()).contains(where: { $0.priorOperationID == terminal.operationID }),
-              let activeIdentity = terminal.destinationIdentity, let encoded = terminal.baseline else {
+              let activeIdentity = terminal.destinationIdentity else {
             throw DataOperationSafety.Failure.conflict(terminal.originalPath)
         }
         let active = URL(fileURLWithPath: terminal.activePath)
@@ -861,22 +1213,21 @@ actor DataDirMover {
         try await safety.requireNoKnownWriters(at: active, bundleIdentifier: terminal.bundleIdentifier)
         try requireIdentity(active, activeIdentity)
         if requireUnchangedActive {
+            guard let encoded = terminal.baseline else { throw DataOperationSafety.Failure.inspection(active.path) }
             let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
             try TreeCopySession.verifyCopy(at: active, against: baseline)
         }
-        // Check every retained source before removing the first one, so a
-        // modified later backup does not cause an avoidable partial cleanup.
-        for transfer in lineage { try verifyRetainedForCleanup(transfer) }
+        // Each retained copy is checked immediately before its own deletion.
+        // An older offline copy must not keep a newly verified local copy alive.
         try requireIdentity(active, activeIdentity)
     }
 
     /// A checkpoint authorizes missing entries only on the same online parent.
     /// Every remaining entry still has to match the original inode and content.
-    private func verifyRetainedForCleanup(_ transfer: DataTransferRecord) throws {
+    private func verifyRetainedForCleanup(_ transfer: DataTransferRecord, against baseline: TreeCopySnapshot) throws {
         guard let path = transfer.backupPath, let identity = transfer.backupIdentity,
-              let encoded = transfer.baseline else { throw DataOperationSafety.Failure.inspection(transfer.originalPath) }
+              transfer.baseline != nil else { throw DataOperationSafety.Failure.inspection(transfer.originalPath) }
         let root = URL(fileURLWithPath: path)
-        let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
         if let expectedParent = transfer.cleanupParentIdentity {
             try requireIdentity(root.deletingLastPathComponent().resolvingSymlinksInPath(), expectedParent)
             guard let retained = try TreeCopySession.retainedRemovalURL(at: root, removalID: transfer.operationID) else { return }
@@ -896,29 +1247,41 @@ actor DataDirMover {
         let activeLinkPath: String?
     }
 
-    private func cleanupContext(for transfer: DataTransferRecord) throws -> CleanupContext {
+    private func retainedMountService() -> ContainerVolumeMigrator {
+        mountMigrator ?? ContainerVolumeMigrator(store: store, homeDirectory: homeDir, safetyRunner: safety.runner)
+    }
+
+    private func cleanupContext(for transfer: DataTransferRecord) async throws -> CleanupContext {
         let transfers = try store.transfers()
         let descendants = transferDescendants(of: transfer.operationID, transfers: transfers)
         let lineage = descendants.reduce(into: Set<UUID>()) { $0.formUnion(transferAncestors(of: $1, transfers: transfers)) }
-        let activeLink = try store.managedLinks().first { $0.originalPath == transfer.originalPath && descendants.contains($0.operationID) }
-        let activeRestore = transfers.last { descendants.contains($0.operationID) && $0.direction == .restore && $0.isDataSwitchComplete }
-        let active = URL(fileURLWithPath: activeLink?.destinationPath ?? activeRestore?.destinationPath ?? transfer.activePath)
-        guard let identity = activeLink?.destinationIdentity ?? activeRestore?.destinationIdentity ?? transfer.destinationIdentity else {
+        let current = try store.completedLocation(after: transfer.operationID)
+        let active = URL(fileURLWithPath: current.activePath)
+        guard let identity = current.destinationIdentity else {
             throw DataOperationSafety.Failure.inspection(active.path)
         }
-        try requireIdentity(active, identity)
         let local = URL(fileURLWithPath: transfer.originalPath)
-        if let activeLink {
+        var activeLinkPath: String?
+        if current.mode == .mount, current.direction == .migrate {
+            _ = try await retainedMountService().requireActiveData(for: current)
+        } else if current.direction == .migrate {
+            guard let activeLink = try store.managedLink(forOriginalPath: current.originalPath),
+                  activeLink.operationID == current.operationID, activeLink.destinationPath == active.path,
+                  activeLink.destinationIdentity.matchesFilesystemObject(identity) else {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+            activeLinkPath = activeLink.originalPath
             if isSymbolicLink(at: local) {
                 guard DataPathTopology.relationship(local.path, active.path) == .same else { throw DataOperationSafety.Failure.conflict(local.path) }
             } else if try entryExists(local) { throw DataOperationSafety.Failure.conflict(local.path) }
-            guard activeLink.destinationIdentity.matchesFilesystemObject(identity) else { throw DataOperationSafety.Failure.conflict(active.path) }
-        } else if activeRestore != nil {
+            try requireIdentity(active, identity)
+        } else {
             guard !isSymbolicLink(at: local), !DiskUtility.isMountPoint(local), active.path == local.path else {
                 throw DataOperationSafety.Failure.conflict(local.path)
             }
+            try requireIdentity(active, identity)
         }
-        return CleanupContext(activeURL: active, identity: identity, lineage: lineage, activeLinkPath: activeLink?.originalPath)
+        return CleanupContext(activeURL: active, identity: identity, lineage: lineage, activeLinkPath: activeLinkPath)
     }
 
     /// The only operation that removes an original. Cleanup is an idempotent
@@ -927,6 +1290,10 @@ actor DataDirMover {
         guard runningCleanups.insert(operationID).inserted else { throw DataOperationSafety.Failure.occupied(operationID.uuidString) }
         defer { runningCleanups.remove(operationID) }
         guard var transfer = try store.transfer(operationID: operationID) else { return }
+        if transfer.retainedCopyRemovedAt != nil {
+            try store.finishTransfer(operationID: operationID, deletionConfirmed: true)
+            return
+        }
         guard transfer.mode == .symlink, transfer.isDataSwitchComplete,
               let encoded = transfer.baseline, let retainedPath = transfer.backupPath,
               let retainedIdentity = transfer.backupIdentity else { throw DataOperationSafety.Failure.inspection(operationID.uuidString) }
@@ -936,9 +1303,9 @@ actor DataDirMover {
         let deletionPreviouslyStarted = transfer.cleanupParentIdentity != nil
         var requestedCleanup = false
         do {
-            let context = try cleanupContext(for: transfer)
+            let context = try await cleanupContext(for: transfer)
             guard !DiskUtility.isMountPoint(retained) else { throw DataOperationSafety.Failure.conflict(retained.path) }
-            try verifyRetainedForCleanup(transfer)
+            try verifyRetainedForCleanup(transfer, against: baseline)
             try safety.requireNoOverlap(at: retained, ownedTransferIDs: context.lineage,
                 ownedLinkPath: context.activeLinkPath, ownedRetainedPath: retained.path)
             if let actual = try TreeCopySession.retainedRemovalURL(at: retained, removalID: operationID) {
@@ -947,12 +1314,14 @@ actor DataDirMover {
             try await safety.requireNoKnownWriters(at: context.activeURL, bundleIdentifier: transfer.bundleIdentifier)
             // Process inspection suspends this actor. Revalidate the current
             // entry and lineage after those awaits, before any removal begins.
-            let fresh = try cleanupContext(for: transfer)
+            let fresh = try await cleanupContext(for: transfer)
             guard fresh.activeURL == context.activeURL, fresh.identity == context.identity,
                   fresh.lineage == context.lineage, try store.transfer(operationID: operationID) == transfer else {
                 throw DataOperationSafety.Failure.conflict(context.activeURL.path)
             }
-            try verifyRetainedForCleanup(transfer)
+            try verifyRetainedForCleanup(transfer, against: baseline)
+            try syncTree(at: context.activeURL)
+            try syncDirectory(at: URL(fileURLWithPath: transfer.originalPath).deletingLastPathComponent())
             try store.requestCleanup(operationID: operationID)
             transfer.phase = .cleanupRequested
             transfer.recoverableReason = nil
@@ -969,6 +1338,7 @@ actor DataDirMover {
                     if actual.path == retained.path { try TreeCopySession.applyRootMetadata(at: retained, from: baseline) }
                 }
                 try requireIdentity(context.activeURL, context.identity)
+                try store.recheckWriterAdmission()
                 try TreeCopySession.removeVerifiedCopy(at: retained, against: baseline, allowPartialRemoval: deletionPreviouslyStarted,
                     expectedVolumeUUID: retainedIdentity.volumeUUID, removalID: operationID)
             } else {
@@ -978,6 +1348,7 @@ actor DataDirMover {
             guard try TreeCopySession.retainedRemovalURL(at: retained, removalID: operationID) == nil else {
                 throw DataOperationSafety.Failure.inspection(retained.path)
             }
+            try syncDirectory(at: parent)
             try store.finishTransfer(operationID: operationID, deletionConfirmed: true)
             invalidateSizeCache(for: retained)
         } catch {
@@ -1015,9 +1386,19 @@ actor DataDirMover {
         catch DataOperationSafety.Failure.protectedPath { throw DataDirError.protectedPath(path) }
     }
 
-    private func copy(from source: URL, to destination: URL, final: URL, progress: FileCopier.ProgressHandler?) async throws -> TreeCopySnapshot {
+    private func copy(from source: URL, to destination: URL, final: URL, operationID: UUID? = nil,
+                      progress: FileCopier.ProgressHandler?) async throws -> TreeCopySnapshot {
+        let store = self.store
         do { return try await TreeCopySession().copy(from: source, to: destination,
-            excludingRootEntries: [managedLinkMarkerFileName], finalDestination: final, progressHandler: progress) }
+            excludingRootEntries: [managedLinkMarkerFileName], finalDestination: final,
+            preparedHandler: { baseline in
+                if let operationID {
+                    try store.prepareCopy(operationID: operationID, path: destination,
+                        parentIdentity: DataPathIdentity.capture(destination.deletingLastPathComponent()), baseline: baseline)
+                }
+            }, destinationCreatedHandler: { identity in
+                if let operationID { try store.claimCopyDestination(operationID: operationID, identity: identity) }
+            }, progressHandler: progress) }
         catch { throw DataDirError.copyFailed(error) }
     }
 
@@ -1046,6 +1427,8 @@ actor DataDirMover {
     }
 
     private func recordFailure(_ transfer: inout DataTransferRecord, error: Error) throws -> Never {
+        if let latest = try store.transfer(operationID: transfer.operationID) { transfer = latest }
+        if transfer.isDataSwitchComplete { throw error }
         transfer.phase = .needsRecovery
         transfer.recoverableReason = error.localizedDescription
         // If this write fails, the previous durable phase still reserves all known copies.
@@ -1056,8 +1439,9 @@ actor DataDirMover {
     private func removeUnstartedIntentIfSafe(_ transfer: DataTransferRecord) -> Bool {
         guard transfer.isUnstartedSymlinkMigration else { return false }
         do {
-            try store.cancelUnstartedMigration(transfer) {
-                try requireUnstartedMigrationFilesystem(transfer)
+            guard let latest = try store.transfer(operationID: transfer.operationID), latest.isUnstartedSymlinkMigration else { return false }
+            try store.cancelUnstartedMigration(latest) {
+                try requireUnstartedMigrationFilesystem(latest)
             }
             return true
         } catch { return false }
@@ -1070,6 +1454,10 @@ actor DataDirMover {
         let source = URL(fileURLWithPath: transfer.originalPath)
         let destination = URL(fileURLWithPath: transfer.destinationPath)
         let backup = URL(fileURLWithPath: backupPath)
+        if let preparation = transfer.preparationPath,
+           try entryExists(URL(fileURLWithPath: preparation)) {
+            throw DataOperationSafety.Failure.inspection(preparation)
+        }
         let original = open(source.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard original >= 0 else { throw DataOperationSafety.Failure.inspection(source.path) }
         defer { close(original) }
@@ -1136,10 +1524,31 @@ actor DataDirMover {
         throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 
+    private func removeEntry(at url: URL) throws {
+        try store.recheckWriterAdmission()
+        try fileManager.removeItem(at: url)
+        try syncDirectory(at: url.deletingLastPathComponent())
+    }
+
+    private func syncDirectory(at directory: URL) throws {
+        try synchronizeDirectory(directory, directory.standardizedFileURL.path == homeDir.path)
+    }
+
+    private func syncTree(at root: URL) throws {
+        try DurableFileIO.syncTree(at: root,
+            allowParentAlias: root.deletingLastPathComponent().standardizedFileURL.path == homeDir.path)
+    }
+
     private func renameWithoutReplacing(_ source: URL, _ destination: URL) throws {
+        try store.recheckWriterAdmission()
         guard renamex_np(source.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
+    }
+
+    private func moveTree(_ source: URL, to destination: URL) throws {
+        try store.recheckWriterAdmission()
+        try DataTreeRelocator.move(source, to: destination)
     }
 
     /// The old entry stays inside the recorded staging directory until the replacement is installed.
@@ -1152,7 +1561,9 @@ actor DataDirMover {
         } else if try entryExists(local) { throw DataDirError.destinationExists(local) }
         do {
             if isSymbolicLink(at: replacement) { try renameWithoutReplacing(replacement, local) }
-            else { try DataTreeRelocator.move(replacement, to: local) }
+            else { try moveTree(replacement, to: local) }
+            try syncDirectory(at: local.deletingLastPathComponent())
+            try syncDirectory(at: staging)
         }
         catch {
             if let expectedLink, try !entryExists(local) {
@@ -1164,9 +1575,10 @@ actor DataDirMover {
         if let expectedLink {
             try requireIdentity(oldEntry, expectedLink)
             guard isSymbolicLink(at: oldEntry) else { throw DataOperationSafety.Failure.conflict(oldEntry.path) }
-            try fileManager.removeItem(at: oldEntry)
+            try removeEntry(at: oldEntry)
         }
-        if try fileManager.contentsOfDirectory(atPath: staging.path).isEmpty { try fileManager.removeItem(at: staging) }
+        if try fileManager.contentsOfDirectory(atPath: staging.path).isEmpty { try removeEntry(at: staging) }
+        try syncDirectory(at: local.deletingLastPathComponent())
     }
 
     private func verifyRetainedTree(_ root: URL, identity: DataPathIdentity, baseline: TreeCopySnapshot) throws {
@@ -1209,6 +1621,7 @@ actor DataDirMover {
     }
 
     private func createSymbolicLink(at localPath: URL, withDestinationURL externalPath: URL) throws {
+        try store.recheckWriterAdmission()
         if failSymlinkCreation { throw CocoaError(.fileWriteUnknown) }
         try fileManager.createSymbolicLink(at: localPath, withDestinationURL: externalPath)
     }
@@ -1237,7 +1650,7 @@ actor DataDirMover {
         let markerURL = markerURL(for: destinationPath)
         let data = try encoder.encode(metadata)
         try withWritableMetadataParent(for: markerURL) {
-            try data.write(to: markerURL, options: .atomic)
+            try DurableFileIO.write(data, to: markerURL)
         }
     }
 
@@ -1245,7 +1658,7 @@ actor DataDirMover {
         let markerURL = markerURL(for: directoryURL)
         guard fileManager.fileExists(atPath: markerURL.path) else { return }
         try withWritableMetadataParent(for: markerURL) {
-            try fileManager.removeItem(at: markerURL)
+            try removeEntry(at: markerURL)
         }
     }
 

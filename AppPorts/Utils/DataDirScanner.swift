@@ -525,6 +525,76 @@ actor DataDirScanner {
         scanLibraryDirsWithDiagnostics(for: app, externalRootURL: externalRootURL).items
     }
 
+    /// Restore checks use the verified original's identifiers. Product-name
+    /// matching and the business browser's depth limit cannot prove absence.
+    func scanSignatureDependencies(bundleIdentifier: String, applicationGroups: [String]) -> DataDirScanResult {
+        readIssues = []
+        let containers = homeDir.appendingPathComponent("Library/Containers")
+        let groups = homeDir.appendingPathComponent("Library/Group Containers")
+        var roots: [(URL, DataDirType)] = []
+        for (identifier, base, type) in [(bundleIdentifier, containers, DataDirType.containers)]
+            + applicationGroups.map({ ($0, groups, DataDirType.groupContainers) }) {
+            let root = base.appendingPathComponent(identifier).standardizedFileURL
+            guard !identifier.isEmpty, identifier != ".", identifier != "..",
+                  root.deletingLastPathComponent() == base.standardizedFileURL else {
+                recordReadIssue(at: base, error: CocoaError(.fileReadCorruptFile))
+                continue
+            }
+            roots.append((root, type))
+        }
+        var found: [String: DataDirItem] = [:]
+        let policy = DataPathPolicy(homeDirectory: homeDir)
+        func inspect(_ url: URL, type: DataDirType) -> Bool {
+            let state = inspectItem(at: url, type: type)
+            var item = makeAppDataItem(name: url.lastPathComponent, path: url, type: type,
+                                      priority: .recommended, description: "容器内部数据目录", appName: bundleIdentifier)
+            applyInspectionResult(to: &item, inspection: state, externalRootURL: nil)
+            item.applyPathPolicy(policy.evaluate(url))
+            found[item.id] = item
+            return state.status == DataDirStatus.local && !isSymbolicLinkPath(at: url) && !isMountPoint(url)
+        }
+        for (root, type) in roots {
+            var pending = [root]
+            while let url = pending.popLast() {
+                if Task.isCancelled {
+                    recordReadIssue(at: url, error: CancellationError())
+                    break
+                }
+                do {
+                    let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    guard values.isDirectory == true || values.isSymbolicLink == true else { continue }
+                    if inspect(url, type: type) {
+                        pending.append(contentsOf: directoryEntries(at: url, includeHidden: true))
+                    }
+                } catch { recordReadIssue(at: url, error: error) }
+            }
+        }
+        do {
+            let records = try mountStore.recordsForInspection()
+            if let error = records.validationError { throw error }
+            func root(for path: String) -> (URL, DataDirType)? {
+                let path = URL(fileURLWithPath: path).standardizedFileURL.path
+                return roots.first { path == $0.0.path || path.hasPrefix($0.0.path + "/") }
+            }
+            // Shared groups may be indexed under another application. Match
+            // the original path, not the record's bundleIdentifier.
+            for link in records.managedLinks {
+                guard let (_, type) = root(for: link.originalPath) else { continue }
+                let path = URL(fileURLWithPath: link.originalPath).standardizedFileURL
+                _ = inspect(path, type: type)
+                found[path.standardizedFileURL.path]?.hasManagedLinkRecord = true
+            }
+            for transfer in records.transfers where !transfer.isDataSwitchComplete {
+                guard root(for: transfer.originalPath) != nil else { continue }
+                recordReadIssue(at: URL(fileURLWithPath: transfer.originalPath),
+                                error: ContainerMountStore.StoreError.conflict("Container transfer has not completed"))
+            }
+        } catch {
+            recordReadIssue(at: homeDir.appendingPathComponent("Library/Application Support/AppPorts/container-mounts.plist"), error: error)
+        }
+        return DataDirScanResult(items: found.values.sorted { $0.id < $1.id }, readIssues: readIssues)
+    }
+
     func scanLibraryDirsWithDiagnostics(for app: AppItem, externalRootURL: URL? = nil) -> DataDirScanResult {
         readIssues = []
         guard !app.isFolder else { return DataDirScanResult(items: [], readIssues: []) }
@@ -1471,20 +1541,26 @@ actor DataDirScanner {
         return deduplicate(urls: matched)
     }
 
-    private func directoryEntries(at baseURL: URL) -> [URL] {
+    private func directoryEntries(at baseURL: URL, includeHidden: Bool = false) -> [URL] {
         let contents: [URL]
         do {
             contents = try fileManager.contentsOfDirectory(
                 at: baseURL,
                 includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                options: .skipsHiddenFiles
+                options: includeHidden ? [] : .skipsHiddenFiles
             )
         } catch {
             recordReadIssue(at: baseURL, error: error)
             return []
         }
 
-        return contents.filter { itemURL in
+        // Foundation can enumerate /var through its /private/var alias. Keep
+        // the inspected entry's spelling so diagnostics and stored links share
+        // one key, without resolving the entry's own symbolic link.
+        let entries = includeHidden ? contents.map {
+            baseURL.appendingPathComponent($0.lastPathComponent, isDirectory: false).standardizedFileURL
+        } : contents
+        return entries.filter { itemURL in
             do {
                 let values = try itemURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 return values.isDirectory == true || values.isSymbolicLink == true

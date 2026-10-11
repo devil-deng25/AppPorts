@@ -36,6 +36,23 @@ struct DataTransferGroupTests {
         #expect(group.cleanupTransfers.map(\.operationID) == [restoration.operationID])
     }
 
+    @Test("A physically cleaned current location is shown without inventing another retained copy")
+    func removedCurrentCopyOnlyKeepsLocationProof() throws {
+        let oldRestore = record(direction: .restore)
+        var next = record(direction: .migrate, mode: .mount, prior: oldRestore.operationID)
+        next.phase = .cleanupRequested
+        next.retainedCopyRemovedAt = Date()
+        next.baseline = nil
+        next.sourceBaseline = nil
+        let group = try #require(DataTransferGroup.groups(from: [next, oldRestore]).first)
+        #expect(group.currentTransfer.operationID == next.operationID)
+        #expect(group.state == .migrated)
+        #expect(group.canCleanup)
+        #expect(group.retainedCopies.map(\.id) == [oldRestore.operationID])
+        #expect(group.cleanupTransfers.map(\.operationID) == [oldRestore.operationID])
+        #expect(next.materialPaths.isEmpty)
+    }
+
     @Test("Independent histories at the same path do not masquerade as a single verified chain")
     func unrelatedSamePath() {
         let migration = record(direction: .migrate)
@@ -96,7 +113,7 @@ struct DataTransferGroupTests {
         #expect(group.retainedCopies.first?.storage == .external)
     }
 
-    @Test("An unstarted singleton retains its checked unlock action")
+    @Test("An unstarted singleton offers both checked cancellation and continuation")
     func unstartedUnlock() {
         var migration = record(direction: .migrate)
         migration.phase = .needsRecovery
@@ -111,7 +128,7 @@ struct DataTransferGroupTests {
         #expect(group.unlockTransfer == migration)
         #expect(group.state == .needsAttention)
         #expect(group.retainedCopies.isEmpty)
-        #expect(group.resumeTransfer == nil)
+        #expect(group.resumeTransfer == migration)
     }
 
     @Test("A verified switch can resume only with completed ancestors and its original mount description")

@@ -49,18 +49,20 @@ final class ContainerMountStore: @unchecked Sendable {
         var transfers: [DataTransferRecord] = []
         var managedLinks: [ManagedDataLinkRecord] = []
         var remountInterventions: [String: String] = [:]
+        var preservedMaterials: [DataTransferMaterial] = []
 
-        enum CodingKeys: String, CodingKey { case schemaVersion, mounts, cleanups, transfers, managedLinks, remountInterventions }
+        enum CodingKeys: String, CodingKey { case schemaVersion, mounts, cleanups, transfers, managedLinks, remountInterventions, preservedMaterials }
         init(mounts: [ContainerMountRecord] = []) { self.mounts = mounts }
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
-            guard (2...6).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
+            guard (2...8).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
             mounts = try values.decode([ContainerMountRecord].self, forKey: .mounts)
             cleanups = try values.decode([ContainerCleanupRecord].self, forKey: .cleanups)
             transfers = schemaVersion == 2 ? [] : try values.decode([DataTransferRecord].self, forKey: .transfers)
             managedLinks = schemaVersion == 2 ? [] : try values.decodeIfPresent([ManagedDataLinkRecord].self, forKey: .managedLinks) ?? []
             remountInterventions = schemaVersion == 2 ? [:] : try values.decodeIfPresent([String: String].self, forKey: .remountInterventions) ?? [:]
+            preservedMaterials = try values.decodeIfPresent([DataTransferMaterial].self, forKey: .preservedMaterials) ?? []
         }
     }
 
@@ -71,22 +73,24 @@ final class ContainerMountStore: @unchecked Sendable {
         case conflict(String)
         case missingTransfer(UUID)
         case deletionNotConfirmed
-        case retainedPredecessor(String)
         var errorDescription: String? {
-            if case .retainedPredecessor(let path) = self {
-                return String(format: "此目录与已有迁移或保留副本重叠，请先处理原迁移：%@".localized, path)
-            }
             // Existing localized message is intentionally shared; associated facts go to diagnostics.
             return "迁移记录无法读取，已停止修改并保留原记录。请检查文件权限或从备份恢复记录后重试。".localized
         }
     }
 
     init(fileURL: URL? = nil,
-         writeData: @escaping @Sendable (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) {
+         writeData: @escaping @Sendable (Data, URL) throws -> Void = { try DurableFileIO.write($0, to: $1) }) {
         let resolved = fileURL ?? Self.defaultFileURL
         self.fileURL = resolved
         self.lock = Self.lock(for: resolved)
         self.writeData = writeData
+    }
+
+    /// Check the live writers for this dataset again at each mutation boundary.
+    /// Injected fixture stores remain independent of the user's running app.
+    func recheckWriterAdmission() throws {
+        try WriterAdmission.recheck(dataDirectory: fileURL.deletingLastPathComponent())
     }
 
     struct Inspection: Sendable {
@@ -95,6 +99,7 @@ final class ContainerMountStore: @unchecked Sendable {
         let transfers: [DataTransferRecord]
         let managedLinks: [ManagedDataLinkRecord]
         let remountInterventions: [String: String]
+        let preservedMaterials: [DataTransferMaterial]
         let validationError: StoreError?
     }
 
@@ -108,7 +113,8 @@ final class ContainerMountStore: @unchecked Sendable {
         do { try validate(document) }
         catch let error as StoreError { failure = error }
         return Inspection(mounts: document.mounts, cleanups: document.cleanups, transfers: document.transfers,
-                          managedLinks: document.managedLinks, remountInterventions: document.remountInterventions, validationError: failure)
+                          managedLinks: document.managedLinks, remountInterventions: document.remountInterventions,
+                          preservedMaterials: document.preservedMaterials, validationError: failure)
     }
 
     /// Display fallback only. A failed read must never authorize an operation.
@@ -140,6 +146,22 @@ final class ContainerMountStore: @unchecked Sendable {
         try read { $0.mounts.sorted { $0.createdAt < $1.createdAt } }
     }
     func pendingCleanups() throws -> [ContainerCleanupRecord] { try read { $0.cleanups } }
+    func preservedMaterials() throws -> [DataTransferMaterial] { try read { $0.preservedMaterials } }
+    func preservedMaterial(id: UUID) throws -> DataTransferMaterial? {
+        try read { $0.preservedMaterials.first { $0.id == id } }
+    }
+
+    /// Remove only the exact summary the service inspected. This mutation
+    /// grants no filesystem or volume deletion authority and reserves no path.
+    func removePreservedMaterialRecord(_ expected: DataTransferMaterial) throws {
+        try mutate { current in
+            guard let index = current.preservedMaterials.firstIndex(where: { $0.id == expected.id }),
+                  current.preservedMaterials[index] == expected else {
+                throw StoreError.conflict("Preserved material summary changed")
+            }
+            current.preservedMaterials.remove(at: index)
+        }
+    }
     func transfers() throws -> [DataTransferRecord] {
         try read { $0.transfers.sorted { $0.createdAt == $1.createdAt ? $0.operationID.uuidString < $1.operationID.uuidString : $0.createdAt < $1.createdAt } }
     }
@@ -201,6 +223,18 @@ final class ContainerMountStore: @unchecked Sendable {
     }
     func finishCleanup(_ id: UUID) throws { try mutate { $0.cleanups.removeAll { $0.id == id } } }
 
+    /// Record-only completion must validate the exact displayed legacy task
+    /// while holding the writer lock, including its current filesystem guards.
+    func finishCleanup(_ expected: ContainerCleanupRecord, verifyingFilesystem: () throws -> Void) throws {
+        try mutate { current in
+            guard let recorded = current.cleanups.first(where: { $0.id == expected.id }), recorded == expected else {
+                throw StoreError.conflict("Legacy cleanup record changed")
+            }
+            try verifyingFilesystem()
+            current.cleanups.removeAll { $0.id == expected.id }
+        }
+    }
+
     /// Call before any copy, rename, or volume creation. Exact retries have no side effects.
     func beginTransfer(_ transfer: DataTransferRecord) throws {
         try mutate { current in
@@ -248,6 +282,50 @@ final class ContainerMountStore: @unchecked Sendable {
     /// A created volume UUID can be filled once immediately after creation, never replaced.
     func updateTransfer(_ transfer: DataTransferRecord) throws {
         try mutate { current in try self.replaceTransfer(transfer, in: &current) }
+    }
+
+    func prepareCopy(operationID: UUID, path: URL, parentIdentity: DataPathIdentity,
+                     baseline: TreeCopySnapshot) throws {
+        try mutate { current in
+            guard var transfer = current.transfers.first(where: { $0.operationID == operationID }),
+                  transfer.isPreparationRecoverable else { throw StoreError.conflict("Copy preparation changed") }
+            transfer.preparationPath = path.standardizedFileURL.path
+            transfer.preparationParentIdentity = parentIdentity
+            transfer.sourceBaseline = try PropertyListEncoder().encode(baseline)
+            try self.replaceTransfer(transfer, in: &current)
+        }
+    }
+
+    func claimCopyDestination(operationID: UUID, identity: DataPathIdentity) throws {
+        try mutate { current in
+            guard var transfer = current.transfers.first(where: { $0.operationID == operationID }),
+                  transfer.isPreparationRecoverable, transfer.sourceBaseline != nil,
+                  transfer.preparationParentIdentity != nil else { throw StoreError.conflict("Missing copy creation intent") }
+            transfer.destinationIdentity = identity
+            try self.replaceTransfer(transfer, in: &current)
+        }
+    }
+
+    /// The source/entry proof runs while the exact document is writer-locked.
+    /// Unknown artifacts become independent visible material before releasing
+    /// the reservation; ending an attempt never grants permission to delete it.
+    func endUnswitchedTransfer(_ expected: DataTransferRecord, preserving reason: String? = nil,
+                               verifyingFilesystem: () throws -> Void) throws {
+        try mutate { current in
+            guard let index = current.transfers.firstIndex(where: { $0.operationID == expected.operationID }),
+                  current.transfers[index] == expected, !expected.isDataSwitchComplete,
+                  !current.transfers.contains(where: { $0.priorOperationID == expected.operationID }),
+                  !current.managedLinks.contains(where: { $0.operationID == expected.operationID }) else {
+                throw StoreError.conflict("Attempt has changed or already switched")
+            }
+            try verifyingFilesystem()
+            if let reason {
+                guard !reason.isEmpty else { throw StoreError.invalidState("Preserved material requires a reason") }
+                current.preservedMaterials.removeAll { $0.id == expected.operationID }
+                current.preservedMaterials.append(DataTransferMaterial(transfer: expected, reason: reason))
+            }
+            current.transfers.remove(at: index)
+        }
     }
 
     /// Only forget an exact unstarted intent. Filesystem verification runs under
@@ -353,22 +431,21 @@ final class ContainerMountStore: @unchecked Sendable {
         }
     }
     func requestCleanup(operationID: UUID) throws {
-        try mutate { current in
+        try mutate { current, validation in
             guard var transfer = current.transfers.first(where: { $0.operationID == operationID }) else { throw StoreError.missingTransfer(operationID) }
             guard transfer.phase == .awaitingUserVerification || transfer.phase == .cleanupRequested else {
                 throw StoreError.invalidState("Only verified retained copies can request cleanup")
             }
-            // The terminal restore is also the proof of where earlier originals'
-            // active data now lives. Clean retained lineage from oldest to newest.
-            if let predecessorID = transfer.priorOperationID,
-               let predecessor = current.transfers.first(where: { $0.operationID == predecessorID }) {
-                throw StoreError.retainedPredecessor(predecessor.backupPath ?? predecessor.originalPath)
-            }
-            // Refuse before deletion if a retained ancestor still needs this record
-            // to prove its relationship to a newer restore or normalized link.
+            // Physical cleanup can proceed independently. Keep a compact
+            // identity link if an older retained copy still needs this later
+            // location as proof, and verify that final ledger before deletion.
             var completed = current
-            completed.transfers.removeAll { $0.operationID == operationID }
-            try self.validate(completed)
+            completed.schemaVersion = max(completed.schemaVersion, 8)
+            if let index = completed.transfers.firstIndex(where: { $0.operationID == operationID }) {
+                completed.transfers[index] = self.removalProof(for: transfer)
+            }
+            self.pruneRemovedTransfers(in: &completed)
+            try self.validate(completed, using: validation)
             transfer.phase = .cleanupRequested
             transfer.recoverableReason = nil
             try self.replaceTransfer(transfer, in: &current)
@@ -414,24 +491,85 @@ final class ContainerMountStore: @unchecked Sendable {
                }) {
                 current.mounts[index].ownershipPolicy = .owners
             }
-            current.transfers.removeAll { $0.operationID == operationID }
+            if let index = current.transfers.firstIndex(where: { $0.operationID == operationID }) {
+                current.transfers[index] = self.removalProof(for: transfer)
+            }
+            self.pruneRemovedTransfers(in: &current)
+        }
+    }
+
+    /// One linear completed identity chain locates the currently active data.
+    /// A pending or competing successor never grants deletion authority.
+    func completedLocation(after operationID: UUID) throws -> DataTransferRecord {
+        try read { document in
+            guard var current = document.transfers.first(where: { $0.operationID == operationID }),
+                  current.isDataSwitchComplete else { throw StoreError.missingTransfer(operationID) }
+            var visited: Set<UUID> = [operationID]
+            while true {
+                let successors = document.transfers.filter { $0.priorOperationID == current.operationID }
+                guard !successors.isEmpty else { return current }
+                guard successors.count == 1, let next = successors.first,
+                      visited.insert(next.operationID).inserted, next.isDataSwitchComplete,
+                      next.followsLocation(of: current) else {
+                    throw StoreError.conflict("Current data location is not a completed identity chain")
+                }
+                current = next
+            }
+        }
+    }
+
+    private func removalProof(for transfer: DataTransferRecord) -> DataTransferRecord {
+        var proof = transfer
+        proof.phase = .cleanupRequested
+        proof.retainedCopyRemovedAt = proof.retainedCopyRemovedAt ?? Date()
+        proof.baseline = nil
+        proof.sourceBaseline = nil
+        proof.preparationRemovalBaseline = nil
+        proof.recoverableReason = nil
+        return proof
+    }
+
+    /// A small completed link exists only while an uncleared predecessor
+    /// needs it. Removing the oldest copy retires every now-unneeded link in
+    /// the same atomic document write; no new history archive is created.
+    private func pruneRemovedTransfers(in document: inout Document) {
+        let records = Dictionary(uniqueKeysWithValues: document.transfers.map { ($0.operationID, $0) })
+        document.transfers.removeAll { transfer in
+            guard transfer.retainedCopyRemovedAt != nil else { return false }
+            var current = transfer
+            var visited: Set<UUID> = [transfer.operationID]
+            while let priorID = current.priorOperationID, let prior = records[priorID] {
+                guard visited.insert(priorID).inserted else { return false }
+                if prior.retainedCopyRemovedAt == nil { return false }
+                current = prior
+            }
+            return true
         }
     }
 
     private func read<T>(_ body: (Document) throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
-        return try body(load())
+        return try autoreleasepool { try body(load()) }
     }
     private func mutate(_ body: (inout Document) throws -> Void) throws {
+        try mutate { document, _ in try body(&document) }
+    }
+    private func mutate(_ body: (inout Document, BaselineValidation) throws -> Void) throws {
+        try recheckWriterAdmission()
         lock.lock()
-        defer { lock.unlock() }
+        var saved = false
+        defer {
+            lock.unlock()
+            if saved { NotificationCenter.default.post(name: .appPortsRecordsDidChange, object: self) }
+        }
         // The app and the remount agent are separate processes. Atomic rename
         // alone cannot prevent one read/modify/write cycle overwriting another.
         let writer = try acquireWriterLock()
         defer { _ = flock(writer, LOCK_UN); _ = close(writer) }
-        var document = try load()
-        try body(&document)
+        let validation = BaselineValidation()
+        var document = try load(using: validation)
+        try body(&document, validation)
         // Older schema-3 writers drop unknown transfer fields while preserving
         // the opaque baseline. Protect ownership-aware records before any such
         // writer can erase the exception required to interpret that baseline.
@@ -442,14 +580,27 @@ final class ContainerMountStore: @unchecked Sendable {
         // A schema-4 writer does not understand projected ownership on either
         // side of an ordinary copy. Keep that contract in its opaque baseline
         // while preventing older clients from executing against it.
-        let needsCompatibilitySchema = try document.transfers.contains { try self.hasOwnershipCompatibility($0) }
+        let needsCompatibilitySchema = try document.transfers.contains { try self.hasOwnershipCompatibility($0, using: validation) }
         let needsCleanupSchema = document.transfers.contains { $0.cleanupParentIdentity != nil || $0.recoveryMountRecord != nil }
-        document.schemaVersion = max(document.schemaVersion, needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
+        let needsPreparationSchema = !document.preservedMaterials.isEmpty || document.transfers.contains {
+            $0.preparationPath != nil || $0.sourceBaseline != nil || $0.stagingIdentity != nil
+                || $0.stagingParentIdentity != nil || $0.volumeCreationContainerUUID != nil
+        }
+        let needsLocationSchema = document.transfers.contains { transfer in
+            transfer.retainedCopyRemovedAt != nil || document.transfers.contains {
+                $0.operationID == transfer.priorOperationID && $0.direction == .restore
+            }
+        }
+        // A schema-7 reader drops resource-fork summaries when decoding a
+        // manifest. Apply this to creation and partial-removal baselines too.
+        let needsResourceForkSchema = try document.transfers.contains { try self.hasResourceForkContract($0, using: validation) }
+        document.schemaVersion = max(document.schemaVersion, needsLocationSchema || needsResourceForkSchema ? 8 : needsPreparationSchema ? 7 : needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
         // Removing a mount also resolves its remount-only block; transfer recovery remains independent.
         let activeVolumes = Set(document.mounts.map { $0.volumeUUID.uppercased() })
         document.remountInterventions = document.remountInterventions.filter { activeVolumes.contains($0.key) }
-        try validate(document)
+        try validate(document, using: validation)
         try save(document)
+        saved = true
     }
     private func acquireWriterLock() throws -> Int32 {
         let directory = fileURL.deletingLastPathComponent()
@@ -476,7 +627,7 @@ final class ContainerMountStore: @unchecked Sendable {
         return descriptor
     }
 
-    private func load(validateState: Bool = true) throws -> Document {
+    private func load(validateState: Bool = true, using validation: BaselineValidation = BaselineValidation()) throws -> Document {
         // fileExists follows links and conflates missing state with unreadable
         // state. An existing broken link must never authorize a fresh document.
         let descriptor = open(fileURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
@@ -508,7 +659,7 @@ final class ContainerMountStore: @unchecked Sendable {
             } else {
                 document = try decoder.decode(Document.self, from: data)
             }
-            if validateState { try validate(document) }
+            if validateState { try validate(document, using: validation) }
             return document
         } catch let error as StoreError { throw error }
         catch { throw StoreError.unreadable }
@@ -567,7 +718,18 @@ final class ContainerMountStore: @unchecked Sendable {
               old.destinationIdentity == nil || old.destinationIdentity == transfer.destinationIdentity,
               old.destinationVolumeUUID == nil || sameUUID(old.destinationVolumeUUID, transfer.destinationVolumeUUID),
               old.backupIdentity == nil || old.backupIdentity == transfer.backupIdentity,
+              old.retainedCopyRemovedAt == transfer.retainedCopyRemovedAt,
               old.baseline == nil || old.baseline == transfer.baseline,
+              old.sourceBaseline == nil || old.sourceBaseline == transfer.sourceBaseline,
+              old.preparationPath == nil || old.preparationPath == transfer.preparationPath,
+              old.preparationParentIdentity == nil || old.preparationParentIdentity == transfer.preparationParentIdentity,
+              old.stagingParentIdentity == nil || old.stagingParentIdentity == transfer.stagingParentIdentity,
+              old.stagingIdentity == nil || old.stagingIdentity == transfer.stagingIdentity,
+              old.volumeCreationContainerUUID == nil || sameUUID(old.volumeCreationContainerUUID, transfer.volumeCreationContainerUUID),
+              old.volumeCreationName == nil || old.volumeCreationName == transfer.volumeCreationName,
+              old.originalSourceMountFlags == nil || old.originalSourceMountFlags == transfer.originalSourceMountFlags,
+              old.preparationRemovalBaseline == nil || old.preparationRemovalBaseline == transfer.preparationRemovalBaseline,
+              old.preparationRemovalParentIdentity == nil || old.preparationRemovalParentIdentity == transfer.preparationRemovalParentIdentity,
               old.recoveryMountRecord == nil || old.recoveryMountRecord == transfer.recoveryMountRecord,
               old.cleanupParentIdentity == transfer.cleanupParentIdentity
                 || (old.phase == .cleanupRequested && transfer.phase == .cleanupRequested && old.cleanupParentIdentity == nil),
@@ -576,9 +738,11 @@ final class ContainerMountStore: @unchecked Sendable {
               old.recoveryMountPointIdentity == transfer.recoveryMountPointIdentity
                 || (old.isUnstartedMountRestore && transfer.isUnstartedMountRestore && old.recoveryMountPointIdentity == nil),
               old.legacyRootOwnership == transfer.legacyRootOwnership
-                || (old.isUnstartedMountRestore && transfer.isUnstartedMountRestore && old.legacyRootOwnership == nil),
+                || (old.isUnstartedMountRestore && transfer.isUnstartedMountRestore
+                    && old.sourceIdentity.isVolumeOnly && transfer.sourceIdentity.isVolumeOnly && old.legacyRootOwnership == nil),
               old.legacyMountFlags == transfer.legacyMountFlags
-                || (old.isUnstartedMountRestore && transfer.isUnstartedMountRestore && old.legacyMountFlags == nil) else {
+                || (old.isUnstartedMountRestore && transfer.isUnstartedMountRestore
+                    && old.sourceIdentity.isVolumeOnly && transfer.sourceIdentity.isVolumeOnly && old.legacyMountFlags == nil) else {
             throw StoreError.conflict("Transfer identity or verified baseline changed")
         }
         guard permits(old.phase, transfer.phase) else { throw StoreError.invalidState("Invalid transfer phase transition") }
@@ -595,9 +759,6 @@ final class ContainerMountStore: @unchecked Sendable {
             && [.preparing, .needsRecovery].contains(old.phase) && old.phase == new.phase
             && old.sourceIdentity.isVolumeOnly && new.sourceIdentity.isResolved
             && sameUUID(old.sourceIdentity.volumeUUID, new.sourceIdentity.volumeUUID)
-    }
-    private func identityMatches(_ resolved: DataPathIdentity, _ candidate: DataPathIdentity) -> Bool {
-        resolved.matchesFilesystemObject(candidate) || (candidate.isVolumeOnly && sameUUID(resolved.volumeUUID, candidate.volumeUUID))
     }
     private func permits(_ old: DataTransferRecord.Phase, _ new: DataTransferRecord.Phase) -> Bool {
         if old == new || new == .needsRecovery { return true }
@@ -619,26 +780,147 @@ final class ContainerMountStore: @unchecked Sendable {
         let restoredRootOwnership: TreeCopySnapshot.Ownership?
     }
 
+    /// These facts live for one locked read or mutation only. The keys are the
+    /// actual immutable manifest bytes, so different baselines in one transfer
+    /// are checked independently and the next operation must read disk again.
+    /// Never retain a decoded file tree in this cache.
+    private final class BaselineValidation {
+        var legacyOwnership: [Data: LegacyOwnershipMarker] = [:]
+        var ownershipCompatibility: [Data: Bool] = [:]
+        var resourceForks: [Data: Bool] = [:]
+        var snapshots: [Data: SnapshotValidation] = [:]
+    }
+
+    private struct SnapshotValidation {
+        struct Root {
+            let uid: UInt32
+            let identity: TreeCopySnapshot.Identity
+        }
+        let decodes: Bool
+        let legacyRoot: Root?
+    }
+
+    private func snapshotValidation(_ encoded: Data, using validation: BaselineValidation) -> SnapshotValidation {
+        if let cached = validation.snapshots[encoded] { return cached }
+        let result: SnapshotValidation = autoreleasepool {
+            guard let snapshot = try? PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded) else {
+                return SnapshotValidation(decodes: false, legacyRoot: nil)
+            }
+            let root: SnapshotValidation.Root?
+            if let first = snapshot.entries.first, first.path.isEmpty, first.kind == .directory,
+               snapshot.entries.lazy.filter({ $0.path.isEmpty }).count == 1 {
+                root = .init(uid: first.uid, identity: first.identity)
+            } else { root = nil }
+            return SnapshotValidation(decodes: true, legacyRoot: root)
+        }
+        validation.snapshots[encoded] = result
+        return result
+    }
+
     private struct OwnershipCompatibilityMarker: Decodable {
-        let ownershipCompatibility: TreeCopySnapshot.OwnershipCompatibility
+        let isPresent: Bool
+        enum Keys: String, CodingKey { case ownershipCompatibility }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: Keys.self)
+            isPresent = values.contains(.ownershipCompatibility)
+            if isPresent {
+                do { _ = try values.decode(TreeCopySnapshot.OwnershipCompatibility.self, forKey: .ownershipCompatibility) }
+                catch { throw StoreError.invalidState("Invalid ownership compatibility baseline") }
+            }
+        }
     }
 
     /// Older stores accepted opaque baselines. Keep that read compatibility,
     /// but never silently discard a present, malformed new ownership contract.
-    private func hasOwnershipCompatibility(_ transfer: DataTransferRecord) throws -> Bool {
+    private func hasOwnershipCompatibility(_ transfer: DataTransferRecord, using validation: BaselineValidation) throws -> Bool {
         guard let baseline = transfer.baseline else { return false }
-        let object: Any
-        do { object = try PropertyListSerialization.propertyList(from: baseline, format: nil) }
-        catch { return false }
-        guard let dictionary = object as? [String: Any], dictionary["ownershipCompatibility"] != nil else { return false }
-        do { _ = try PropertyListDecoder().decode(OwnershipCompatibilityMarker.self, from: baseline) }
-        catch { throw StoreError.invalidState("Invalid ownership compatibility baseline") }
-        return true
+        if let cached = validation.ownershipCompatibility[baseline] { return cached }
+        let result: Bool = try autoreleasepool {
+            do { return try PropertyListDecoder().decode(OwnershipCompatibilityMarker.self, from: baseline).isPresent }
+            catch let error as StoreError { throw error }
+            catch { return false }
+        }
+        validation.ownershipCompatibility[baseline] = result
+        return result
+    }
+
+    /// Read only the format marker, not a second full file manifest or the
+    /// historical raw fork. Legacy raw forks are promoted on the next write
+    /// because a later decode/re-encode normalizes them to the new summary.
+    private struct ResourceForkSchemaMarker: Decodable {
+        struct Entry: Decodable {
+            let usesResourceFork: Bool
+            enum Keys: String, CodingKey { case resourceFork, extendedAttributes }
+            enum AttributeKeys: String, CodingKey { case resourceFork = "com.apple.ResourceFork" }
+
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: Keys.self)
+                let fork = try values.decodeIfPresent(TreeCopySnapshot.ResourceFork.self, forKey: .resourceFork)
+                if let fork, fork.size < 0 || fork.digest.count != 32 {
+                    throw DecodingError.dataCorruptedError(forKey: .resourceFork, in: values,
+                        debugDescription: "Invalid resource fork summary")
+                }
+                let attributes = try? values.nestedContainer(keyedBy: AttributeKeys.self, forKey: .extendedAttributes)
+                usesResourceFork = fork != nil || attributes?.contains(.resourceFork) == true
+            }
+        }
+        let usesResourceFork: Bool
+        enum Keys: String, CodingKey { case entries }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: Keys.self)
+            var entries = try values.nestedUnkeyedContainer(forKey: .entries)
+            var found = false
+            while !entries.isAtEnd {
+                let entry = try entries.decode(Entry.self)
+                // Keep decoding after the first fork: a later malformed
+                // explicit summary must still stop the operation.
+                found = found || entry.usesResourceFork
+            }
+            usesResourceFork = found
+        }
+    }
+
+    private func hasResourceForkContract(_ transfer: DataTransferRecord, using validation: BaselineValidation) throws -> Bool {
+        var found = false
+        for encoded in [transfer.baseline, transfer.sourceBaseline, transfer.preparationRemovalBaseline].compactMap({ $0 }) {
+            if let cached = validation.resourceForks[encoded] {
+                found = found || cached
+                continue
+            }
+            let result: Bool = try autoreleasepool {
+                do {
+                    return try PropertyListDecoder().decode(ResourceForkSchemaMarker.self, from: encoded).usesResourceFork
+                } catch {
+                    // Keep historical opaque-baseline compatibility. An explicit
+                    // new field is never silently treated as an old opaque blob.
+                    if let object = try? PropertyListSerialization.propertyList(from: encoded, format: nil),
+                       let dictionary = object as? [String: Any],
+                       let entries = dictionary["entries"] as? [[String: Any]],
+                       entries.contains(where: { $0["resourceFork"] != nil }) {
+                        throw StoreError.invalidState("Invalid resource fork baseline")
+                    }
+                    return false
+                }
+            }
+            validation.resourceForks[encoded] = result
+            found = found || result
+        }
+        return found
     }
 
     /// The destination-only ownership exception must never leak into source or cleanup metadata.
-    private func validateLegacyOwnership(_ transfer: DataTransferRecord) throws {
-        let marker = transfer.baseline.flatMap { try? PropertyListDecoder().decode(LegacyOwnershipMarker.self, from: $0) }
+    private func validateLegacyOwnership(_ transfer: DataTransferRecord, using validation: BaselineValidation) throws {
+        let marker = transfer.baseline.map { encoded in
+            if let cached = validation.legacyOwnership[encoded] { return cached }
+            let result = autoreleasepool {
+                (try? PropertyListDecoder().decode(LegacyOwnershipMarker.self, from: encoded))
+                    ?? LegacyOwnershipMarker(restoredRootOwnership: nil)
+            }
+            validation.legacyOwnership[encoded] = result
+            return result
+        }
         // An intent has no manifest yet; once copying succeeds, both records must agree.
         if transfer.baseline != nil, marker?.restoredRootOwnership != transfer.legacyRootOwnership {
             throw StoreError.invalidState("Legacy restored-root ownership does not match the verified baseline")
@@ -646,9 +928,7 @@ final class ContainerMountStore: @unchecked Sendable {
         guard transfer.legacyRootOwnership != nil || transfer.legacyMountFlags != nil else { return }
         try validateLegacyOwnershipIntent(transfer)
         if let encoded = transfer.baseline {
-            guard let snapshot = try? PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded),
-                  let root = snapshot.entries.first, root.path.isEmpty, root.kind == .directory,
-                  snapshot.entries.filter({ $0.path.isEmpty }).count == 1,
+            guard let root = snapshotValidation(encoded, using: validation).legacyRoot,
                   let owner = transfer.legacyRootOwnership,
                   root.uid == 0 || root.uid == owner.uid,
                   root.identity.inode == transfer.sourceIdentity.inode,
@@ -669,7 +949,11 @@ final class ContainerMountStore: @unchecked Sendable {
         }
     }
 
-    private func validate(_ document: Document) throws {
+    private func validate(_ document: Document, using validation: BaselineValidation = BaselineValidation()) throws {
+        guard Set(document.preservedMaterials.map(\.id)).count == document.preservedMaterials.count,
+              document.preservedMaterials.allSatisfy({ validPath($0.originalPath) && $0.paths.allSatisfy(validPath) && !$0.reason.isEmpty }) else {
+            throw StoreError.invalidState("Invalid preserved preparation material")
+        }
         for (uuid, reason) in document.remountInterventions {
             guard uuid == uuid.uppercased(), document.mounts.contains(where: { sameUUID($0.volumeUUID, uuid) }),
                   !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -714,8 +998,24 @@ final class ContainerMountStore: @unchecked Sendable {
             }
         }
         for transfer in document.transfers {
-            try validateLegacyOwnership(transfer)
-            _ = try hasOwnershipCompatibility(transfer)
+            try validateLegacyOwnership(transfer, using: validation)
+            _ = try hasOwnershipCompatibility(transfer, using: validation)
+            _ = try hasResourceForkContract(transfer, using: validation)
+            if transfer.sourceBaseline != nil || transfer.preparationPath != nil || transfer.volumeCreationContainerUUID != nil {
+                guard document.schemaVersion >= 7,
+                      transfer.preparationPath.map(validPath) ?? true,
+                      transfer.preparationParentIdentity.map(\.isResolved) ?? true,
+                      transfer.stagingParentIdentity.map(\.isResolved) ?? true,
+                      transfer.stagingIdentity.map(\.isResolved) ?? true,
+                      transfer.sourceBaseline.map({ snapshotValidation($0, using: validation).decodes }) ?? true else {
+                    throw StoreError.invalidState("Invalid copy creation evidence")
+                }
+            }
+            if transfer.preparationRemovalBaseline != nil {
+                guard transfer.preparationRemovalParentIdentity?.isResolved == true,
+                      transfer.sourceBaseline != nil, transfer.destinationIdentity != nil,
+                      !transfer.isDataSwitchComplete else { throw StoreError.invalidState("Invalid preparation deletion checkpoint") }
+            }
             guard transfer.policyVersion > 0, validSourceIdentity(transfer),
                   transfer.topologyEntries.allSatisfy({ validPath($0.path) }),
                   transfer.createdVolumeUUID.map({ !$0.isEmpty }) ?? true,
@@ -724,14 +1024,26 @@ final class ContainerMountStore: @unchecked Sendable {
                   transfer.backupIdentity.map({ $0.isResolved }) ?? true,
                   transfer.priorOperationID != transfer.operationID else { throw StoreError.invalidState("Invalid transfer identity") }
             if [.verified, .switching, .awaitingUserVerification, .cleanupRequested].contains(transfer.phase) {
-                guard let baseline = transfer.baseline, !baseline.isEmpty, transfer.destinationIdentity != nil else { throw StoreError.invalidState("Verified phase requires caller-supplied baseline") }
+                guard transfer.destinationIdentity != nil,
+                      transfer.baseline.map({ !$0.isEmpty }) == true || transfer.retainedCopyRemovedAt != nil else {
+                    throw StoreError.invalidState("Verified phase requires caller-supplied baseline")
+                }
+            }
+            if transfer.retainedCopyRemovedAt != nil {
+                guard document.schemaVersion >= 8, transfer.phase == .cleanupRequested,
+                      transfer.sourceIdentity.isResolved, transfer.destinationIdentity != nil,
+                      transfer.baseline == nil, transfer.sourceBaseline == nil,
+                      transfer.preparationRemovalBaseline == nil else {
+                    throw StoreError.invalidState("Invalid physical-copy removal fact")
+                }
             }
             if transfer.phase == .needsRecovery {
                 guard let reason = transfer.recoverableReason, !reason.isEmpty else { throw StoreError.invalidState("Recovery needs an explanation") }
             }
             if let parent = transfer.cleanupParentIdentity {
                 guard document.schemaVersion >= 6, parent.isResolved, transfer.phase == .cleanupRequested,
-                      transfer.backupIdentity != nil, transfer.backupPath != nil, transfer.baseline != nil else {
+                      transfer.backupIdentity != nil, transfer.backupPath != nil,
+                      transfer.baseline != nil || transfer.retainedCopyRemovedAt != nil else {
                     throw StoreError.invalidState("Invalid retained-copy cleanup checkpoint")
                 }
             }
@@ -751,9 +1063,16 @@ final class ContainerMountStore: @unchecked Sendable {
             }
             for mount in document.mounts {
                 for entry in transfer.topologyEntries where DataPathTopology.overlaps(DataPathTopology.relationship(entry.path, mount.mountPointPath)) {
-                    let owned = transfer.mode == .mount
+                    let directlyOwnsVolume = transfer.mode == .mount
+                        && (sameUUID(transfer.createdVolumeUUID, mount.volumeUUID)
+                            || sameUUID(transfer.sourceIdentity.volumeUUID, mount.volumeUUID))
+                    let relatedVolume = document.transfers.contains { successor in
+                            successor.mode == .mount && successor.direction == .migrate
+                                && sameUUID(successor.createdVolumeUUID, mount.volumeUUID)
+                                && lineageAllows(transfer, entry.path, successor, mount.mountPointPath, document: document)
+                        }
+                    let owned = (directlyOwnsVolume || relatedVolume)
                         && DataPathTopology.relationship(transfer.originalPath, mount.mountPointPath) == .same
-                        && (sameUUID(transfer.createdVolumeUUID, mount.volumeUUID) || sameUUID(transfer.sourceIdentity.volumeUUID, mount.volumeUUID))
                         && DataPathTopology.relationship(entry.path, mount.mountPointPath) == .same
                         && [transfer.originalPath, transfer.activePath, transfer.destinationPath].contains(entry.path)
                     guard owned else { throw StoreError.conflict("Transfer overlaps another mount") }
@@ -762,14 +1081,15 @@ final class ContainerMountStore: @unchecked Sendable {
             for link in document.managedLinks {
                 for path in link.topologyEntries.map(\.path) {
                     for entry in transfer.topologyEntries where DataPathTopology.overlaps(DataPathTopology.relationship(entry.path, path)) {
-                        let matchingOperation = transfer.operationID == link.operationID
-                            || transfer.priorOperationID == link.operationID && transfer.sourceIdentity.matchesFilesystemObject(link.destinationIdentity)
-                            || document.transfers.contains { successor in
+                        let directlyOwnsLink = transfer.mode == .symlink
+                            && (transfer.operationID == link.operationID
+                                || transfer.priorOperationID == link.operationID && transfer.sourceIdentity.matchesFilesystemObject(link.destinationIdentity))
+                        let relatedLink = document.transfers.contains { successor in
                                 successor.operationID == link.operationID
                                     && lineageAllows(transfer, entry.path, successor, path, document: document)
                             }
                         let matchingRoot = [link.originalPath, link.destinationPath].contains { DataPathTopology.relationship($0, entry.path) == .same }
-                        guard transfer.mode == .symlink, matchingOperation, matchingRoot,
+                        guard directlyOwnsLink || relatedLink, matchingRoot,
                               transfer.originalPath == link.originalPath,
                               DataPathTopology.relationship(entry.path, path) == .same else {
                             throw StoreError.conflict("Transfer overlaps an indexed link")
@@ -801,18 +1121,13 @@ final class ContainerMountStore: @unchecked Sendable {
 
     private func lineageAllows(_ migration: DataTransferRecord, _ migrationPath: String,
                                _ successor: DataTransferRecord, _ successorPath: String, document: Document) -> Bool {
-        guard migration.direction == .migrate,
-              migration.mode == successor.mode, migration.originalPath == successor.originalPath,
+        guard migration.originalPath == successor.originalPath,
               DataPathTopology.relationship(migrationPath, successorPath) == .same else { return false }
         var current = successor
         var visited: Set<UUID> = []
         while let priorID = current.priorOperationID, visited.insert(current.operationID).inserted {
             guard let prior = document.transfers.first(where: { $0.operationID == priorID }),
-                  prior.direction == .migrate, prior.mode == current.mode,
-                  prior.originalPath == current.originalPath,
-                  current.direction == .restore || current.mode == .symlink,
-                  [.awaitingUserVerification, .cleanupRequested, .needsRecovery].contains(prior.phase),
-                  let identity = prior.destinationIdentity, identityMatches(identity, current.sourceIdentity) else { return false }
+                  current.followsLocation(of: prior) else { return false }
             if prior.operationID == migration.operationID {
                 let roots = [migration.originalPath, migration.activePath, migration.destinationPath]
                 return roots.contains(migrationPath) && roots.contains { DataPathTopology.relationship($0, successorPath) == .same }

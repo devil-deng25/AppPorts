@@ -29,7 +29,7 @@ struct MigrationSigningIntegrationTests {
         try verifySignature(at: localApp)
         try #require(try sandboxEnabled(at: localApp))
 
-        try await AppMigrationService(dockShortcutUpdater: { _, _ in 0 }).moveAndLink(
+        try await AppMigrationService(dockShortcutUpdater: { _, _ in 0 }, transferStore: AppTransferStore(directoryURL: workspace.rootURL.appendingPathComponent("AppTransfers")), signatureFactStore: SignatureFactStore(backupDirectoryURL: workspace.rootURL.appendingPathComponent("SignatureBackups")), runningApplications: { [] }).moveAndLink(
             appToMove: AppItem(name: localApp.lastPathComponent, path: localApp, status: "本地"),
             destinationURL: externalApp,
             isRunning: false,
@@ -51,7 +51,7 @@ struct MigrationSigningIntegrationTests {
         }
     }
 
-    @Test("Signing a migrated sandboxed Sparkle app is refused and keeps its entitlements and locks", .bug("https://github.com/wzh4869/AppPorts/issues/59"))
+    @Test("Signing a migrated sandboxed Sparkle app is refused and preserves its attributes", .bug("https://github.com/wzh4869/AppPorts/issues/59"))
     func signingMigratedLockedApplication() async throws {
         let workspace = try IntegrationWorkspace()
         defer { workspace.cleanup() }
@@ -62,7 +62,7 @@ struct MigrationSigningIntegrationTests {
         try #require(try sandboxEnabled(at: localApp))
         try #require(try sandboxEnabled(at: localApp.appendingPathComponent(helperPath)))
 
-        try await AppMigrationService(dockShortcutUpdater: { _, _ in 0 }).moveAndLink(
+        try await AppMigrationService(dockShortcutUpdater: { _, _ in 0 }, transferStore: AppTransferStore(directoryURL: workspace.rootURL.appendingPathComponent("AppTransfers")), signatureFactStore: SignatureFactStore(backupDirectoryURL: workspace.rootURL.appendingPathComponent("SignatureBackups")), runningApplications: { [] }).moveAndLink(
             appToMove: AppItem(name: localApp.lastPathComponent, path: localApp, status: "本地"),
             destinationURL: externalApp,
             isRunning: false,
@@ -71,7 +71,7 @@ struct MigrationSigningIntegrationTests {
         try expectStub(at: localApp, pointingTo: externalApp)
         let originalLocks = try immutableFlags(in: externalApp)
         try #require(originalLocks.count > 10)
-        try #require(originalLocks.values.allSatisfy { $0 }, "The migrated Sparkle bundle must actually be recursively locked")
+        try #require(originalLocks.values.contains(true), "Explicit update protection must be recorded on the migrated app")
         let stubExecutable = try Data(contentsOf: localApp.appendingPathComponent("Contents/MacOS/launcher"))
         let externalExecutable = try Data(contentsOf: externalApp.appendingPathComponent("Contents/MacOS/Chat"))
         let backups = workspace.rootURL.appendingPathComponent("SignatureBackups")
@@ -124,7 +124,7 @@ struct MigrationSigningIntegrationTests {
         try FileManager.default.createSymbolicLink(atPath: localData.appendingPathComponent("latest-attachment").path, withDestinationPath: "attachments/picture.bin")
         var expectedFiles = try payloadFiles(in: localData)
 
-        let service = AppMigrationService(dockShortcutUpdater: { _, _ in 0 })
+        let service = AppMigrationService(dockShortcutUpdater: { _, _ in 0 }, transferStore: AppTransferStore(directoryURL: workspace.rootURL.appendingPathComponent("AppTransfers")), signatureFactStore: SignatureFactStore(backupDirectoryURL: workspace.rootURL.appendingPathComponent("SignatureBackups")), runningApplications: { [] })
         try await service.moveAndLink(
             appToMove: AppItem(name: localApp.lastPathComponent, path: localApp, status: "本地"),
             destinationURL: externalApp,
@@ -134,7 +134,7 @@ struct MigrationSigningIntegrationTests {
         let mover = DataDirMover(homeDir: workspace.homeURL, store: ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("migration-records.plist")))
         var item = DataDirItem(name: "Chat account", path: localData, type: .containers,
                                priority: .critical, description: "Temporary chat regression fixture")
-        try await mover.migrate(item: item, to: externalDataBase, progressHandler: nil)
+        _ = try await mover.migrateAndComplete(item: item, to: externalDataBase, progressHandler: nil)
 
         try expectSymbolicLink(at: localData, pointingTo: externalData)
         #expect(try payloadFiles(in: externalData) == expectedFiles)
@@ -152,11 +152,11 @@ struct MigrationSigningIntegrationTests {
 
         item.status = DataDirStatus.linked
         item.linkedDestination = externalData
-        try await mover.restore(item: item, progressHandler: nil)
+        _ = try await mover.restoreAndComplete(item: item, progressHandler: nil)
         #expect(try FileManager.default.attributesOfItem(atPath: localData.path)[.type] as? FileAttributeType == .typeDirectory)
         #expect(try payloadFiles(in: localData) == expectedFiles)
-        // Data migration retains the previous copy until explicit verified cleanup.
-        #expect(try payloadFiles(in: externalData) == expectedFiles)
+        // The current database was copied and verified before old storage was removed.
+        #expect(!FileManager.default.fileExists(atPath: externalData.path))
         #expect(FileManager.default.fileExists(atPath: localData.appendingPathComponent(".appports-link-metadata.plist").path) == false)
         #expect(FileManager.default.fileExists(atPath: localData.appendingPathComponent("attachments/empty").path))
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: localData.appendingPathComponent("latest-attachment").path) == "attachments/picture.bin")

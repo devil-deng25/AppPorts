@@ -15,6 +15,7 @@ struct SignatureRepairSheet: View {
     /// 跳到「应用数据」页并选中该应用
     let onOpenDataDirs: (AppItem) -> Void
     let onDismiss: () -> Void
+    var onChooseOfficialOriginal: ((AppItem) -> Void)? = nil
 
     @ObservedObject private var languageManager = LanguageManager.shared
     @ObservedObject private var operationState = AppOperationState.shared
@@ -30,12 +31,15 @@ struct SignatureRepairSheet: View {
     @State private var signatureRestored = false
     @State private var isCheckingSignature = false
     @State private var signatureCheckToken = UUID()
+    @State private var containerScanToken = UUID()
+    @State private var containerReadIssues: [DataDirReadIssue] = []
+    @State private var containerIdentityIssue: AppIdentityIssue?
 
     private var appIsOnExternalDrive: Bool {
         app.status == AppStatus.linked || app.status == AppStatus.partialLinked
     }
 
-    private var stepOneDone: Bool { !isScanning && linkedContainerItems.isEmpty }
+    private var stepOneDone: Bool { !isScanning && containerIdentityIssue == nil && containerReadIssues.isEmpty && linkedContainerItems.isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -59,11 +63,13 @@ struct SignatureRepairSheet: View {
                 done: stepOneDone,
                 detail: isScanning
                     ? "正在检查容器目录…".localized
-                    : (linkedContainerItems.isEmpty
-                        ? "容器里没有指向外置盘的链接。".localized
+                    : (containerIdentityIssue != nil || !containerReadIssues.isEmpty
+                        ? "相关容器未能完整检查，请重新检查或先选择官方原件。".localized
+                        : linkedContainerItems.isEmpty
+                        ? "当前检查未发现经典容器链接；恢复时还会核对官方原件声明的共享容器。".localized
                         : String(format: "还有 %lld 个容器目录指向外置盘。重装前必须先还原，否则重装后应用仍读不到数据。".localized, Int64(linkedContainerItems.count)))
             ) {
-                if !stepOneDone {
+                if !linkedContainerItems.isEmpty {
                     Button(isRestoring ? "正在还原…".localized : "全部还原".localized) {
                         restoreAllContainerItems()
                     }
@@ -85,7 +91,7 @@ struct SignatureRepairSheet: View {
                     ? "正在检查签名…".localized
                     : (signatureRestored
                         ? String(format: "签名已恢复：%@".localized, currentAuthority ?? "")
-                        : String(format: "当前签名：%@。退出应用后，可从完整备份恢复原始签名；旧备份需要选择同版本官方原版。也可以从 App Store 或官网下载重装。应用数据目录不会被替换。".localized,
+                        : String(format: "当前签名：%@。可使用已有原版备份或选择同版本官方原件修复；也可以从 App Store 或官网下载重装。应用数据目录不会被替换。".localized,
                                  currentAuthority ?? "暂时无法检查签名".localized))
             ) {
                 if !signatureRestored {
@@ -93,7 +99,14 @@ struct SignatureRepairSheet: View {
                         onDismiss()
                         onRestoreSignature(app)
                     }
-                    .disabled(!stepOneDone || isCheckingSignature || operationState.isBusy || app.isRunning)
+                    .disabled(isScanning || isCheckingSignature || operationState.isBusy || app.isRunning)
+                    if let onChooseOfficialOriginal {
+                        Button("选择原版应用…".localized) {
+                            onDismiss()
+                            onChooseOfficialOriginal(app)
+                        }
+                        .disabled(operationState.isBusy || app.isRunning)
+                    }
                 }
                 Button("重新检查".localized) {
                     refreshSignatureState()
@@ -106,7 +119,7 @@ struct SignatureRepairSheet: View {
                 DisclosureGroup("从官方渠道重装".localized) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(appIsOnExternalDrive
-                             ? "仅在覆盖安装前需要迁回本地。从完整备份恢复原始签名，可以直接修复外置盘上的应用。".localized
+                             ? "仅在覆盖安装前需要迁回本地。使用原版备份或官方原件可以直接修复外置盘上的应用。".localized
                              : "应用本体在本地。".localized)
                             .font(.callout)
                             .foregroundColor(.secondary)
@@ -116,7 +129,7 @@ struct SignatureRepairSheet: View {
                                 onDismiss()
                                 onMoveBack(app)
                             }
-                            .disabled(!stepOneDone || operationState.isBusy || app.isRunning)
+                            .disabled(operationState.isBusy || app.isRunning)
                         } else if app.isAppStoreApp {
                             Button("打开 App Store".localized) { openAppStore() }
                                 .disabled(!stepOneDone || operationState.isBusy)
@@ -174,7 +187,14 @@ struct SignatureRepairSheet: View {
             refreshSignatureState()
             scanContainerItems()
         }
-        .onDisappear { signatureCheckToken = UUID() }
+        .onChange(of: operationState.recordsRevision) { _ in
+            refreshSignatureState()
+            scanContainerItems()
+        }
+        .onDisappear {
+            signatureCheckToken = UUID()
+            containerScanToken = UUID()
+        }
     }
 
     // MARK: - 子视图
@@ -236,32 +256,40 @@ struct SignatureRepairSheet: View {
             let signing = await AppScanner().checkSigningStatus(bundleURL: url)
             let authority = await signer.getSigningIdentity(appURL: url)
             let status = await signer.verify(appURL: url)
-            let originalIdentity = CodeSigner.bundleIdentifier(at: url).flatMap {
-                CodeSigner.originalSigningIdentity(bundleIdentifier: $0)
-            }
+            let inspection = try? SignatureInspector.inspect(at: url)
+            let fact = try? SignatureFactStore().currentFact(at: url, inspection: inspection)
+            let originalMatches = fact?.originalDeveloper.map { original in
+                inspection?.developerIdentity.map { original.matches($0) } == true
+            } ?? true
             await MainActor.run {
                 guard signatureCheckToken == token else { return }
                 currentAuthority = signing.signatureCheckUnavailable ? nil : (signing.isResigned ? "Ad-hoc" : authority)
                 signatureRestored = !signing.signatureCheckUnavailable && authority != nil && status == .valid
-                    && (originalIdentity == nil || authority == originalIdentity)
+                    && !signing.isResigned && originalMatches
                 isCheckingSignature = false
             }
         }
     }
 
     private func scanContainerItems() {
+        let token = UUID()
+        containerScanToken = token
         isScanning = true
-        Task.detached(priority: .userInitiated) {
-            let items = await DataDirScanner().scanLibraryDirs(for: app)
-            let linked = items.filter {
+        Task {
+            let scan = await DataDirScanner().scanLibraryDirsWithDiagnostics(for: app)
+            let linked = scan.items.filter {
                 ($0.type == .containers || $0.type == .groupContainers)
+                    && !$0.isUserDirectoryLink && $0.linkedDestination != nil
                     && [DataDirStatus.linked, DataDirStatus.needsNormalization, DataDirStatus.existingSymlink].contains($0.status)
-                    && $0.linkedDestination != nil
             }
-            await MainActor.run {
-                linkedContainerItems = linked
-                isScanning = false
+            guard containerScanToken == token else { return }
+            linkedContainerItems = linked
+            containerReadIssues = scan.readIssues
+            containerIdentityIssue = scan.identityIssue
+            if let issue = scan.identityIssue {
+                errorMessage = "无法确认应用身份，请重新检查：".localized + issue.url.path
             }
+            isScanning = false
         }
     }
 
@@ -294,7 +322,7 @@ struct SignatureRepairSheet: View {
             "修复面板：批量还原容器目录",
             details: [("app_name", app.displayName), ("count", String(items.count))]
         )
-        Task { @MainActor in
+        operationState.startTask(for: token) { @MainActor in
             let lock = OperationLock()
             let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
             defer {
@@ -304,7 +332,7 @@ struct SignatureRepairSheet: View {
                 scanContainerItems()
             }
             guard acquired else {
-                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                errorMessage = lock.admissionFailureReason ?? "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
                 return
             }
             let mover = DataDirMover()
@@ -394,6 +422,7 @@ struct SignatureRepairRestoreWorkflow {
             // 上一个目录还原期间应用可能重新启动，不能复用批次开始时的检查结果。
             guard !appIsRunning else { return .appRunning }
             do {
+                try Task.checkCancellation()
                 try await restore(item, index)
             } catch {
                 return .restoreFailed(item: item, error: error)

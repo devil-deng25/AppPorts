@@ -218,6 +218,8 @@ enum AppSearchExclusionService {
         let volumeUUID: String
         let portals: [Portal]
         var phase = "prepared"
+        var updateProtectionRelocation: AppUpdateProtectionRelocation?
+        var signatureFactRelocation: SignatureFactRelocation?
 
         /// Validate the format before treating a journal as unrelated to another app.
         fileprivate func hasValidScope(in library: URL, volumeUUID currentVolume: String?) -> Bool {
@@ -226,7 +228,7 @@ enum AppSearchExclusionService {
             guard urls.allSatisfy({ $0.isFileURL && ($0.host == nil || $0.host == "" || $0.host == "localhost")
                 && $0.path == $0.standardizedFileURL.path }),
                   currentVolume == volumeUUID, !volumeUUID.isEmpty,
-                  ["prepared", "external-moved", "portals-installed"].contains(phase),
+                  ["prepared", "external-moved", "portals-installed", "committed"].contains(phase),
                   sourceIdentity.inode > 0,
                   source.deletingLastPathComponent().standardizedFileURL == library.deletingLastPathComponent(),
                   destination.deletingLastPathComponent().standardizedFileURL == library,

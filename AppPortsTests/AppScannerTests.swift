@@ -434,7 +434,9 @@ final class AppScannerTests: XCTestCase {
         let local = workspace.localAppsURL.appendingPathComponent("Suite")
         try createAppBundle(at: external.appendingPathComponent("One.app"), payloadSize: 16)
         try createAppBundle(at: external.appendingPathComponent("Two.app"), payloadSize: 16)
-        try AppMigrationService(dockShortcutUpdater: { _, _ in 0 }).linkApp(
+        try AppMigrationService(dockShortcutUpdater: { _, _ in 0 },
+            transferStore: AppTransferStore(directoryURL: workspace.rootURL.appendingPathComponent("Transfers")),
+            signatureFactStore: SignatureFactStore(backupDirectoryURL: workspace.rootURL.appendingPathComponent("Signatures"))).linkApp(
             appToLink: AppItem(name: "Suite", path: external, status: AppStatus.unlinked, isFolder: true, appCount: 2),
             destinationURL: local)
         let scanner = AppScanner()

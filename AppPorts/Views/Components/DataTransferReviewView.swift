@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// A retained copy is ordinary success. Unfinished transactions expose their
-/// recorded locations and offer a checked unlock when copying has not started.
+/// Completion and outstanding cleanup are separate. Interrupted preparations
+/// expose both continuation and checked cancellation.
 struct DataTransferReviewView: View {
     let group: DataTransferGroup
     let onCleanup: () -> Void
     let onUnlock: (() -> Void)?
     let onResume: (() -> Void)?
+    @ObservedObject private var operationState = AppOperationState.shared
     @Environment(\.dismiss) private var dismiss
     @State private var confirmCleanup = false
     @State private var contentHeight: CGFloat = 320
@@ -43,12 +44,15 @@ struct DataTransferReviewView: View {
                 Button("关闭".localized) { dismiss() }.keyboardShortcut(.cancelAction)
                 if group.canCleanup {
                     Button("校验并清理这些副本".localized, role: .destructive) { confirmCleanup = true }
-                } else if group.resumeTransfer != nil, let onResume {
-                    Button("重试".localized) { dismiss(); onResume() }
+                }
+                if group.unlockTransfer != nil, let onUnlock {
+                    Button("取消并清理暂存".localized) { dismiss(); onUnlock() }
+                        .disabled(operationState.isBusy)
+                }
+                if group.resumeTransfer != nil, let onResume {
+                    Button("继续".localized) { dismiss(); onResume() }
                         .buttonStyle(.borderedProminent)
-                } else if group.unlockTransfer != nil, let onUnlock {
-                    Button("检查并解除锁定".localized) { dismiss(); onUnlock() }
-                        .buttonStyle(.borderedProminent)
+                        .disabled(operationState.isBusy)
                 }
             }
         }
@@ -105,14 +109,11 @@ struct DataTransferReviewView: View {
         if group.state != .needsAttention {
             return "数据已就位。以下是保留的历史副本，可以一起校验并清理。".localized
         }
+        if group.resumeTransfer?.isPreparationRecoverable == true {
+            return "准备尚未完成。可以继续复制校验，或确认原数据仍有效后取消并清理本次暂存。".localized
+        }
         if group.resumeTransfer != nil {
-            return "副本已校验。重试会检查当前数据与入口，继续完成操作。".localized
-        }
-        if group.unlockTransfer?.isUnstartedSymlinkRestore == true {
-            return "还原尚未生成副本。检查原入口和外部数据后解除锁定，即可重新还原。".localized
-        }
-        if group.unlockTransfer != nil {
-            return "检查原目录与目标位置；确认尚未生成副本后解除锁定，即可重新迁移。".localized
+            return "副本已校验。继续会核对实际入口；已生效的数据允许正常写入，只补齐记录和清理。".localized
         }
         return "操作尚需检查，所有已记录的副本都会保留。请先检查这些位置，不要合并或覆盖数据。".localized
     }

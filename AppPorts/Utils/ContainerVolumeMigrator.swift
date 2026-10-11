@@ -42,6 +42,9 @@ actor ContainerVolumeMigrator {
         case restoreIncomplete(staging: URL, underlying: Error)
         case restoreRecordRecovery(staging: URL, underlying: Error)
         case ownershipRollbackFailed(URL, operation: Error, rollback: Error)
+        case cleanupRecordLocalUnavailable(URL)
+        case cleanupRecordStillMounted(URL)
+        case cleanupRecordStagingExists(URL)
 
         var errorDescription: String? {
             switch self {
@@ -98,6 +101,12 @@ actor ContainerVolumeMigrator {
             case .ownershipRollbackFailed(let url, let operation, let rollback):
                 return String(format: "还原失败，且无法恢复卷的原挂载选项；数据已保留，请检查挂载状态：%@\n%@\n%@".localized,
                               url.path, operation.localizedDescription, rollback.localizedDescription)
+            case .cleanupRecordLocalUnavailable(let url):
+                return "未确认本地还原目录，未移除记录：".localized + url.path
+            case .cleanupRecordStillMounted(let url):
+                return "本地路径仍挂载着数据卷，请先完成还原再移除记录：".localized + url.path
+            case .cleanupRecordStagingExists(let url):
+                return "还原暂存仍存在，未移除恢复记录。请先检查暂存：".localized + url.path
             }
         }
     }
@@ -122,21 +131,9 @@ actor ContainerVolumeMigrator {
                     : "迁移已完成，但旧副本尚未全部清理。%@".localized
                 return String(format: format, "\n" + details)
             }
-            if needsRecordUpdateOnly {
-                return String(format: "数据操作和副本清理已完成，但清理记录尚未更新。请稍后重试。%@".localized, details)
-            }
-            switch cleanup.kind {
-            case .migrationBackup:
-                return String(
-                    format: "挂载迁移已完成，但本地安全备份仍保留在「%@」。可稍后重试清理；当前挂载数据不受影响。%@".localized,
-                    cleanup.localPath, details
-                )
-            case .restoredVolume:
-                return String(
-                    format: "数据已还原到「%@」，但外置卷「%@」（%@）的清理尚未完成。该卷不会再自动挂载，请稍后重试清理。%@".localized,
-                    cleanup.localPath, cleanup.mountRecord.volumeName, cleanup.mountRecord.volumeUUID, details
-                )
-            }
+            return (["旧记录无法确认副本归属。请检查所列位置；移除记录会保留文件和卷。".localized,
+                     cleanup.localPath, "APFS · " + cleanup.mountRecord.volumeName + " · " + cleanup.mountRecord.volumeUUID]
+                + [cleanup.restoreStagingPath, details.isEmpty ? nil : details].compactMap { $0 }).joined(separator: "\n")
         }
     }
 
@@ -216,6 +213,7 @@ actor ContainerVolumeMigrator {
     private let stagingMountRootURL: URL
     private let safety: DataOperationSafety
     private let makeMountPointLease: @Sendable (URL) throws -> any MountPointLeasing
+    private let synchronizeCleanupParent: @Sendable (URL) throws -> Void
     private var completingPaths: Set<String> = []
     private var runningCleanups: Set<UUID> = []
 
@@ -233,10 +231,12 @@ actor ContainerVolumeMigrator {
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
         safetyRunner: any ShellCommandRunning = ProcessCommandRunner(),
         makeMountPointLease: @escaping @Sendable (URL) throws -> any MountPointLeasing = { try MountPointLease(at: $0) },
-        removeMigrationBackup: @escaping @Sendable (URL) throws -> Void = { try FileCopier.removeCopy(at: $0) }
+        removeMigrationBackup: @escaping @Sendable (URL) throws -> Void = { try FileCopier.removeCopy(at: $0) },
+        synchronizeCleanupParent: @escaping @Sendable (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) }
     ) {
         self.safety = DataOperationSafety(homeDirectory: homeDirectory, store: store, runner: safetyRunner)
         self.makeMountPointLease = makeMountPointLease
+        self.synchronizeCleanupParent = synchronizeCleanupParent
         self.disk = disk
         self.store = store
         self.isMountPoint = isMountPoint
@@ -260,14 +260,15 @@ actor ContainerVolumeMigrator {
         let path = item.path.standardizedFileURL.path
         guard completingPaths.insert(path).inserted else { throw DataOperationSafety.Failure.occupied(path) }
         defer { completingPaths.remove(path) }
-        let history = try store.transfers().filter { $0.originalPath == path }
-        if let previous = history.last(where: { $0.mode == .mount && $0.direction == .restore && $0.isDataSwitchComplete }) {
-            let lineage = try retainedLineage(endingAt: previous.operationID)
-            guard Set(lineage.map(\.operationID)) == Set(history.map(\.operationID)) else {
-                throw DataOperationSafety.Failure.conflict(path)
-            }
+        if let previous = try completedRestoreLineage(at: item.path.standardizedFileURL).last {
             await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized, showsByteProgress: false))
-            try await cleanupRetainedLineage(operationID: previous.operationID)
+            do { try await cleanupRetainedLineage(operationID: previous.operationID) }
+            catch {
+                // The local restored object remains authoritative. An offline
+                // old volume is still a visible cleanup task, not a global
+                // prerequisite for creating an unrelated destination volume.
+                try Task.checkCancellation()
+            }
         }
         let result = try await migrate(item: item, externalRootURL: externalRootURL, appName: appName,
                                        bundleIdentifier: bundleIdentifier, progressHandler: progressHandler)
@@ -278,6 +279,7 @@ actor ContainerVolumeMigrator {
 
     func restoreAndComplete(record: ContainerMountRecord, estimatedTotalBytes: Int64,
                             progressHandler: FileCopier.ProgressHandler?) async throws -> CleanupWarning? {
+        try await completeInterruptedMigrationBeforeRestore(record: record, progressHandler: progressHandler)
         guard completingPaths.insert(record.mountPointPath).inserted else {
             throw DataOperationSafety.Failure.occupied(record.mountPointPath)
         }
@@ -296,13 +298,13 @@ actor ContainerVolumeMigrator {
     }
 
     private func completeSuccessfulTransfer(operationID: UUID, direction: DataTransferRecord.Direction, record: ContainerMountRecord,
-                                             progressHandler: FileCopier.ProgressHandler?, requireUnchangedActive: Bool = true) async -> CleanupWarning? {
+                                             progressHandler: FileCopier.ProgressHandler?, requireUnchangedActive: Bool = false) async -> CleanupWarning? {
         do {
             await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized, showsByteProgress: false))
             guard let transfer = try store.transfer(operationID: operationID) else { return nil }
-            guard let encoded = transfer.baseline else { throw DataOperationSafety.Failure.inspection(transfer.activePath) }
             try await requireActiveData(for: transfer)
             if requireUnchangedActive {
+                guard let encoded = transfer.baseline else { throw DataOperationSafety.Failure.inspection(transfer.activePath) }
                 try TreeCopySession.verifyCopy(at: URL(fileURLWithPath: transfer.activePath),
                     against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded))
             }
@@ -322,16 +324,16 @@ actor ContainerVolumeMigrator {
         var lineage: [DataTransferRecord] = []
         var visited: Set<UUID> = []
         while true {
-            guard visited.insert(current.operationID).inserted, current.mode == .mount,
-                  current.originalPath == original, current.isDataSwitchComplete, current.baseline != nil,
+            guard visited.insert(current.operationID).inserted,
+                  current.originalPath == original, current.isDataSwitchComplete,
+                  current.baseline != nil || current.retainedCopyRemovedAt != nil,
                   current.destinationIdentity != nil, current.backupPath != nil, current.backupIdentity != nil else {
                 throw DataOperationSafety.Failure.inspection(original)
             }
             lineage.append(current)
             guard let priorID = current.priorOperationID,
                   let prior = records.first(where: { $0.operationID == priorID }) else { break }
-            guard prior.direction == .migrate,
-                  prior.destinationIdentity?.matchesFilesystemObject(current.sourceIdentity) == true else {
+            guard current.followsLocation(of: prior) else {
                 throw DataOperationSafety.Failure.conflict(original)
             }
             current = prior
@@ -339,9 +341,542 @@ actor ContainerVolumeMigrator {
         return Array(lineage.reversed())
     }
 
+    private func completedRestoreLineage(at local: URL) throws -> [DataTransferRecord] {
+        let history = try store.transfers()
+        let related = history.filter { $0.originalPath == local.path }
+        let restores = related.filter { record in
+            record.direction == .restore && record.isDataSwitchComplete
+                && !history.contains(where: { $0.priorOperationID == record.operationID })
+        }
+        guard !restores.isEmpty else { return [] }
+        guard restores.count == 1, let terminal = restores.first else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        let lineage = try retainedLineage(endingAt: terminal.operationID)
+        guard Set(lineage.map(\.operationID)) == Set(related.map(\.operationID)),
+              terminal.activePath == local.path, terminal.destinationPath == local.path,
+              !isSymbolicLink(at: local), !isMountPoint(local),
+              try store.recordsStrict().allSatisfy({ $0.mountPointPath != local.path }),
+              let identity = terminal.destinationIdentity,
+              try DataPathIdentity.capture(local).matchesFilesystemObject(identity) else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        return lineage
+    }
+
+    private func transferAncestors(of transfer: DataTransferRecord,
+                                   in records: [DataTransferRecord]) throws -> Set<UUID> {
+        var result: Set<UUID> = [transfer.operationID]
+        var current = transfer
+        while let priorID = current.priorOperationID,
+              let prior = records.first(where: { $0.operationID == priorID }) {
+            guard result.insert(priorID).inserted, current.followsLocation(of: prior) else {
+                throw DataOperationSafety.Failure.conflict(transfer.originalPath)
+            }
+            current = prior
+        }
+        return result
+    }
+
     func cleanupRetainedLineage(operationID: UUID) async throws {
+        var firstFailure: Error?
         for transfer in try retainedLineage(endingAt: operationID) {
-            try await cleanupRetainedTransfer(operationID: transfer.operationID)
+            try Task.checkCancellation()
+            do {
+                if transfer.mode == .mount { try await cleanupRetainedTransfer(operationID: transfer.operationID) }
+                else {
+                    try await DataDirMover(homeDir: safety.homeDirectory, store: store,
+                        runner: safety.runner, mountMigrator: self).cleanupRetainedTransfer(operationID: transfer.operationID)
+                }
+            } catch {
+                if error is CancellationError { throw error }
+                try Task.checkCancellation()
+                firstFailure = firstFailure ?? error
+            }
+        }
+        if let firstFailure { throw firstFailure }
+    }
+
+    private func copyPreparation(_ transfer: DataTransferRecord, source: URL, destination: URL,
+                                 finalDestination: URL, logicalSourceRoot: URL? = nil,
+                                 progressHandler: FileCopier.ProgressHandler?) async throws -> TreeCopySnapshot {
+        let currentStore = store
+        let operationID = transfer.operationID
+        let destinationUUID = transfer.direction == .migrate ? transfer.createdVolumeUUID : nil
+        return try await TreeCopySession().copy(from: source, to: destination,
+            excludingRootEntries: Self.volumeSystemArtifacts, finalDestination: finalDestination,
+            logicalSourceRoot: logicalSourceRoot, legacyRootOwnership: transfer.legacyRootOwnership,
+            preparedHandler: { baseline in
+                try currentStore.prepareCopy(operationID: operationID, path: destination,
+                    parentIdentity: DataPathIdentity.capture(destination.deletingLastPathComponent()), baseline: baseline)
+            }, destinationCreatedHandler: { captured in
+                var identity = captured
+                if let destinationUUID { identity.volumeUUID = destinationUUID }
+                try currentStore.claimCopyDestination(operationID: operationID, identity: identity)
+            }, progressHandler: progressHandler)
+    }
+
+    private func promoteCompletePreparation(_ expected: DataTransferRecord) async throws -> DataTransferRecord? {
+        try await withPreparationOwnership(expected) {
+            try await promoteCompletePreparationUsingOwners(expected)
+        }
+    }
+
+    private func promoteCompletePreparationUsingOwners(_ expected: DataTransferRecord) async throws -> DataTransferRecord? {
+        guard let encoded = expected.sourceBaseline, let identity = expected.destinationIdentity,
+              expected.preparationRemovalBaseline == nil, let path = expected.preparationPath,
+              let parent = expected.preparationParentIdentity else { return nil }
+        let source = try await mountPreparationSource(expected, verifyContents: true)
+        let candidate = URL(fileURLWithPath: path)
+        guard try verifiedResumeEntryExists(candidate) else { return nil }
+        if expected.direction == .migrate {
+            guard let uuid = expected.createdVolumeUUID, isMountPoint(candidate) else { return nil }
+            try await requireExpectedVolume(uuid, at: candidate)
+        } else if isMountPoint(candidate) { throw DataOperationSafety.Failure.conflict(path) }
+        guard try DataPathIdentity.capture(candidate.deletingLastPathComponent()).matchesFilesystemObject(parent),
+              try DataPathIdentity.capture(candidate, volumeUUID: expected.direction == .migrate ? expected.createdVolumeUUID : nil)
+                .matchesFilesystemObject(identity) else { throw DataOperationSafety.Failure.conflict(path) }
+        let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
+        do { try TreeCopySession.verifyCopy(at: candidate, against: baseline) }
+        catch { return nil }
+        try await safety.requireNoKnownWriters(at: source, bundleIdentifier: expected.bundleIdentifier)
+        _ = try await mountPreparationSource(expected, verifyContents: true)
+        try TreeCopySession.verifyCopy(at: candidate, against: baseline)
+        try DurableFileIO.syncTree(at: candidate, excludingRootEntries: Self.volumeSystemArtifacts)
+        var verified = expected
+        verified.baseline = encoded
+        verified.phase = .verified
+        verified.recoverableReason = nil
+        if verified.direction == .restore { verified.backupIdentity = verified.sourceIdentity }
+        try store.updateTransfer(verified)
+        return verified
+    }
+
+    private func completeInterruptedMigrationBeforeRestore(record: ContainerMountRecord,
+                                                           progressHandler: FileCopier.ProgressHandler?) async throws {
+        for transfer in try store.transfers() where transfer.mode == .mount && transfer.direction == .migrate
+            && transfer.originalPath == record.mountPointPath && transfer.isVerifiedSwitchRecoverable
+            && transfer.createdVolumeUUID?.caseInsensitiveCompare(record.volumeUUID) == .orderedSame {
+            _ = try await resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progressHandler)
+        }
+    }
+
+    func cancelPreparation(operationID: UUID, preserveUnclaimedMaterials: Bool = false) async throws {
+        guard let expected = try store.transfer(operationID: operationID) else { return }
+        guard completingPaths.insert(expected.originalPath).inserted else {
+            throw DataOperationSafety.Failure.occupied(expected.originalPath)
+        }
+        defer { completingPaths.remove(expected.originalPath) }
+        try await cancelPreparation(expected, preserveUnclaimedMaterials: preserveUnclaimedMaterials)
+    }
+
+    private func restartPreparation(_ expected: DataTransferRecord,
+                                    progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
+        guard completingPaths.insert(expected.originalPath).inserted else {
+            throw DataOperationSafety.Failure.occupied(expected.originalPath)
+        }
+        defer { completingPaths.remove(expected.originalPath) }
+        let record = try expected.recoveryMountRecord ?? store.recordsStrict().first { $0.mountPointPath == expected.originalPath }
+        guard let record else { throw DataOperationSafety.Failure.inspection(expected.originalPath) }
+        try await cancelPreparation(expected, preserveUnclaimedMaterials: false)
+        if expected.direction == .restore {
+            let id = try await restoreRetainingOriginal(record: record, estimatedTotalBytes: 0,
+                progressHandler: progressHandler, reusingOperationID: expected.operationID)
+            return await completeSuccessfulTransfer(operationID: id, direction: .restore,
+                record: record, progressHandler: progressHandler)?.message
+        }
+        let local = URL(fileURLWithPath: expected.originalPath)
+        let item = DataDirItem(name: local.lastPathComponent, path: local,
+            type: DataDirType(rawValue: expected.dataDirType) ?? .custom, priority: .recommended,
+            description: "", associatedAppName: expected.appName, associatedBundleIdentifier: expected.bundleIdentifier)
+        let result = try await migrate(item: item, externalRootURL: URL(fileURLWithPath: record.externalRootPath),
+            appName: expected.appName, bundleIdentifier: expected.bundleIdentifier,
+            progressHandler: progressHandler, reusingOperationID: expected.operationID)
+        return await completeSuccessfulTransfer(operationID: result.operationID, direction: .migrate,
+            record: result.record, progressHandler: progressHandler)?.message
+    }
+
+    private func requirePreparationLedger(_ transfer: DataTransferRecord) throws {
+        guard transfer.mode == .mount, transfer.isPreparationRecoverable,
+              try store.transfer(operationID: transfer.operationID) == transfer,
+              !(try store.transfers()).contains(where: { $0.priorOperationID == transfer.operationID }) else {
+            throw DataOperationSafety.Failure.conflict(transfer.originalPath)
+        }
+        if transfer.direction == .restore {
+            guard let mount = try store.recordsStrict().first(where: { $0.mountPointPath == transfer.originalPath }),
+                  mount.volumeUUID.caseInsensitiveCompare(transfer.sourceIdentity.volumeUUID ?? "") == .orderedSame,
+                  transfer.recoveryMountRecord == nil || transfer.recoveryMountRecord == mount else {
+                throw DataOperationSafety.Failure.conflict(transfer.originalPath)
+            }
+        }
+    }
+
+    /// A synchronous topology check can be repeated under the store writer
+    /// lock. No record read is performed from that final closure.
+    private func requireUnswitchedMountEntry(_ transfer: DataTransferRecord) throws {
+        let local = URL(fileURLWithPath: transfer.originalPath)
+        guard !isSymbolicLink(at: local) else { throw DataOperationSafety.Failure.conflict(local.path) }
+        if transfer.direction == .migrate {
+            guard !isMountPoint(local), try DataPathIdentity.capture(local).matchesFilesystemObject(transfer.sourceIdentity),
+                  let backup = transfer.backupPath, try !verifiedResumeEntryExists(URL(fileURLWithPath: backup)) else {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+        } else if isMountPoint(local) {
+            guard let uuid = transfer.sourceIdentity.volumeUUID,
+                  (mountedVolumeUUID(local) ?? DiskUtility.mountedVolumeUUID(at: local))?.caseInsensitiveCompare(uuid) == .orderedSame else {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+            if transfer.sourceIdentity.isResolved {
+                guard try DataPathIdentity.capture(local, volumeUUID: uuid).matchesFilesystemObject(transfer.sourceIdentity) else {
+                    throw DataOperationSafety.Failure.conflict(local.path)
+                }
+            }
+        } else if try verifiedResumeEntryExists(local) {
+            guard existingRealDirectory(at: local),
+                  transfer.destinationIdentity.map({ (try? DataPathIdentity.capture(local).matchesFilesystemObject($0)) != true }) ?? true else {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+            var before = stat()
+            guard lstat(local.path, &before) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            guard before.st_mode & S_IFMT == S_IFDIR else { throw DataOperationSafety.Failure.conflict(local.path) }
+            if before.st_mode & 0o7777 == Self.lockedMountPointMode {
+                // Normal unmount leaves an empty 000 placeholder. Its existing
+                // lease checks the anchored contents while keeping it locked;
+                // ordinary path enumeration would reject every offline cancel.
+                try store.recheckWriterAdmission()
+                let lease = try makeMountPointLease(local)
+                try lease.verifyBeforeMount()
+                var current = stat()
+                guard !isMountPoint(local), lstat(local.path, &current) == 0,
+                      current.st_dev == before.st_dev, current.st_ino == before.st_ino,
+                      current.st_mode == before.st_mode else {
+                    throw DataOperationSafety.Failure.conflict(local.path)
+                }
+            } else if try !fileManager.contentsOfDirectory(atPath: local.path).isEmpty {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+        }
+    }
+
+    private func mountPreparationSource(_ transfer: DataTransferRecord, verifyContents: Bool) async throws -> URL {
+        try requirePreparationLedger(transfer)
+        try requireUnswitchedMountEntry(transfer)
+        let local = URL(fileURLWithPath: transfer.originalPath)
+        let source: URL
+        if transfer.direction == .migrate { source = local }
+        else {
+            guard let uuid = transfer.sourceIdentity.volumeUUID, let backupPath = transfer.backupPath else {
+                throw DataOperationSafety.Failure.inspection(local.path)
+            }
+            let info = try await disk.volumeInfo(for: uuid)
+            try requirePreparationLedger(transfer)
+            guard info.volumeUUID?.caseInsensitiveCompare(uuid) == .orderedSame,
+                  let mounted = info.mountPoint, !mounted.isEmpty,
+                  [local.path, backupPath].contains(where: { DiskUtility.pathsMatch($0, mounted) }) else {
+                throw DataOperationSafety.Failure.inspection(backupPath)
+            }
+            source = URL(fileURLWithPath: mounted)
+            try await requireExpectedVolume(uuid, at: source)
+            if transfer.sourceIdentity.isResolved {
+                guard try DataPathIdentity.capture(source, volumeUUID: uuid).matchesFilesystemObject(transfer.sourceIdentity) else {
+                    throw DataOperationSafety.Failure.conflict(source.path)
+                }
+            }
+        }
+        if verifyContents, let encoded = transfer.sourceBaseline {
+            let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
+            if transfer.direction == .restore, let uuid = transfer.sourceIdentity.volumeUUID {
+                try TreeCopySession.verifyUnchanged(at: source, against: baseline, expectedVolumeUUID: uuid)
+            } else { try TreeCopySession.verifyUnchanged(at: source, against: baseline) }
+        }
+        try requirePreparationLedger(transfer)
+        try requireUnswitchedMountEntry(transfer)
+        return source
+    }
+
+    /// A stopped restore may have put noowners back after capturing an owners
+    /// baseline. Re-enable it only for this attempt, using freshly checked
+    /// mount flags, and restore those flags on every exit that leaves it mounted.
+    private func withPreparationOwnership<Result>(_ transfer: DataTransferRecord,
+                                                   required: Bool = true,
+                                                   operation: () async throws -> Result) async throws -> Result {
+        guard required, transfer.direction == .restore, transfer.sourceBaseline != nil else {
+            return try await operation()
+        }
+        let source = try await mountPreparationSource(transfer, verifyContents: false)
+        guard let uuid = transfer.sourceIdentity.volumeUUID, let flags = mountFlags(source) else {
+            throw DataOperationSafety.Failure.inspection(source.path)
+        }
+        guard flags & UInt32(MNT_IGNORE_OWNERSHIP) != 0 else { return try await operation() }
+        try await safety.requireNoKnownWriters(at: source, bundleIdentifier: transfer.bundleIdentifier)
+        _ = try await mountPreparationSource(transfer, verifyContents: false)
+        guard mountFlags(source) == flags else { throw DataOperationSafety.Failure.conflict(source.path) }
+        let result: Result
+        do {
+            try await setOwnershipForRestore(mountPoint: source, originalFlags: flags, enabled: true)
+            try await requireExpectedVolume(uuid, at: source)
+            try requireOwners(at: source)
+            result = try await operation()
+        } catch {
+            do { try await restoreFreshPreparationOwnership(transfer, at: source, flags: flags) }
+            catch let rollback { throw MigrationError.ownershipRollbackFailed(source, operation: error, rollback: rollback) }
+            throw error
+        }
+        try await restoreFreshPreparationOwnership(transfer, at: source, flags: flags)
+        return result
+    }
+
+    private func restoreFreshPreparationOwnership(_ transfer: DataTransferRecord, at source: URL, flags: UInt32) async throws {
+        guard isMountPoint(source) else { return }
+        guard let uuid = transfer.sourceIdentity.volumeUUID else { throw DataOperationSafety.Failure.inspection(source.path) }
+        try await requireExpectedVolume(uuid, at: source)
+        let mask = UInt32(MNT_IGNORE_OWNERSHIP | MNT_DONTBROWSE | MNT_RDONLY | MNT_NODEV | MNT_NOSUID | MNT_NOEXEC)
+        let original = (flags | UInt32(MNT_DONTBROWSE)) & mask
+        guard let currentFlags = mountFlags(source) else { throw DataOperationSafety.Failure.inspection(source.path) }
+        if currentFlags & mask == original { return }
+        guard currentFlags & mask == original & ~UInt32(MNT_IGNORE_OWNERSHIP),
+              let current = try store.transfer(operationID: transfer.operationID),
+              current.originalPath == transfer.originalPath, current.direction == .restore,
+              current.sourceIdentity.matchesFilesystemObject(transfer.sourceIdentity),
+              try DataPathIdentity.capture(source, volumeUUID: uuid).matchesFilesystemObject(transfer.sourceIdentity) else {
+            throw DataOperationSafety.Failure.conflict(source.path)
+        }
+        try await setOwnershipForRestore(mountPoint: source, originalFlags: flags, enabled: false)
+        try await requireExpectedVolume(uuid, at: source)
+        guard mountFlags(source).map({ $0 & mask == original }) == true else {
+            throw DataOperationSafety.Failure.inspection(source.path)
+        }
+    }
+
+    private func cancelPreparation(_ expected: DataTransferRecord, preserveUnclaimedMaterials: Bool) async throws {
+        try await withPreparationOwnership(expected, required: !preserveUnclaimedMaterials) {
+            try await cancelPreparationUsingOwners(expected, preserveUnclaimedMaterials: preserveUnclaimedMaterials)
+        }
+    }
+
+    private func cancelPreparationUsingOwners(_ expected: DataTransferRecord, preserveUnclaimedMaterials: Bool) async throws {
+        var transfer = expected
+        try requirePreparationLedger(transfer)
+        try requireUnswitchedMountEntry(transfer)
+        if preserveUnclaimedMaterials {
+            try await restorePreparationMountOptions(transfer)
+            if transfer.recoveryMountPointIdentity != nil, transfer.stagingParentIdentity != nil {
+                try await releasePrivateRestoreMount(transfer)
+            }
+            try store.endUnswitchedTransfer(transfer,
+                preserving: "已结束未切换的尝试；卷和暂存材料保留在已知位置，未按卷名或路径猜测并删除。".localized) {
+                try requireUnswitchedMountEntry(transfer)
+            }
+            synchronizeAgent(store)
+            return
+        }
+        let source: URL
+        if transfer.direction == .restore, transfer.sourceBaseline == nil,
+           transfer.destinationIdentity == nil, let staging = transfer.stagingPath,
+           try !verifiedResumeEntryExists(URL(fileURLWithPath: staging)) {
+            // Includes source-inspected/no-target-created. No content is
+            // discarded, so an offline source does not block ending this intent.
+            try await restorePreparationMountOptions(transfer)
+            try await releasePrivateRestoreMount(transfer)
+            try store.endUnswitchedTransfer(transfer) { try requireUnswitchedMountEntry(transfer) }
+            synchronizeAgent(store)
+            return
+        } else { source = try await mountPreparationSource(transfer, verifyContents: true) }
+        try await safety.requireNoKnownWriters(at: source, bundleIdentifier: transfer.bundleIdentifier)
+        _ = try await mountPreparationSource(transfer, verifyContents: true)
+        if transfer.direction == .migrate {
+            guard let uuid = transfer.createdVolumeUUID, let container = transfer.volumeCreationContainerUUID,
+                  let stagingPath = transfer.stagingPath else {
+                // The creator may have finished before its result was saved.
+                // The explicit preserve action ends this reservation visibly.
+                throw DataOperationSafety.Failure.inspection(transfer.volumeCreationName ?? transfer.originalPath)
+            }
+            let staging = URL(fileURLWithPath: stagingPath)
+            let parent = staging.deletingLastPathComponent()
+            guard let parentIdentity = transfer.stagingParentIdentity,
+                  try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity) else {
+                throw DataOperationSafety.Failure.conflict(parent.path)
+            }
+            if transfer.preparationRemovalParentIdentity != nil,
+               try await !disk.apfsVolumeIsPresent(uuid, inContainer: container) {
+                try requirePreparationLedger(transfer)
+            } else {
+                guard try await disk.apfsContainerUUID(containingVolume: uuid).caseInsensitiveCompare(container) == .orderedSame else {
+                    throw DataOperationSafety.Failure.conflict(uuid)
+                }
+                let info = try await disk.volumeInfo(for: uuid)
+                try requirePreparationLedger(transfer)
+                if let mounted = info.mountPoint, !mounted.isEmpty {
+                    guard DiskUtility.pathsMatch(mounted, staging.path) else { throw DataOperationSafety.Failure.conflict(mounted) }
+                } else {
+                    try await mountVolume(uuid, at: staging, operationID: transfer.operationID.uuidString, allowRelocation: false)
+                }
+                try await requireExpectedVolume(uuid, at: staging)
+                try await safety.requireNoKnownWriters(at: staging)
+                try requirePreparationLedger(transfer)
+                if let encoded = transfer.sourceBaseline, let identity = transfer.destinationIdentity {
+                    guard try DataPathIdentity.capture(staging, volumeUUID: uuid).matchesFilesystemObject(identity) else {
+                        throw DataOperationSafety.Failure.conflict(staging.path)
+                    }
+                    let partial = try TreeCopySession.partialCopySnapshot(at: staging, source: source,
+                        against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded))
+                    if let saved = transfer.preparationRemovalBaseline {
+                        try TreeCopySession.verifyUnchanged(at: staging,
+                            against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: saved))
+                    } else { transfer.preparationRemovalBaseline = try PropertyListEncoder().encode(partial) }
+                } else {
+                    let names = Set(try fileManager.contentsOfDirectory(atPath: staging.path))
+                    guard names.isSubset(of: [Self.volumeMarkerFileName, Self.neverIndexFileName]) else {
+                        throw DataOperationSafety.Failure.inspection(staging.path)
+                    }
+                }
+                if try verifiedResumeEntryExists(staging.appendingPathComponent(Self.volumeMarkerFileName)) {
+                    guard (volumeUUIDMarker(staging) ?? Self.readVolumeMarkerUUID(at: staging))?.caseInsensitiveCompare(uuid) == .orderedSame else {
+                        throw DataOperationSafety.Failure.conflict(staging.path)
+                    }
+                }
+                transfer.preparationRemovalParentIdentity = parentIdentity
+                try store.updateTransfer(transfer)
+                try DurableFileIO.syncTree(at: source, excludingRootEntries: Self.volumeSystemArtifacts)
+                try await requireExpectedVolume(uuid, at: staging)
+                try requirePreparationLedger(transfer)
+                try await unmountVolume(mountPoint: staging)
+                try requirePreparationLedger(transfer)
+                try requireUnswitchedMountEntry(transfer)
+                guard !isMountPoint(staging) else { throw MigrationError.unmountFailed(staging, "") }
+                try await deleteAPFSVolume(uuid)
+                guard try await !disk.apfsVolumeIsPresent(uuid, inContainer: container) else {
+                    throw DataOperationSafety.Failure.inspection(uuid)
+                }
+            }
+            if try verifiedResumeEntryExists(staging) {
+                try store.recheckWriterAdmission()
+                guard let identity = transfer.stagingIdentity,
+                      try DataPathIdentity.capture(staging).matchesFilesystemObject(identity),
+                      try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity),
+                      !isMountPoint(staging) else { throw DataOperationSafety.Failure.conflict(staging.path) }
+                // The underlying mount-point directory intentionally has mode
+                // 000 after unmount. Its lease can inspect the anchored empty
+                // object without treating that protection as unreadable data.
+                try removeEmptyMountPoint(at: staging)
+            }
+            try DurableFileIO.syncDirectory(at: parent)
+        } else {
+            guard let path = transfer.stagingPath, let parentIdentity = transfer.preparationParentIdentity,
+                  let destinationIdentity = transfer.destinationIdentity, let encoded = transfer.sourceBaseline else {
+                throw DataOperationSafety.Failure.inspection(transfer.originalPath)
+            }
+            let staging = URL(fileURLWithPath: path), parent = URL(fileURLWithPath: path).deletingLastPathComponent()
+            guard try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity) else {
+                throw DataOperationSafety.Failure.conflict(parent.path)
+            }
+            if let actual = try TreeCopySession.retainedRemovalURL(at: staging, removalID: transfer.operationID) {
+                guard !isMountPoint(actual), !isSymbolicLink(at: actual),
+                      try DataPathIdentity.capture(actual).matchesFilesystemObject(destinationIdentity) else {
+                    throw DataOperationSafety.Failure.conflict(actual.path)
+                }
+                let wasRemoving = transfer.preparationRemovalBaseline != nil
+                let partial: TreeCopySnapshot
+                if let saved = transfer.preparationRemovalBaseline { partial = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: saved) }
+                else {
+                    partial = try TreeCopySession.partialCopySnapshot(at: staging, source: source,
+                        against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded),
+                        sourceVolumeUUID: transfer.sourceIdentity.volumeUUID)
+                    transfer.preparationRemovalBaseline = try PropertyListEncoder().encode(partial)
+                    transfer.preparationRemovalParentIdentity = parentIdentity
+                    try store.updateTransfer(transfer)
+                }
+                try DurableFileIO.syncTree(at: source, excludingRootEntries: Self.volumeSystemArtifacts)
+                try store.recheckWriterAdmission()
+                try TreeCopySession.removeVerifiedCopy(at: staging, against: partial, allowPartialRemoval: wasRemoving,
+                    expectedVolumeUUID: destinationIdentity.volumeUUID, removalID: transfer.operationID)
+            } else if transfer.preparationRemovalParentIdentity == nil {
+                throw DataOperationSafety.Failure.inspection(staging.path)
+            }
+            try DurableFileIO.syncDirectory(at: parent)
+            try await restorePreparationMountOptions(transfer)
+            try await releasePrivateRestoreMount(transfer)
+        }
+        try requirePreparationLedger(transfer)
+        try store.endUnswitchedTransfer(transfer) { try requireUnswitchedMountEntry(transfer) }
+        synchronizeAgent(store)
+    }
+
+    private func restorePreparationMountOptions(_ transfer: DataTransferRecord) async throws {
+        let local = URL(fileURLWithPath: transfer.originalPath)
+        guard let flags = transfer.originalSourceMountFlags ?? transfer.legacyMountFlags,
+              flags & UInt32(MNT_IGNORE_OWNERSHIP) != 0, isMountPoint(local),
+              let uuid = transfer.sourceIdentity.volumeUUID else { return }
+        try await requireExpectedVolume(uuid, at: local)
+        let mask = UInt32(MNT_IGNORE_OWNERSHIP | MNT_DONTBROWSE | MNT_RDONLY | MNT_NODEV | MNT_NOSUID | MNT_NOEXEC)
+        guard let current = mountFlags(local) else { throw DataOperationSafety.Failure.inspection(local.path) }
+        if current & UInt32(MNT_IGNORE_OWNERSHIP) != 0 { return }
+        guard current & mask == (flags | UInt32(MNT_DONTBROWSE)) & mask & ~UInt32(MNT_IGNORE_OWNERSHIP) else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        try requirePreparationLedger(transfer)
+        try await setOwnershipForRestore(mountPoint: local, originalFlags: flags, enabled: false)
+        try await requireExpectedVolume(uuid, at: local)
+        guard mountFlags(local).map({ $0 & mask == (flags | UInt32(MNT_DONTBROWSE)) & mask }) == true else {
+            throw DataOperationSafety.Failure.inspection(local.path)
+        }
+    }
+
+    private func releasePrivateRestoreMount(_ transfer: DataTransferRecord) async throws {
+        guard let path = transfer.backupPath else { return }
+        let recovery = URL(fileURLWithPath: path)
+        let parent = recovery.deletingLastPathComponent()
+        let exists = try verifiedResumeEntryExists(recovery)
+        guard let parentIdentity = transfer.stagingParentIdentity else {
+            // An online restore may never create a private mount point. No
+            // recorded claim plus an absent entry has no removal to finish.
+            guard transfer.recoveryMountPointIdentity == nil, !exists else {
+                throw DataOperationSafety.Failure.conflict(parent.path)
+            }
+            return
+        }
+        guard try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity) else {
+            throw DataOperationSafety.Failure.conflict(parent.path)
+        }
+        if exists {
+            guard let identity = transfer.recoveryMountPointIdentity else {
+                throw DataOperationSafety.Failure.inspection(path)
+            }
+            if isMountPoint(recovery) {
+                guard let uuid = transfer.sourceIdentity.volumeUUID else { throw DataOperationSafety.Failure.inspection(path) }
+                try await requireExpectedVolume(uuid, at: recovery)
+                try requirePreparationLedger(transfer)
+                try requireUnswitchedMountEntry(transfer)
+                guard try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity) else {
+                    throw DataOperationSafety.Failure.conflict(parent.path)
+                }
+                if transfer.sourceIdentity.isResolved,
+                   try !DataPathIdentity.capture(recovery, volumeUUID: uuid).matchesFilesystemObject(transfer.sourceIdentity) {
+                    throw DataOperationSafety.Failure.conflict(path)
+                }
+                try await unmountVolume(mountPoint: recovery)
+            }
+            if try verifiedResumeEntryExists(recovery) {
+                try store.recheckWriterAdmission()
+                guard !isMountPoint(recovery),
+                      try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity),
+                      try DataPathIdentity.capture(recovery).matchesFilesystemObject(identity) else {
+                    throw DataOperationSafety.Failure.conflict(path)
+                }
+                try removeEmptyMountPoint(at: recovery)
+            }
+        }
+        // This parent differs from the local restore staging parent. Even an
+        // already removed mount point still owes its own durable barrier.
+        try requirePreparationLedger(transfer)
+        try requireUnswitchedMountEntry(transfer)
+        guard try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity) else {
+            throw DataOperationSafety.Failure.conflict(parent.path)
+        }
+        try synchronizeCleanupParent(parent)
+        guard try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity),
+              try !verifiedResumeEntryExists(recovery) else {
+            throw DataOperationSafety.Failure.conflict(parent.path)
         }
     }
 
@@ -358,7 +893,13 @@ actor ContainerVolumeMigrator {
     /// surviving tree just because the last record write failed.
     func resumeVerifiedTransfer(operationID: UUID, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
         let transfers = try store.transfers()
-        guard let transfer = transfers.first(where: { $0.operationID == operationID }) else { return nil }
+        guard var transfer = transfers.first(where: { $0.operationID == operationID }) else { return nil }
+        if transfer.isPreparationRecoverable {
+            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false))
+            try requirePreparationLedger(transfer)
+            if let verified = try await promoteCompletePreparation(transfer) { transfer = verified }
+            else { return try await restartPreparation(transfer, progressHandler: progressHandler) }
+        }
         guard transfer.mode == .mount else {
             throw DataOperationSafety.Failure.inspection(operationID.uuidString)
         }
@@ -372,7 +913,7 @@ actor ContainerVolumeMigrator {
               let encoded = transfer.baseline else {
             throw DataOperationSafety.Failure.inspection(operationID.uuidString)
         }
-        var state = VerifiedMountResume(transfer: transfer, transfers: transfers, mounts: try store.recordsStrict(),
+        var state = VerifiedMountResume(transfer: transfer, transfers: try store.transfers(), mounts: try store.recordsStrict(),
             links: try store.managedLinks(), cleanups: try store.pendingCleanups())
         let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
         do {
@@ -402,7 +943,7 @@ actor ContainerVolumeMigrator {
         }
         synchronizeAgent(store)
         invalidateSizeCache(for: URL(fileURLWithPath: path))
-        return await completeVerifiedMountResume(state.transfer, progressHandler: progressHandler)
+        return await completeVerifiedMountResume(state.transfer, progressHandler: progressHandler, requireUnchangedActive: false)
     }
 
     private func completeVerifiedMountResume(_ transfer: DataTransferRecord, progressHandler: FileCopier.ProgressHandler?,
@@ -480,17 +1021,7 @@ actor ContainerVolumeMigrator {
             }
             try safety.requireLocalRestoreParent(at: local, isMountPoint: isMountPoint)
         }
-        var ownedIDs: Set<UUID> = [transfer.operationID]
-        var current = transfer
-        while let priorID = current.priorOperationID,
-              let prior = state.transfers.first(where: { $0.operationID == priorID }) {
-            guard ownedIDs.insert(priorID).inserted, prior.mode == .mount, prior.direction == .migrate,
-                  prior.originalPath == transfer.originalPath,
-                  prior.destinationIdentity?.matchesFilesystemObject(current.sourceIdentity) == true else {
-                throw DataOperationSafety.Failure.conflict(local.path)
-            }
-            current = prior
-        }
+        let ownedIDs = try transferAncestors(of: transfer, in: state.transfers)
         let mount = state.mounts.first { $0.mountPointPath == transfer.originalPath }
         if let mount, let expected = transfer.recoveryMountRecord, mount != expected {
             throw DataOperationSafety.Failure.conflict(local.path)
@@ -577,6 +1108,28 @@ actor ContainerVolumeMigrator {
         let staging = URL(fileURLWithPath: stagingPath)
         let hasBackup = try verifiedResumeEntryExists(backup)
         let original = hasBackup ? backup : local
+        // The saved verified root, exact UUID and marker prove activation.
+        // Application writes after this point do not invalidate that fact; the
+        // old baseline remains reserved for checking the retained original.
+        if isMountPoint(local) {
+            try await requireExpectedVolume(uuid, at: local)
+            try requireVerifiedResumeLedger(state)
+            guard hasBackup, !isMountPoint(backup), !isSymbolicLink(at: backup),
+                  (volumeUUIDMarker(local) ?? Self.readVolumeMarkerUUID(at: local))?.caseInsensitiveCompare(uuid) == .orderedSame,
+                  try DataPathIdentity.capture(local, volumeUUID: uuid).matchesFilesystemObject(destinationIdentity),
+                  try DataPathIdentity.capture(backup).matchesFilesystemObject(transfer.sourceIdentity) else {
+                throw DataOperationSafety.Failure.conflict(local.path)
+            }
+            var completed = state.transfer
+            completed.backupIdentity = try completed.backupIdentity ?? DataPathIdentity.capture(backup)
+            completed.phase = .switching
+            completed.recoverableReason = nil
+            try saveVerifiedResume(completed, state: &state)
+            try DurableFileIO.syncTree(at: local, excludingRootEntries: Self.volumeSystemArtifacts)
+            try DurableFileIO.syncDirectory(at: local.deletingLastPathComponent())
+            try store.commitMigration(record: record, transfer: state.transfer)
+            return
+        }
         guard !isMountPoint(original) else { throw DataOperationSafety.Failure.conflict(original.path) }
         try requireVerifiedResumeOriginal(at: original, identity: transfer.sourceIdentity, baseline: baseline)
         if let expected = transfer.backupIdentity {
@@ -600,7 +1153,7 @@ actor ContainerVolumeMigrator {
             // The automatic mount may use noowners. Mount this same proven
             // volume privately with the existing owners policy before checking
             // its complete metadata; do not rewrite persistent ownership.
-            try await disk.unmount(mountPoint: automatic)
+            try await unmountVolume(mountPoint: automatic)
             try requireVerifiedResumeLedger(state)
             guard !isMountPoint(automatic) else { throw MigrationError.unmountFailed(automatic, "") }
             volumeRoot = nil
@@ -641,7 +1194,8 @@ actor ContainerVolumeMigrator {
             try requireVerifiedResumeLedger(state)
             try requireVerifiedResumeCopy(at: copied, identity: destinationIdentity, baseline: baseline, volumeUUID: uuid)
             try requireVerifiedResumeOriginal(at: original, identity: transfer.sourceIdentity, baseline: baseline)
-            try await disk.unmount(mountPoint: copied)
+            try DurableFileIO.syncTree(at: copied, excludingRootEntries: Self.volumeSystemArtifacts)
+            try await unmountVolume(mountPoint: copied)
             try requireVerifiedResumeLedger(state)
             guard !isMountPoint(copied) else { throw MigrationError.unmountFailed(copied, "") }
             removeEmptyDirectoryQuietly(at: copied)
@@ -650,7 +1204,8 @@ actor ContainerVolumeMigrator {
                     throw DataOperationSafety.Failure.conflict(local.path)
                 }
                 try requireVerifiedResumeOriginal(at: local, identity: transfer.sourceIdentity, baseline: baseline)
-                try DataTreeRelocator.move(local, to: backup)
+                try moveTree(local, to: backup)
+                try DurableFileIO.syncDirectory(at: local.deletingLastPathComponent())
                 var moved = state.transfer
                 moved.backupIdentity = try DataPathIdentity.capture(backup)
                 try saveVerifiedResume(moved, state: &state)
@@ -669,13 +1224,14 @@ actor ContainerVolumeMigrator {
                 })
         }
         try await requireExpectedVolume(uuid, at: local)
-        try await safety.requireNoKnownWriters(at: local, bundleIdentifier: transfer.bundleIdentifier)
-        try await safety.requireNoKnownWriters(at: backup, bundleIdentifier: transfer.bundleIdentifier)
         try await requireExpectedVolume(uuid, at: local)
         try requireVerifiedResumeLedger(state)
         try requireOwners(at: local)
-        try requireVerifiedResumeCopy(at: local, identity: destinationIdentity, baseline: baseline, volumeUUID: uuid)
-        try requireVerifiedResumeOriginal(at: backup, identity: transfer.sourceIdentity, baseline: baseline)
+        guard try DataPathIdentity.capture(local, volumeUUID: uuid).matchesFilesystemObject(destinationIdentity) else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        try DurableFileIO.syncTree(at: local, excludingRootEntries: Self.volumeSystemArtifacts)
+        try DurableFileIO.syncDirectory(at: local.deletingLastPathComponent())
         try store.commitMigration(record: record, transfer: state.transfer)
     }
 
@@ -720,12 +1276,12 @@ actor ContainerVolumeMigrator {
         if !isMountPoint(local), !isSymbolicLink(at: local),
            let identity = try? DataPathIdentity.capture(local), identity.matchesFilesystemObject(destinationIdentity) {
             guard try !verifiedResumeEntryExists(staging) else { throw DataOperationSafety.Failure.conflict(staging.path) }
-            try await safety.requireNoKnownWriters(at: local, bundleIdentifier: transfer.bundleIdentifier)
             try requireVerifiedResumeLedger(state)
-            try requireVerifiedResumeCopy(at: local, identity: destinationIdentity, baseline: baseline)
             try safety.requireLocalRestoreParent(at: local, isMountPoint: isMountPoint)
             try beginVerifiedResumeRestore(&state)
             try requireVerifiedResumeLedger(state)
+            try DurableFileIO.syncTree(at: local, excludingRootEntries: Self.volumeSystemArtifacts)
+            try DurableFileIO.syncDirectory(at: local.deletingLastPathComponent())
             try store.finalizeTransfer(operationID: transfer.operationID, baseline: transfer.baseline!)
             return
         }
@@ -761,7 +1317,7 @@ actor ContainerVolumeMigrator {
             guard let flags = mountFlags(source) else { throw DataOperationSafety.Failure.inspection(source.path) }
             if flags & UInt32(MNT_IGNORE_OWNERSHIP) != 0 {
                 ownershipUpdate = (source, flags)
-                try await disk.setOwnershipForRestore(mountPoint: source, originalFlags: flags, enabled: true)
+                try await setOwnershipForRestore(mountPoint: source, originalFlags: flags, enabled: true)
                 try await requireExpectedVolume(uuid, at: source)
             }
             try await safety.requireNoKnownWriters(at: staging, bundleIdentifier: transfer.bundleIdentifier)
@@ -770,6 +1326,7 @@ actor ContainerVolumeMigrator {
             try requireOwners(at: source)
             try requireVerifiedResumeOriginal(at: source, identity: transfer.sourceIdentity, baseline: baseline, volumeUUID: uuid)
             try requireVerifiedResumeCopy(at: staging, identity: destinationIdentity, baseline: baseline)
+            try DurableFileIO.syncTree(at: staging, excludingRootEntries: Self.volumeSystemArtifacts)
             if source != local, source != recovery, verifiedResumeAutomaticPath(uuid, state: state) != source {
                 throw DataOperationSafety.Failure.conflict(source.path)
             }
@@ -786,22 +1343,22 @@ actor ContainerVolumeMigrator {
             if source != local, source != recovery, verifiedResumeAutomaticPath(uuid, state: state) != source {
                 throw DataOperationSafety.Failure.conflict(source.path)
             }
-            try await disk.unmount(mountPoint: source)
+            try await unmountVolume(mountPoint: source)
             try requireVerifiedResumeLedger(state)
             guard !isMountPoint(source) else { throw MigrationError.unmountFailed(source, "") }
             try safety.requireLocalRestoreParent(at: local, isMountPoint: isMountPoint)
             if source == recovery { removeEmptyDirectoryQuietly(at: source) }
             if try verifiedResumeEntryExists(local) { try removeEmptyMountPoint(at: local) }
             try requireVerifiedResumeCopy(at: staging, identity: destinationIdentity, baseline: baseline)
-            try DataTreeRelocator.move(staging, to: local)
-            try requireVerifiedResumeCopy(at: local, identity: destinationIdentity, baseline: baseline)
+            try moveTree(staging, to: local)
+            try DurableFileIO.syncDirectory(at: local.deletingLastPathComponent())
             try requireVerifiedResumeLedger(state)
             try store.finalizeTransfer(operationID: transfer.operationID, baseline: transfer.baseline!)
         } catch {
             if let update = ownershipUpdate, isMountPoint(update.path) {
                 do {
                     try await requireExpectedVolume(uuid, at: update.path)
-                    try await disk.setOwnershipForRestore(mountPoint: update.path, originalFlags: update.flags, enabled: false)
+                    try await setOwnershipForRestore(mountPoint: update.path, originalFlags: update.flags, enabled: false)
                     try await requireExpectedVolume(uuid, at: update.path)
                     let mask = UInt32(MNT_IGNORE_OWNERSHIP | MNT_DONTBROWSE | MNT_RDONLY | MNT_NODEV | MNT_NOSUID | MNT_NOEXEC)
                     guard let flags = mountFlags(update.path), flags & mask == (update.flags | UInt32(MNT_DONTBROWSE)) & mask else {
@@ -830,10 +1387,13 @@ actor ContainerVolumeMigrator {
         externalRootURL: URL,
         appName: String,
         bundleIdentifier: String?,
-        progressHandler: FileCopier.ProgressHandler?
+        progressHandler: FileCopier.ProgressHandler?,
+        reusingOperationID: UUID? = nil
     ) async throws -> MigrationResult {
         let source = item.path.standardizedFileURL
-        try await safety.requireNewMigration(at: source, bundleIdentifier: bundleIdentifier)
+        let restored = try completedRestoreLineage(at: source)
+        try await safety.requireNewMigration(at: source, bundleIdentifier: bundleIdentifier,
+            ownedTransferIDs: Set(restored.map(\.operationID)))
         guard existingRealDirectory(at: source) else { throw MigrationError.sourceNotDirectory(source) }
         guard !isMountPoint(source) else { throw MigrationError.alreadyManaged(source) }
         guard !DataPathTopology.overlaps(DataPathTopology.relationship(source.path, externalRootURL.path)) else {
@@ -855,15 +1415,22 @@ actor ContainerVolumeMigrator {
             guard available >= required else { throw MigrationError.insufficientSpace(required: required, available: available) }
         }
         let backup = makeMigrationBackupURL(for: source)
-        var transfer = DataTransferRecord(mode: .mount, direction: .migrate, sourceID: item.id,
+        var transfer = DataTransferRecord(operationID: reusingOperationID ?? UUID(), mode: .mount, direction: .migrate, sourceID: item.id,
             appName: appName, bundleIdentifier: bundleIdentifier, dataDirType: item.type.rawValue,
             originalPath: source.path, activePath: source.path, destinationPath: source.path,
-            backupPath: backup.path, sourceIdentity: try DataPathIdentity.capture(source))
-        try store.beginTransfer(transfer)
+            backupPath: backup.path, sourceIdentity: try DataPathIdentity.capture(source),
+            priorOperationID: restored.last?.operationID)
         let operationID = transfer.operationID.uuidString
         let volumeName = DiskUtility.makeVolumeName(bundleIdentifier: bundleIdentifier, appName: appName,
                                                     directoryName: source.lastPathComponent)
+        let staging = stagingMountRootURL.appendingPathComponent(operationID)
+        transfer.stagingPath = staging.path
+        transfer.preparationPath = staging.path
+        transfer.volumeCreationContainerUUID = try await disk.apfsCreationContainerUUID(container)
+        transfer.volumeCreationName = volumeName
+        try store.beginTransfer(transfer)
         do {
+            try store.recheckWriterAdmission()
             let device = try await disk.createAPFSVolume(inContainer: container, name: volumeName)
             let info = try await disk.volumeInfo(for: device)
             guard let uuid = info.volumeUUID else { throw MigrationError.volumeCreationFailed(device) }
@@ -873,10 +1440,14 @@ actor ContainerVolumeMigrator {
                 volumeName: volumeName, externalRootPath: externalRootURL.standardizedFileURL.path,
                 createdAt: transfer.createdAt, ownershipPolicy: .owners)
             transfer.recoveryMountRecord = record
-            let staging = stagingMountRootURL.appendingPathComponent(operationID)
-            transfer.stagingPath = staging.path
             try store.updateTransfer(transfer)
             try fileManager.createDirectory(at: staging.deletingLastPathComponent(), withIntermediateDirectories: true)
+            transfer.stagingParentIdentity = try DataPathIdentity.capture(staging.deletingLastPathComponent())
+            try store.updateTransfer(transfer)
+            try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+            try DurableFileIO.syncDirectory(at: staging.deletingLastPathComponent())
+            transfer.stagingIdentity = try DataPathIdentity.capture(staging)
+            try store.updateTransfer(transfer)
             try await mountVolume(uuid, at: staging, operationID: operationID)
             try requireOwners(at: staging)
             guard try DataPathIdentity.capture(source) == transfer.sourceIdentity else {
@@ -889,10 +1460,12 @@ actor ContainerVolumeMigrator {
                                   dataDirType: item.type.rawValue, appName: appName)
             transfer.phase = .copying
             try store.updateTransfer(transfer)
-            let baseline = try await TreeCopySession().copy(from: source, to: staging,
-                excludingRootEntries: Self.volumeSystemArtifacts, finalDestination: source, progressHandler: progressHandler)
+            let baseline = try await copyPreparation(transfer, source: source, destination: staging,
+                finalDestination: source, progressHandler: progressHandler)
+            transfer = try store.transfer(operationID: transfer.operationID) ?? transfer
             try TreeCopySession.applyRootMetadata(at: staging, from: baseline, ownershipRole: .destination)
             try TreeCopySession.verifyCopy(at: staging, against: baseline)
+            try DurableFileIO.syncTree(at: staging, excludingRootEntries: Self.volumeSystemArtifacts)
             transfer.baseline = try PropertyListEncoder().encode(baseline)
             transfer.destinationIdentity = try DataPathIdentity.capture(staging, volumeUUID: uuid)
             transfer.phase = .verified
@@ -903,19 +1476,21 @@ actor ContainerVolumeMigrator {
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
             try TreeCopySession.verifyCopy(at: staging, against: baseline)
             try await requireExpectedVolume(uuid, at: staging)
-            try await disk.unmount(mountPoint: staging)
+            try await unmountVolume(mountPoint: staging)
             removeEmptyDirectoryQuietly(at: staging)
             transfer.phase = .switching
             try store.updateTransfer(transfer)
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
-            try DataTreeRelocator.move(source, to: backup)
+            try moveTree(source, to: backup)
+            try DurableFileIO.syncDirectory(at: source.deletingLastPathComponent())
             transfer.backupIdentity = try DataPathIdentity.capture(backup)
             try store.updateTransfer(transfer)
             try TreeCopySession.verifyUnchanged(at: backup, against: baseline)
             try await mountVolume(uuid, at: source, operationID: operationID)
             try requireOwners(at: source)
             // A held descriptor can still write to the retained original after rename.
-            try TreeCopySession.verifyUnchanged(at: backup, against: baseline)
+            try DurableFileIO.syncTree(at: source, excludingRootEntries: Self.volumeSystemArtifacts)
+            try DurableFileIO.syncDirectory(at: source.deletingLastPathComponent())
             try store.commitMigration(record: record, transfer: transfer)
             synchronizeAgent(store)
             invalidateSizeCache(for: source)
@@ -923,6 +1498,8 @@ actor ContainerVolumeMigrator {
         } catch {
             // Never erase a partial or switched copy on an error. Durable intent
             // keeps all known identities available for explicit recovery.
+            transfer = (try? store.transfer(operationID: transfer.operationID)) ?? transfer
+            if transfer.isDataSwitchComplete { throw error }
             transfer.phase = .needsRecovery
             transfer.recoverableReason = error.localizedDescription
             do { try store.updateTransfer(transfer) }
@@ -938,9 +1515,13 @@ actor ContainerVolumeMigrator {
         let mountPoint = record.mountPointURL
         try safety.requirePolicy(at: mountPoint)
         guard try store.recordsStrict().contains(record) else { throw DataOperationSafety.Failure.conflict(mountPoint.path) }
-        let related = try store.transfers().filter {
+        let history = try store.transfers()
+        let related = history.filter {
             $0.mode == .mount && $0.direction == .migrate && $0.createdVolumeUUID == record.volumeUUID
                 && $0.originalPath == record.mountPointPath && [.awaitingUserVerification, .cleanupRequested].contains($0.phase)
+        }
+        let ownedIDs = try related.reduce(into: Set<UUID>()) { result, transfer in
+            result.formUnion(try transferAncestors(of: transfer, in: history))
         }
         let compatibleRestores = try await remountCompatibleRestoreIDs(record: record)
         let requiresOwnership = record.ownershipPolicy == .owners || related.contains { $0.baseline != nil }
@@ -952,12 +1533,12 @@ actor ContainerVolumeMigrator {
             if requiresOwnership { try requireOwners(at: mountPoint) }
             if !compatibleRestores.isEmpty {
                 try safety.requireNoOverlap(at: mountPoint, ownedMount: record,
-                    ownedTransferIDs: Set(related.map(\.operationID)).union(compatibleRestores))
+                    ownedTransferIDs: ownedIDs.union(compatibleRestores))
             }
             return
         }
         try safety.requireNoOverlap(at: mountPoint, ownedMount: record,
-                                    ownedTransferIDs: Set(related.map(\.operationID)).union(compatibleRestores))
+                                    ownedTransferIDs: ownedIDs.union(compatibleRestores))
         try safety.requireNoManagedFileSystemAncestor(at: mountPoint)
         let operationID = AppLogger.shared.makeOperationID(prefix: "container-mount")
         let hint = try await knownMountPoint(for: record, operationID: operationID)
@@ -1030,7 +1611,7 @@ actor ContainerVolumeMigrator {
         try await requireExpectedVolume(record.volumeUUID, at: mountPoint)
         try await safety.requireNoKnownWriters(at: mountPoint, bundleIdentifier: record.bundleIdentifier)
         do {
-            try await disk.unmount(mountPoint: mountPoint, force: force)
+            try await unmountVolume(mountPoint: mountPoint, force: force)
         } catch {
             AppLogger.shared.logError(
                 "卸载容器卷失败",
@@ -1101,12 +1682,13 @@ actor ContainerVolumeMigrator {
         estimatedTotalBytes: Int64,
         progressHandler: FileCopier.ProgressHandler?
     ) async throws -> CleanupWarning? {
+        try await completeInterruptedMigrationBeforeRestore(record: record, progressHandler: progressHandler)
         _ = try await restoreRetainingOriginal(record: record, estimatedTotalBytes: estimatedTotalBytes, progressHandler: progressHandler)
         return nil
     }
 
     private func restoreRetainingOriginal(record: ContainerMountRecord, estimatedTotalBytes: Int64,
-                                          progressHandler: FileCopier.ProgressHandler?) async throws -> UUID {
+                                          progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
         let mountPoint = record.mountPointURL
         // Exact history ownership is required. A stale UI value cannot authorize recovery.
         guard try store.recordsStrict().contains(record) else { throw MigrationError.alreadyManaged(mountPoint) }
@@ -1122,7 +1704,7 @@ actor ContainerVolumeMigrator {
         }
         guard resumable.count <= 1 else { throw DataOperationSafety.Failure.conflict(mountPoint.path) }
         if let pending = resumable.first { try await validateUnstartedRestorePaths(pending, record: record) }
-        var ownedIDs = Set(prior.map { [$0.operationID] } ?? [])
+        var ownedIDs = try prior.map { try transferAncestors(of: $0, in: transfers) } ?? []
         if let pending = resumable.first { ownedIDs.insert(pending.operationID) }
         try safety.requireNoOverlap(at: mountPoint, ownedMount: record, ownedTransferIDs: ownedIDs)
         try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
@@ -1149,7 +1731,7 @@ actor ContainerVolumeMigrator {
                 }
             }
         }
-        let id = resumable.first?.operationID ?? UUID()
+        let id = resumable.first?.operationID ?? reusingOperationID ?? UUID()
         let staging = mountPoint.deletingLastPathComponent().appendingPathComponent(".appports-restore-staging-\(id.uuidString)")
         let recovery = stagingMountRootURL.appendingPathComponent("recovery-\(id.uuidString)")
         var transfer = DataTransferRecord(operationID: id, mode: .mount, direction: .restore,
@@ -1158,6 +1740,9 @@ actor ContainerVolumeMigrator {
             destinationPath: mountPoint.path, backupPath: recovery.path, stagingPath: staging.path,
             sourceIdentity: DataPathIdentity(volumeUUID: record.volumeUUID), priorOperationID: prior?.operationID)
         transfer.recoveryMountRecord = record
+        transfer.preparationPath = staging.path
+        transfer.preparationParentIdentity = try DataPathIdentity.capture(staging.deletingLastPathComponent())
+        transfer.originalSourceMountFlags = originalFlags
         if let pending = resumable.first {
             transfer = try store.resumeUnstartedMountRestore(pending, record: record)
             if transfer.recoveryMountRecord == nil {
@@ -1184,7 +1769,7 @@ actor ContainerVolumeMigrator {
                     try await requireExpectedVolume(record.volumeUUID, at: mountPoint)
                     guard mountFlags(mountPoint) == flags else { throw DataOperationSafety.Failure.conflict(mountPoint.path) }
                     ownershipUpdateFlags = flags
-                    try await disk.setOwnershipForRestore(mountPoint: mountPoint, originalFlags: flags, enabled: true)
+                    try await setOwnershipForRestore(mountPoint: mountPoint, originalFlags: flags, enabled: true)
                     try await requireExpectedVolume(record.volumeUUID, at: mountPoint)
                 }
                 source = mountPoint
@@ -1196,8 +1781,11 @@ actor ContainerVolumeMigrator {
                 }
                 try fileManager.createDirectory(at: recovery.deletingLastPathComponent(), withIntermediateDirectories: true)
                 if transfer.recoveryMountPointIdentity == nil {
+                    transfer.stagingParentIdentity = try DataPathIdentity.capture(recovery.deletingLastPathComponent())
+                    try store.updateTransfer(transfer)
                     // Creation must be exclusive; a pre-existing directory is not our intent.
                     try fileManager.createDirectory(at: recovery, withIntermediateDirectories: false)
+                    try DurableFileIO.syncDirectory(at: recovery.deletingLastPathComponent())
                     transfer.recoveryMountPointIdentity = try DataPathIdentity.capture(recovery)
                     try store.updateTransfer(transfer)
                 }
@@ -1229,9 +1817,9 @@ actor ContainerVolumeMigrator {
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: record.bundleIdentifier)
             transfer.phase = .copying
             try store.updateTransfer(transfer)
-            let baseline = try await TreeCopySession().copy(from: source, to: staging,
-                excludingRootEntries: Self.volumeSystemArtifacts, finalDestination: mountPoint,
-                logicalSourceRoot: mountPoint, legacyRootOwnership: transfer.legacyRootOwnership, progressHandler: progressHandler)
+            let baseline = try await copyPreparation(transfer, source: source, destination: staging,
+                finalDestination: mountPoint, logicalSourceRoot: mountPoint, progressHandler: progressHandler)
+            transfer = try store.transfer(operationID: id) ?? transfer
             transfer.baseline = try PropertyListEncoder().encode(baseline)
             transfer.destinationIdentity = try DataPathIdentity.capture(staging)
             transfer.backupIdentity = transfer.sourceIdentity
@@ -1239,15 +1827,17 @@ actor ContainerVolumeMigrator {
             try store.updateTransfer(transfer)
             await progressHandler?(FileCopier.Progress(copiedBytes: baseline.logicalBytes,
                 totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized))
+            try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: record.bundleIdentifier)
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
             try TreeCopySession.verifyCopy(at: staging, against: baseline)
+            try DurableFileIO.syncTree(at: staging, excludingRootEntries: Self.volumeSystemArtifacts)
             try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
             try store.beginRestore(transfer: transfer, removingMount: record)
             transfer.phase = .switching
             synchronizeAgent(store)
             try await requireExpectedVolume(record.volumeUUID, at: source)
-            try await disk.unmount(mountPoint: source)
+            try await unmountVolume(mountPoint: source)
             try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
             if source != mountPoint { removeEmptyDirectoryQuietly(at: source) }
             if fileManager.fileExists(atPath: mountPoint.path) {
@@ -1255,14 +1845,16 @@ actor ContainerVolumeMigrator {
             } else if isSymbolicLink(at: mountPoint) {
                 throw DataOperationSafety.Failure.conflict(mountPoint.path)
             }
-            try DataTreeRelocator.move(staging, to: mountPoint)
-            try TreeCopySession.verifyCopy(at: mountPoint, against: baseline)
+            try moveTree(staging, to: mountPoint)
+            try DurableFileIO.syncDirectory(at: mountPoint.deletingLastPathComponent())
             try store.finalizeTransfer(operationID: id, baseline: transfer.baseline!)
             invalidateSizeCache(for: mountPoint)
             // Completion cleans this verified source after the restore commits.
             return id
         } catch {
             var reportedError: Error = error
+            transfer = (try? store.transfer(operationID: transfer.operationID)) ?? transfer
+            if transfer.isDataSwitchComplete { throw error }
             transfer.phase = .needsRecovery
             // Revert only an update attempted by this invocation, using its fresh
             // flags. Persisted historical flags must not override a later user edit.
@@ -1271,7 +1863,7 @@ actor ContainerVolumeMigrator {
                     // Use the same UUID fallback as forward preflight. A missing
                     // fast UUID must not silently skip restoring the mount options.
                     try await requireExpectedVolume(record.volumeUUID, at: mountPoint)
-                    try await disk.setOwnershipForRestore(mountPoint: mountPoint, originalFlags: flags, enabled: false)
+                    try await setOwnershipForRestore(mountPoint: mountPoint, originalFlags: flags, enabled: false)
                     try await requireExpectedVolume(record.volumeUUID, at: mountPoint)
                     let mask = UInt32(MNT_IGNORE_OWNERSHIP | MNT_DONTBROWSE | MNT_RDONLY | MNT_NODEV | MNT_NOSUID | MNT_NOEXEC)
                     guard let restored = mountFlags(mountPoint), restored & mask == (flags | UInt32(MNT_DONTBROWSE)) & mask else {
@@ -1290,25 +1882,78 @@ actor ContainerVolumeMigrator {
         }
     }
 
+    /// A cleanup can update its own phase and removal checkpoint without
+    /// changing this location. A different successor must be inspected and
+    /// synchronized by a new cleanup attempt before any old copy is removed.
+    private struct ActiveDataLocation: Equatable {
+        let operationID: UUID
+        let mode: DataTransferRecord.Mode
+        let direction: DataTransferRecord.Direction
+        let originalPath: String
+        let activePath: String
+        let identity: DataPathIdentity?
+        let volumeUUID: String?
+
+        init(_ transfer: DataTransferRecord) {
+            operationID = transfer.operationID
+            mode = transfer.mode
+            direction = transfer.direction
+            originalPath = transfer.originalPath
+            activePath = transfer.activePath
+            identity = transfer.destinationIdentity
+            volumeUUID = transfer.createdVolumeUUID
+        }
+    }
+
     /// Verify current data independently of the age of its retained copy.
     /// Run this again after asynchronous disk/process inspections.
-    private func requireActiveData(for transfer: DataTransferRecord) async throws {
-        let active = URL(fileURLWithPath: transfer.activePath)
-        if transfer.direction == .migrate, let uuid = transfer.createdVolumeUUID, isMountPoint(active) {
+    @discardableResult
+    func requireActiveData(for transfer: DataTransferRecord) async throws -> URL {
+        try await requireActiveData(for: transfer, matching: nil)
+    }
+
+    @discardableResult
+    private func requireActiveData(for transfer: DataTransferRecord,
+                                   matching expectedLocation: ActiveDataLocation?) async throws -> URL {
+        let current = try store.completedLocation(after: transfer.operationID)
+        let location = ActiveDataLocation(current)
+        guard expectedLocation == nil || expectedLocation == location else {
+            throw DataOperationSafety.Failure.conflict(current.activePath)
+        }
+        let active = URL(fileURLWithPath: current.activePath)
+        if current.direction == .migrate, current.mode == .mount,
+           let uuid = current.createdVolumeUUID, isMountPoint(active) {
             try await requireExpectedVolume(uuid, at: active)
-            guard let expected = transfer.destinationIdentity,
+            guard let expected = current.destinationIdentity,
                   try DataPathIdentity.capture(active, volumeUUID: uuid).matchesFilesystemObject(expected) else {
                 throw DataOperationSafety.Failure.conflict(active.path)
             }
+        } else if current.direction == .migrate, current.mode == .symlink {
+            let local = URL(fileURLWithPath: current.originalPath)
+            guard let expected = current.destinationIdentity,
+                  let link = try store.managedLink(forOriginalPath: current.originalPath),
+                  link.operationID == current.operationID, link.destinationPath == active.path,
+                  link.destinationIdentity.matchesFilesystemObject(expected),
+                  !isSymbolicLink(at: active),
+                  try DataPathIdentity.capture(active).matchesFilesystemObject(expected) else {
+                throw DataOperationSafety.Failure.conflict(active.path)
+            }
+            if isSymbolicLink(at: local) {
+                guard DataPathTopology.relationship(local.path, active.path) == .same else {
+                    throw DataOperationSafety.Failure.conflict(local.path)
+                }
+            } else if try verifiedResumeEntryExists(local) { throw DataOperationSafety.Failure.conflict(local.path) }
         } else {
-            let expected = transfer.direction == .restore ? transfer.destinationIdentity : try store.transfers().first {
-                $0.mode == .mount && $0.direction == .restore && $0.priorOperationID == transfer.operationID && $0.isDataSwitchComplete
-            }?.destinationIdentity
-            guard let expected, !isMountPoint(active), !isSymbolicLink(at: active),
+            guard current.direction == .restore, current.isDataSwitchComplete,
+                  let expected = current.destinationIdentity, !isMountPoint(active), !isSymbolicLink(at: active),
                   try DataPathIdentity.capture(active).matchesFilesystemObject(expected) else {
                 throw DataOperationSafety.Failure.conflict(active.path)
             }
         }
+        guard ActiveDataLocation(try store.completedLocation(after: transfer.operationID)) == location else {
+            throw DataOperationSafety.Failure.conflict(active.path)
+        }
+        return active
     }
 
     /// Retained cleanup is resumable without reverting a completed data switch.
@@ -1316,13 +1961,18 @@ actor ContainerVolumeMigrator {
         guard runningCleanups.insert(operationID).inserted else { throw DataOperationSafety.Failure.occupied(operationID.uuidString) }
         defer { runningCleanups.remove(operationID) }
         guard var transfer = try store.transfer(operationID: operationID) else { return }
+        if transfer.retainedCopyRemovedAt != nil {
+            try store.finishTransfer(operationID: operationID, deletionConfirmed: true)
+            return
+        }
         guard transfer.mode == .mount, transfer.isDataSwitchComplete,
               let encoded = transfer.baseline, let backupPath = transfer.backupPath,
               let expectedBackup = transfer.backupIdentity else {
             throw DataOperationSafety.Failure.inspection(operationID.uuidString)
         }
         let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
-        let active = URL(fileURLWithPath: transfer.activePath)
+        let location = ActiveDataLocation(try store.completedLocation(after: operationID))
+        let active = try await requireActiveData(for: transfer, matching: location)
         let backup = URL(fileURLWithPath: backupPath)
         let parent = backup.deletingLastPathComponent().resolvingSymlinksInPath()
         let deletionPreviouslyStarted = transfer.cleanupParentIdentity != nil
@@ -1341,7 +1991,6 @@ actor ContainerVolumeMigrator {
                 try TreeCopySession.verifyUnchanged(at: retained, against: baseline)
             }
         }
-        try await requireActiveData(for: transfer)
         try safety.requireNoOverlap(at: backup, ownedTransferIDs: [operationID], ownedRetainedPath: backup.path)
         if let expectedParent = transfer.cleanupParentIdentity {
             guard try DataPathIdentity.capture(parent).matchesFilesystemObject(expectedParent) else {
@@ -1349,6 +1998,9 @@ actor ContainerVolumeMigrator {
             }
         }
         try await safety.requireNoKnownWriters(at: active, bundleIdentifier: transfer.bundleIdentifier)
+        try await requireActiveData(for: transfer, matching: location)
+        try DurableFileIO.syncTree(at: active, excludingRootEntries: Self.volumeSystemArtifacts)
+        try DurableFileIO.syncDirectory(at: active.deletingLastPathComponent())
         do {
             if transfer.direction == .migrate {
                 let retained = try TreeCopySession.retainedRemovalURL(at: backup, removalID: operationID)
@@ -1359,7 +2011,7 @@ actor ContainerVolumeMigrator {
                     }
                     try await safety.requireNoKnownWriters(at: retained, bundleIdentifier: transfer.bundleIdentifier)
                     try verifyMigrationBackup()
-                    try await requireActiveData(for: transfer)
+                    try await requireActiveData(for: transfer, matching: location)
                     guard try store.transfer(operationID: operationID) == transfer else {
                         throw DataOperationSafety.Failure.conflict(backup.path)
                     }
@@ -1370,7 +2022,7 @@ actor ContainerVolumeMigrator {
                     let parentIdentity = try DataPathIdentity.capture(parent)
                     try store.beginCleanupDeletion(operationID: operationID, parentIdentity: parentIdentity)
                     transfer.cleanupParentIdentity = transfer.cleanupParentIdentity ?? parentIdentity
-                    try await requireActiveData(for: transfer)
+                    try await requireActiveData(for: transfer, matching: location)
                     guard try store.transfer(operationID: operationID) == transfer,
                           try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity) else {
                         throw DataOperationSafety.Failure.conflict(backup.path)
@@ -1378,11 +2030,12 @@ actor ContainerVolumeMigrator {
                     // A newly written checkpoint must not make a missing file
                     // count as a deletion that this invocation never performed.
                     try verifyMigrationBackup()
+                    try store.recheckWriterAdmission()
                     try TreeCopySession.removeVerifiedCopy(at: backup, against: baseline, allowPartialRemoval: deletionPreviouslyStarted,
                         expectedVolumeUUID: expectedBackup.volumeUUID, removalID: operationID)
                 } else {
                     guard transfer.cleanupParentIdentity != nil else { throw DataOperationSafety.Failure.inspection(backup.path) }
-                    try await requireActiveData(for: transfer)
+                    try await requireActiveData(for: transfer, matching: location)
                     // The same online parent and absent original/quarantine prove
                     // that only the ledger write remains after a prior deletion.
                     guard try DataPathIdentity.capture(parent).matchesFilesystemObject(transfer.cleanupParentIdentity!) else {
@@ -1390,55 +2043,72 @@ actor ContainerVolumeMigrator {
                     }
                     try store.requestCleanup(operationID: operationID)
                     transfer.phase = .cleanupRequested
+                    transfer.recoverableReason = nil
                 }
             } else {
                 guard let uuid = transfer.sourceIdentity.volumeUUID else { throw DataOperationSafety.Failure.inspection(backup.path) }
                 if let container = transfer.cleanupVolumeContainerUUID,
                    try await !disk.apfsVolumeIsPresent(uuid, inContainer: container) {
-                    try await requireActiveData(for: transfer)
+                    try await requireActiveData(for: transfer, matching: location)
                     try store.requestCleanup(operationID: operationID)
-                    try store.finishTransfer(operationID: operationID, deletionConfirmed: true)
-                    return
-                }
-                let info = try await disk.volumeInfo(for: uuid)
-                guard info.volumeUUID?.caseInsensitiveCompare(uuid) == .orderedSame else {
-                    throw DataOperationSafety.Failure.conflict(backup.path)
-                }
-                if let current = info.mountPoint, !current.isEmpty {
-                    guard DiskUtility.pathsMatch(current, backup.path) else { throw DataOperationSafety.Failure.conflict(current) }
-                    try await requireExpectedVolume(uuid, at: backup)
+                    transfer.phase = .cleanupRequested
+                    transfer.recoverableReason = nil
                 } else {
-                    try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
-                    try await mountVolume(uuid, at: backup, operationID: operationID.uuidString, allowRelocation: false)
+                    let info = try await disk.volumeInfo(for: uuid)
+                    guard info.volumeUUID?.caseInsensitiveCompare(uuid) == .orderedSame else {
+                        throw DataOperationSafety.Failure.conflict(backup.path)
+                    }
+                    if let current = info.mountPoint, !current.isEmpty {
+                        guard DiskUtility.pathsMatch(current, backup.path) else { throw DataOperationSafety.Failure.conflict(current) }
+                        try await requireExpectedVolume(uuid, at: backup)
+                    } else {
+                        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+                        try await mountVolume(uuid, at: backup, operationID: operationID.uuidString, allowRelocation: false)
+                    }
+                    try requireOwners(at: backup)
+                    guard try DataPathIdentity.capture(backup, volumeUUID: uuid).matchesFilesystemObject(expectedBackup) else {
+                        throw DataOperationSafety.Failure.conflict(backup.path)
+                    }
+                    try await safety.requireNoKnownWriters(at: backup, bundleIdentifier: transfer.bundleIdentifier)
+                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
+                    let container = try await disk.apfsContainerUUID(containingVolume: uuid)
+                    try await requireExpectedVolume(uuid, at: backup)
+                    // Recheck after every suspension before the final unmount.
+                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
+                    try await requireActiveData(for: transfer, matching: location)
+                    guard try store.transfer(operationID: operationID) == transfer else {
+                        throw DataOperationSafety.Failure.conflict(backup.path)
+                    }
+                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
+                    try store.requestCleanup(operationID: operationID)
+                    transfer.phase = .cleanupRequested
+                    transfer.recoverableReason = nil
+                    let parentIdentity = try DataPathIdentity.capture(parent)
+                    try store.beginCleanupDeletion(operationID: operationID, parentIdentity: parentIdentity, volumeContainerUUID: container)
+                    transfer.cleanupParentIdentity = transfer.cleanupParentIdentity ?? parentIdentity
+                    transfer.cleanupVolumeContainerUUID = container
+                    try await requireActiveData(for: transfer, matching: location)
+                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
+                    try await unmountVolume(mountPoint: backup)
+                    removeEmptyDirectoryQuietly(at: backup)
+                    try await requireActiveData(for: transfer, matching: location)
+                    try await deleteAPFSVolume(uuid)
+                    guard try await !disk.apfsVolumeIsPresent(uuid, inContainer: container) else {
+                        throw DataOperationSafety.Failure.inspection(uuid)
+                    }
                 }
-                try requireOwners(at: backup)
-                guard try DataPathIdentity.capture(backup, volumeUUID: uuid).matchesFilesystemObject(expectedBackup) else {
-                    throw DataOperationSafety.Failure.conflict(backup.path)
-                }
-                try await safety.requireNoKnownWriters(at: backup, bundleIdentifier: transfer.bundleIdentifier)
-                try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
-                let container = try await disk.apfsContainerUUID(containingVolume: uuid)
-                try await requireExpectedVolume(uuid, at: backup)
-                // Recheck after every suspension before the final unmount.
-                try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
-                try await requireActiveData(for: transfer)
-                guard try store.transfer(operationID: operationID) == transfer else {
-                    throw DataOperationSafety.Failure.conflict(backup.path)
-                }
-                try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
-                try store.requestCleanup(operationID: operationID)
-                transfer.phase = .cleanupRequested
-                transfer.recoverableReason = nil
-                let parentIdentity = try DataPathIdentity.capture(parent)
-                try store.beginCleanupDeletion(operationID: operationID, parentIdentity: parentIdentity, volumeContainerUUID: container)
-                transfer.cleanupParentIdentity = transfer.cleanupParentIdentity ?? parentIdentity
-                transfer.cleanupVolumeContainerUUID = container
-                try await requireActiveData(for: transfer)
-                try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
-                try await disk.unmount(mountPoint: backup)
-                removeEmptyDirectoryQuietly(at: backup)
-                try await requireActiveData(for: transfer)
-                try await disk.deleteAPFSVolume(uuid)
+            }
+            // A confirmed absent volume still owes this same barrier after
+            // interruption. Neither a new parent nor a failed sync can retire
+            // the original manifest and its deletion checkpoint.
+            guard let expectedParent = transfer.cleanupParentIdentity,
+                  try store.transfer(operationID: operationID) == transfer,
+                  try DataPathIdentity.capture(parent).matchesFilesystemObject(expectedParent) else {
+                throw DataOperationSafety.Failure.conflict(parent.path)
+            }
+            try synchronizeCleanupParent(parent)
+            guard try DataPathIdentity.capture(parent).matchesFilesystemObject(expectedParent) else {
+                throw DataOperationSafety.Failure.conflict(parent.path)
             }
             try store.finishTransfer(operationID: operationID, deletionConfirmed: true)
         } catch {
@@ -1469,19 +2139,27 @@ actor ContainerVolumeMigrator {
     /// 用户明确确认后仅移除清理记录，保留所有副本；用于无法分辨卷已删除还是已断开的情况。
     /// 未完成的本地切换仍需保留恢复信息，不能通过此入口遗忘。
     func discardCleanupRecord(_ cleanup: ContainerCleanupRecord) throws {
-        guard try store.pendingCleanups().contains(where: { $0.id == cleanup.id }) else { return }
-        if cleanup.kind == .restoredVolume {
-            let localURL = URL(fileURLWithPath: cleanup.localPath)
-            guard existingRealDirectory(at: localURL), !isMountPoint(localURL),
-                  cleanup.restoreStagingPath.map({ !fileManager.fileExists(atPath: $0) }) ?? true else {
-                throw MigrationError.sourceNotDirectory(localURL)
+        guard let current = try store.pendingCleanups().first(where: { $0.id == cleanup.id }) else { return }
+        guard current == cleanup else { throw DataOperationSafety.Failure.conflict(cleanup.localPath) }
+        try store.finishCleanup(current) {
+            if current.kind == .restoredVolume {
+                let localURL = URL(fileURLWithPath: current.localPath)
+                guard existingRealDirectory(at: localURL) else {
+                    throw MigrationError.cleanupRecordLocalUnavailable(localURL)
+                }
+                guard !isMountPoint(localURL) else {
+                    throw MigrationError.cleanupRecordStillMounted(localURL)
+                }
+                if let path = current.restoreStagingPath {
+                    let staging = URL(fileURLWithPath: path)
+                    if try verifiedResumeEntryExists(staging) { throw MigrationError.cleanupRecordStagingExists(staging) }
+                }
             }
         }
-        try store.finishCleanup(cleanup.id)
         AppLogger.shared.logContext(
             "用户仅移除清理记录，保留副本",
-            details: [("cleanup_id", cleanup.id.uuidString), ("local_path", cleanup.localPath),
-                      ("volume_uuid", cleanup.mountRecord.volumeUUID)],
+            details: [("cleanup_id", current.id.uuidString), ("local_path", current.localPath),
+                      ("volume_uuid", current.mountRecord.volumeUUID)],
             level: "WARN"
         )
     }
@@ -1537,6 +2215,7 @@ actor ContainerVolumeMigrator {
             try validateBeforeMutation?()
             let lease: any MountPointLeasing
             do {
+                try store.recheckWriterAdmission()
                 lease = try makeMountPointLease(mountPoint)
                 try lease.verifyBeforeMount()
             } catch MountPointLease.Failure.notEmpty {
@@ -1598,6 +2277,7 @@ actor ContainerVolumeMigrator {
 
     /// A command failure never opens the local directory for a second attempt.
     private func performMount(_ volumeUUID: String, at mountPoint: URL, requireOwnership: Bool) async throws {
+        try store.recheckWriterAdmission()
         do { try await disk.mount(volume: volumeUUID, at: mountPoint, requireOwnership: requireOwnership) }
         catch { throw MigrationError.mountFailed(mountPoint, error.localizedDescription) }
     }
@@ -1736,7 +2416,7 @@ actor ContainerVolumeMigrator {
         )
         do {
             try await requireExpectedVolume(volumeUUID, at: currentURL)
-            try await disk.unmount(mountPoint: currentURL)
+            try await unmountVolume(mountPoint: currentURL)
         } catch {
             AppLogger.shared.logError(
                 "卸载占用其它挂载点的容器卷失败，无法把它挂到容器路径",
@@ -1754,7 +2434,7 @@ actor ContainerVolumeMigrator {
     }
 
     private func removeEmptyDirectoryQuietly(at url: URL) {
-        guard !isMountPoint(url), !isSymbolicLink(at: url),
+        guard (try? store.recheckWriterAdmission()) != nil, !isMountPoint(url), !isSymbolicLink(at: url),
               let lease = try? makeMountPointLease(url), (try? lease.verifyBeforeMount()) != nil else { return }
         _ = rmdir(url.path)
     }
@@ -1765,6 +2445,7 @@ actor ContainerVolumeMigrator {
         let lease: any MountPointLeasing
         do { lease = try makeMountPointLease(url); try lease.verifyBeforeMount() }
         catch MountPointLease.Failure.notEmpty { throw MigrationError.mountPointNotEmpty(url) }
+        try store.recheckWriterAdmission()
         guard rmdir(url.path) == 0 else {
             let code = errno
             if code == ENOTEMPTY || code == EEXIST { throw MigrationError.mountPointNotEmpty(url) }
@@ -1781,6 +2462,7 @@ actor ContainerVolumeMigrator {
         dataDirType: String,
         appName: String
     ) throws {
+        try store.recheckWriterAdmission()
         let marker = VolumeMarker(
             schemaVersion: ContainerMountRecord.currentSchemaVersion,
             managedBy: Self.managedIdentifier,
@@ -1792,7 +2474,7 @@ actor ContainerVolumeMigrator {
         )
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .xml
-        try encoder.encode(marker).write(to: volumeRoot.appendingPathComponent(Self.volumeMarkerFileName), options: .atomic)
+        try DurableFileIO.write(encoder.encode(marker), to: volumeRoot.appendingPathComponent(Self.volumeMarkerFileName))
     }
 
     /// `diskutil info` 的结果 → 卷挂在哪。
@@ -1831,6 +2513,7 @@ actor ContainerVolumeMigrator {
     private func hideFromFinderIfNeeded(_ mountPoint: URL) async {
         guard let flags = mountFlags(mountPoint), flags & UInt32(MNT_DONTBROWSE) == 0 else { return }
         do {
+            try store.recheckWriterAdmission()
             try await disk.hideFromFinder(mountPoint: mountPoint, currentFlags: flags)
             AppLogger.shared.logContext("已为早期挂载的容器卷补上 nobrowse", details: [("mount_point", mountPoint.path)])
         } catch {
@@ -1846,6 +2529,7 @@ actor ContainerVolumeMigrator {
     /// 不该让挂载本身失败（例如卷以只读方式挂上时）。
     private func writeNeverIndexMarkerIfNeeded(at volumeRoot: URL, operationID: String) {
         do {
+            try store.recheckWriterAdmission()
             guard try Self.writeNeverIndexMarker(at: volumeRoot, fileManager: fileManager) else { return }
             AppLogger.shared.logContext(
                 "卷根已写入防索引标记",
@@ -1863,6 +2547,26 @@ actor ContainerVolumeMigrator {
     }
 
     // MARK: - 私有辅助：文件系统
+
+    private func moveTree(_ source: URL, to destination: URL) throws {
+        try store.recheckWriterAdmission()
+        try DataTreeRelocator.move(source, to: destination)
+    }
+
+    private func unmountVolume(mountPoint: URL, force: Bool = false) async throws {
+        try store.recheckWriterAdmission()
+        try await disk.unmount(mountPoint: mountPoint, force: force)
+    }
+
+    private func deleteAPFSVolume(_ uuid: String) async throws {
+        try store.recheckWriterAdmission()
+        try await disk.deleteAPFSVolume(uuid)
+    }
+
+    private func setOwnershipForRestore(mountPoint: URL, originalFlags: UInt32, enabled: Bool) async throws {
+        try store.recheckWriterAdmission()
+        try await disk.setOwnershipForRestore(mountPoint: mountPoint, originalFlags: originalFlags, enabled: enabled)
+    }
 
     private func existingRealDirectory(at url: URL) -> Bool {
         var isDirectory = ObjCBool(false)

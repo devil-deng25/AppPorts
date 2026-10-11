@@ -11,43 +11,60 @@ import Testing
 /// 找不到复制后仍能严格校验的应用时，相关测试标为跳过，而不是误报签名逻辑失败。
 private enum SignedTestApplication {
     static let source: URL? = {
-        let configured = ProcessInfo.processInfo.environment["APPPORTS_SIGNED_TEST_APP"].map { URL(fileURLWithPath: $0) }
+        let configured = ProcessInfo.processInfo.environment["APPPORTS_SIGNED_TEST_APP"].flatMap { path -> URL? in
+            let app = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+            let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().standardizedFileURL.path
+            guard app.path.hasPrefix(temporary + "/"),
+                  CodeSigner.bundleIdentifier(at: app)?.hasPrefix("com.appports.tests.") == true else { return nil }
+            return app
+        }
         return ([configured].compactMap { $0 } + xcodeBundledApplications).lazy
             .compactMap { try? CodeSigner.resolveAppURL(at: $0) }
             .first(where: verifiesStrictlyAfterCopy)
     }()
 
     private static var xcodeBundledApplications: [URL] {
-        // 测试框架从当前 Xcode 里加载（…/Xcode.app/Contents/SharedFrameworks/Testing.framework）。
-        let frameworks = Bundle.allFrameworks.map(\.bundlePath)
-        guard let frameworkPath = frameworks.first(where: { $0.hasSuffix("/Testing.framework") || $0.hasSuffix("/XCTest.framework") }),
-              let range = frameworkPath.range(of: ".app/Contents/") else { return [] }
-        let xcode = URL(fileURLWithPath: String(frameworkPath[..<range.lowerBound]) + ".app")
-        // Accessibility Inspector 带私有授权，能顺带验证授权的恢复。
-        return ["Accessibility Inspector.app", "FileMerge.app"].map {
-            xcode.appendingPathComponent("Contents/Applications").appendingPathComponent($0)
+        // Only Xcode's bundled tools are approved real signed inputs. Every
+        // signing/moving/deleting operation below targets a temporary copy.
+        var roots = Bundle.allFrameworks.map(\.bundlePath).compactMap { path -> URL? in
+            guard path.hasSuffix("/Testing.framework") || path.hasSuffix("/XCTest.framework"),
+                  let range = path.range(of: ".app/Contents/") else { return nil }
+            return URL(fileURLWithPath: String(path[..<range.lowerBound]) + ".app")
+        }
+        if let developer = ProcessInfo.processInfo.environment["DEVELOPER_DIR"],
+           let range = developer.range(of: ".app/Contents/") {
+            roots.append(URL(fileURLWithPath: String(developer[..<range.lowerBound]) + ".app"))
+        }
+        roots.append(URL(fileURLWithPath: "/Applications/Xcode.app"))
+        return roots.flatMap { xcode in
+            ["Accessibility Inspector.app", "FileMerge.app"].map {
+                xcode.appendingPathComponent("Contents/Applications").appendingPathComponent($0)
+            }
         }
     }
 
     private static func verifiesStrictlyAfterCopy(_ app: URL) -> Bool {
-        let probe = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AppPortsSignedTestApplication-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: probe) }
+        let probe = FileManager.default.temporaryDirectory.appendingPathComponent("AppPortsSignedTestApplication-\(UUID().uuidString)")
+        defer { try? SignatureSnapshot.remove(probe) }
         do {
             try FileManager.default.createDirectory(at: probe, withIntermediateDirectories: true)
             let copy = probe.appendingPathComponent(app.lastPathComponent)
             try SignatureSnapshot.copy(from: app, to: copy)
+            guard try SignatureInspector.inspect(at: copy).developerIdentity != nil else { return false }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
             process.arguments = ["--verify", "--deep", "--strict", copy.path]
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             try process.run()
-            process.waitUntilExit()
+            let deadline = ProcessInfo.processInfo.systemUptime + 15
+            while process.isRunning, ProcessInfo.processInfo.systemUptime < deadline { Thread.sleep(forTimeInterval: 0.01) }
+            if process.isRunning {
+                _ = kill(process.processIdentifier, SIGKILL)
+                return false
+            }
             return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        } catch { return false }
     }
 }
 
@@ -120,7 +137,7 @@ struct CodeSignerTests {
         let executable = portal.appendingPathComponent("Contents/MacOS/Fixture")
         let original = try Data(contentsOf: executable)
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
 
         do {
             try await signer.sign(appURL: portal, bundleIdentifier: nil)
@@ -133,7 +150,7 @@ struct CodeSignerTests {
         #expect(FileManager.default.fileExists(atPath: workspace.backups.path) == false)
     }
 
-    @Test("A backup records the real application's identity and location")
+    @Test("A legacy fixture records the real application behind a portal")
     func backupUsesRealApplication() async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
@@ -146,11 +163,11 @@ struct CodeSignerTests {
         try realApp.path.write(to: portal.appendingPathComponent("Contents/Resources/real_app_path.txt"), atomically: true, encoding: .utf8)
 
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
         try await signer.backupOriginalSignature(appURL: portal, bundleIdentifier: stubIdentifier)
 
         let backupData = try Data(contentsOf: workspace.backups.appendingPathComponent(identifier + ".plist"))
-        let backup = try #require(PropertyListSerialization.propertyList(from: backupData, format: nil) as? [String: Any])
+        let backup = try #require(try PropertyListSerialization.propertyList(from: backupData, format: nil) as? [String: Any])
         #expect(backup["bundleIdentifier"] as? String == identifier)
         #expect(backup["originalPath"] as? String == realApp.path)
         #expect(FileManager.default.fileExists(atPath: workspace.backups.appendingPathComponent(stubIdentifier + ".plist").path) == false)
@@ -174,7 +191,7 @@ struct CodeSignerTests {
         try #require(before[app.path] == 0)
 
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
         try await signer.sign(appURL: app, bundleIdentifier: nil)
 
         #expect(await signer.verify(appURL: app) == .valid)
@@ -209,7 +226,8 @@ struct CodeSignerTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: payload.path)
 
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
+        try await signer.backupOriginalSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
         try await signer.sign(appURL: app, bundleIdentifier: nil)
 
         #expect(await signer.verify(appURL: app) == .valid)
@@ -237,11 +255,16 @@ struct CodeSignerTests {
         try codesign(["--force", "--sign", "-", plain.path])
         let unsigned = workspace.root.appendingPathComponent("Unsigned.app")
         try makeBundle(at: unsigned, identifier: "com.appports.tests.unsigned")
+        // The arm64 fixture binary carries the linker's embedded ad-hoc
+        // signature. Remove it only from this temporary copy to test truly
+        // unsigned code, rather than signed code without entitlements.
+        try codesign(["--remove-signature", unsigned.path])
 
         #expect(CodeSigner.entitlements(at: sandboxed)?["com.apple.security.app-sandbox"] as? Bool == true)
         #expect(CodeSigner.isSandboxed(at: sandboxed))
         #expect(CodeSigner.isSandboxed(at: plain) == false)
         #expect(CodeSigner.isSandboxed(at: unsigned) == false)
+        #expect(CodeSigner.sandboxStatus(at: unsigned) == .unsigned)
         #expect(CodeSigner.entitlements(at: unsigned) == nil)
     }
 
@@ -259,7 +282,7 @@ struct CodeSignerTests {
         let executable = realApp.appendingPathComponent("Contents/MacOS/Fixture")
         let original = try Data(contentsOf: executable)
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
 
         do {
             try await signer.sign(appURL: portal, bundleIdentifier: nil)
@@ -273,8 +296,8 @@ struct CodeSignerTests {
         #expect(FileManager.default.fileExists(atPath: workspace.backups.path) == false)
     }
 
-    @Test("Automatic signing of Application Support data inspects the real sandbox app before any stage")
-    func ordinaryDataMigrationRequiresSandboxApproval() async throws {
+    @Test("Ordinary data migration completes without touching the real sandbox app signature")
+    func ordinaryDataMigrationPreservesSandboxSignature() async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
         let realApp = workspace.root.appendingPathComponent("External/Chat.app")
@@ -292,25 +315,17 @@ struct CodeSignerTests {
         let originalApp = try SignatureSnapshot.fingerprint(of: realApp)
         #expect(CodeSigner.isSandboxed(at: portal) == false)
 
-        do {
-            try await DataMigrationWorkflow.run(
-                associatedAppURL: portal,
-                classicModeActive: true,
-                explicitSigningChoice: true,
-                backupSignature: { _ in Issue.record("A global setting must not authorize a sandbox backup") },
-                migrate: { Issue.record("Application Support migration must wait for sandbox signing approval") },
-                resignApp: { _, _ in Issue.record("The real sandboxed app must not be signed without approval") }
-            )
-            Issue.record("A plain portal must not bypass approval for its real sandboxed target")
-        } catch CodeSigner.SigningError.sandboxedApplication(let url) {
-            // 已存在的目录 URL 可能多一个尾斜杠；仍比较解析后的完整目标路径。
-            #expect(url.resolvingSymlinksInPath().standardizedFileURL.path
-                == realApp.resolvingSymlinksInPath().standardizedFileURL.path)
-        }
+        let destination = workspace.root.appendingPathComponent("External/ChatData")
+        try await DataMigrationWorkflow.run(migrate: {
+            try FileManager.default.moveItem(at: dataDirectory, to: destination)
+            try FileManager.default.createSymbolicLink(at: dataDirectory, withDestinationURL: destination)
+        })
 
         #expect(try Data(contentsOf: dataFile) == originalData)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: dataDirectory.path) == destination.path)
         #expect(try SignatureSnapshot.fingerprint(of: realApp) == originalApp)
         #expect(CodeSigner.isSandboxed(at: realApp))
+        #expect(!FileManager.default.fileExists(atPath: workspace.backups.path))
     }
 
     @Test("Signature-replaced classification reads developer and ad-hoc backup identities")
@@ -352,12 +367,13 @@ struct CodeSignerTests {
         try codesign(["--force", "--sign", "-", "--entitlements", sandboxEntitlements.path, app.path])
         try #require(CodeSigner.isSandboxed(at: app))
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
 
         try await signer.sign(appURL: app, bundleIdentifier: nil, allowSandboxed: true)
 
         #expect(await signer.verify(appURL: app) == .valid)
-        #expect(await signer.hasBackup(bundleIdentifier: "com.appports.tests.classic"))
+        #expect(await !signer.hasBackup(bundleIdentifier: "com.appports.tests.classic"))
+        #expect(try SignatureFactStore(backupDirectoryURL: workspace.backups).currentFact(at: app) != nil)
     }
 
     @Test("Legacy identity-only backups never pretend to restore signed or unsigned state", arguments: ["Developer ID Application: Nobody (APPPORTS00)", "ad-hoc"])
@@ -379,7 +395,7 @@ struct CodeSignerTests {
         let executable = app.appendingPathComponent("Contents/MacOS/Fixture")
         let original = try Data(contentsOf: executable)
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
 
         do {
             try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier)
@@ -419,12 +435,14 @@ struct CodeSignerTests {
         let outsideBefore = try allFlags(in: outside)
 
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
         do {
             try await signer.sign(appURL: app, bundleIdentifier: nil)
             Issue.record("Malformed code must fail signing")
         } catch CodeSigner.SigningError.codesignFailed {
-            // Expected: even an actual codesign failure must restore the original flags.
+            // The source remains intact even when signing rejects malformed code.
+        } catch CodeSigner.SigningError.entitlementsUnavailable {
+            // Unreadable authorization is rejected before mutating the original.
         }
 
         for (path, flags) in before {
@@ -435,7 +453,7 @@ struct CodeSignerTests {
         #expect(getxattr(payload.path, attribute, nil, 0, 0, 0) == originalData.count)
     }
 
-    @Test("Complete backups restore unsigned and sandboxed ad-hoc apps byte for byte", arguments: [false, true])
+    @Test("Existing complete originals restore unsigned and sandboxed ad-hoc apps byte for byte", arguments: [false, true])
     func snapshotRoundTrip(sandboxed: Bool) async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
@@ -456,7 +474,8 @@ struct CodeSignerTests {
         let before = try SignatureSnapshot.fingerprint(of: app)
         let helperBytes = try Data(contentsOf: helper.appendingPathComponent("Contents/MacOS/Fixture"))
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
+        try await signer.backupOriginalSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
         try await signer.sign(appURL: app, bundleIdentifier: nil, allowSandboxed: true)
         #expect(CodeSigner.isSandboxed(at: app) == false)
         try await signer.sign(appURL: app, bundleIdentifier: nil, allowSandboxed: true)
@@ -471,7 +490,7 @@ struct CodeSignerTests {
         #expect(await signer.hasBackup(bundleIdentifier: "com.appports.tests.fixture") == false)
     }
 
-    @Test("A real certificate-signed application is restored without its private key",
+    @Test("Real certificate facts survive repeated signing and relocation before no-backup official recovery",
           .enabled(if: SignedTestApplication.source != nil))
     func restoresCertificateSignedApplication() async throws {
         let workspace = try Workspace()
@@ -482,23 +501,60 @@ struct CodeSignerTests {
         try SignatureSnapshot.copy(from: source, to: app)
         let identifier = try #require(CodeSigner.bundleIdentifier(at: app))
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
         let authority = try #require(await signer.getSigningIdentity(appURL: app))
         try codesign(["--verify", "--deep", app.path])
         let originalVerification = await signer.verify(appURL: app)
         try #require(originalVerification == .valid)
         let original = try SignatureSnapshot.fingerprint(of: app)
         let entitlements = CodeSigner.entitlements(at: app) as NSDictionary?
+        let sourceIdentity = try DataPathIdentity.capture(source)
+        let sourceFingerprint = try SignatureSnapshot.fingerprint(of: source)
+        let facts = SignatureFactStore(backupDirectoryURL: workspace.backups)
 
         try await signer.sign(appURL: app, bundleIdentifier: identifier, allowSandboxed: true)
         #expect(await signer.getSigningIdentity(appURL: app) == nil)
-        try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier)
+        let first = try #require(try facts.currentFact(at: app, verifyContent: true))
+        #expect(first.originalDeveloper?.authority == authority)
+        #expect(first.signatureWasReplaced)
+        try await signer.sign(appURL: app, bundleIdentifier: identifier)
+        let second = try #require(try facts.currentFact(at: app, verifyContent: true))
+        #expect(second.installationID == first.installationID)
+        #expect(second.originalDeveloper == first.originalDeveloper)
+        #expect(second.originalFingerprint == original)
+        #expect(try facts.facts().count == 1)
+        #expect(await !signer.hasBackup(bundleIdentifier: identifier))
 
-        try codesign(["--verify", "--deep", app.path])
+        let other = workspace.root.appendingPathComponent("IndependentInstallation.app")
+        try SignatureSnapshot.copy(from: app, to: other)
+        let otherFingerprint = try SignatureSnapshot.fingerprint(of: other)
+        #expect(try facts.currentFact(at: other) == nil)
+        await #expect(throws: CodeSigner.SigningError.self) {
+            try await signer.restoreSignature(appURL: other, bundleIdentifier: identifier, originalApplication: source)
+        }
+        #expect(try SignatureSnapshot.fingerprint(of: other) == otherFingerprint)
+
+        let relocation = try #require(try facts.captureRelocation(from: app))
+        let moved = workspace.root.appendingPathComponent("External/Vendor.app")
+        try FileManager.default.createDirectory(at: moved.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try SignatureSnapshot.copy(from: app, to: moved)
+        try SignatureSnapshot.remove(app)
+        try FileManager.default.createSymbolicLink(at: app, withDestinationURL: moved)
+        try facts.commitRelocation(relocation, to: moved)
+        #expect(try facts.currentFact(at: moved, verifyContent: true)?.installationID == first.installationID)
+
+        try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier, originalApplication: source)
+
+        try codesign(["--verify", "--deep", "--strict", moved.path])
         #expect(await signer.verify(appURL: app) == originalVerification)
         #expect(await signer.getSigningIdentity(appURL: app) == authority)
-        #expect(try SignatureSnapshot.fingerprint(of: app) == original)
-        #expect(CodeSigner.entitlements(at: app) as NSDictionary? == entitlements)
+        #expect(try SignatureSnapshot.fingerprint(of: moved) == original)
+        #expect(CodeSigner.entitlements(at: moved) as NSDictionary? == entitlements)
+        #expect(try facts.currentFact(at: moved, verifyContent: true)?.signatureWasReplaced == false)
+        #expect(await !signer.hasBackup(bundleIdentifier: identifier))
+        #expect(try await signer.signatureMaterials().isEmpty)
+        #expect(try DataPathIdentity.capture(source).matchesFilesystemObject(sourceIdentity))
+        #expect(try SignatureSnapshot.fingerprint(of: source) == sourceFingerprint)
     }
 
     @Test("Changed applications cannot be overwritten or paired with an older snapshot")
@@ -508,7 +564,8 @@ struct CodeSignerTests {
         let app = workspace.root.appendingPathComponent("Chat.app")
         try makeBundle(at: app)
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
+        try await signer.backupOriginalSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
         try await signer.sign(appURL: app, bundleIdentifier: nil)
         let changed = app.appendingPathComponent("Contents/Resources/new-version.txt")
         try Data("new app content".utf8).write(to: changed)
@@ -517,11 +574,11 @@ struct CodeSignerTests {
             try await signer.restoreSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
             Issue.record("A restore must not overwrite updates")
         } catch CodeSigner.SigningError.applicationChanged {}
-        do {
-            try await signer.sign(appURL: app, bundleIdentifier: nil)
-            Issue.record("A new version must not reuse the old version's original backup")
-        } catch CodeSigner.SigningError.applicationChanged {}
-        #expect(try SignatureSnapshot.fingerprint(of: app) == before)
+        let oldRecord = try Data(contentsOf: workspace.backups.appendingPathComponent("com.appports.tests.fixture.plist"))
+        try await signer.sign(appURL: app, bundleIdentifier: nil)
+        #expect(try String(contentsOf: changed, encoding: .utf8) == "new app content")
+        #expect(try Data(contentsOf: workspace.backups.appendingPathComponent("com.appports.tests.fixture.plist")) == oldRecord)
+        #expect(try SignatureSnapshot.fingerprint(of: app) != before)
         #expect(await signer.hasBackup(bundleIdentifier: "com.appports.tests.fixture"))
     }
 
@@ -533,13 +590,16 @@ struct CodeSignerTests {
         try makeBundle(at: app)
         let original = try SignatureSnapshot.fingerprint(of: app)
         let changed = app.appendingPathComponent("Contents/Resources/update.txt")
+        let fixtureWriter = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
+                                       recoveryDependencyCheck: { _ in })
+        try await fixtureWriter.backupOriginalSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
                                 trashBackupSnapshot: { try SignatureSnapshot.remove($0) },
             copyApplication: { source, destination in
                 if destination.deletingLastPathComponent().lastPathComponent.hasPrefix(".AppPorts-signature-") {
                     try Data("updated while preparing signature".utf8).write(to: changed)
                 }
-                try SignatureSnapshot.copy(from: source, to: destination)
+                try SignatureSnapshot.copyContents(from: source, into: destination)
             })
         do {
             try await signer.sign(appURL: app, bundleIdentifier: nil)
@@ -561,7 +621,7 @@ struct CodeSignerTests {
         let original = Data("original metadata".utf8)
         try #require(original.withUnsafeBytes { setxattr(app.path, attribute, $0.baseAddress, $0.count, 0, 0) } == 0)
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
         try await signer.backupOriginalSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
         let before = try SignatureSnapshot.fingerprint(of: app)
         try #require(removexattr(app.path, attribute, 0) == 0)
@@ -570,7 +630,7 @@ struct CodeSignerTests {
         #expect(try readAttribute(attribute, at: app) == original)
     }
 
-    @Test("A verified official reinstall starts a fresh backup and retains the old recovery material",
+    @Test("A verified official reinstall preserves historical originals without creating another backup",
           .enabled(if: SignedTestApplication.source != nil),
           arguments: [false, true])
     func renewsBackupAfterOfficialReinstall(legacy: Bool) async throws {
@@ -581,7 +641,8 @@ struct CodeSignerTests {
         try SignatureSnapshot.copy(from: source, to: app)
         let identifier = try #require(CodeSigner.bundleIdentifier(at: app))
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
+        try await signer.backupOriginalSignature(appURL: app, bundleIdentifier: identifier)
         try await signer.sign(appURL: app, bundleIdentifier: identifier, allowSandboxed: true)
         var oldRecord = try readBackup(in: workspace, identifier: identifier)
         let oldSnapshot = workspace.backups.appendingPathComponent(try #require(oldRecord["snapshotName"] as? String))
@@ -601,12 +662,12 @@ struct CodeSignerTests {
         try #require((oldRecord["restorableFingerprints"] as? [String])?.contains(reinstalled) != true)
         try await signer.sign(appURL: app, bundleIdentifier: identifier, allowSandboxed: true)
         let newRecord = try readBackup(in: workspace, identifier: identifier)
-        #expect(newRecord["originalFingerprint"] as? String == reinstalled)
-        #expect(newRecord["snapshotName"] as? String != oldSnapshot.lastPathComponent)
+        #expect(newRecord as NSDictionary == oldRecord as NSDictionary)
         #expect(FileManager.default.fileExists(atPath: oldSnapshot.path))
-        #expect(try FileManager.default.contentsOfDirectory(atPath: workspace.backups.appendingPathComponent("retired").path).count == 1)
-        try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier)
-        #expect(try SignatureSnapshot.fingerprint(of: app) == reinstalled)
+        #expect(!FileManager.default.fileExists(atPath: workspace.backups.appendingPathComponent("retired").path))
+        #expect(try SignatureFactStore(backupDirectoryURL: workspace.backups).currentFact(at: app)?.originalFingerprint == reinstalled)
+        try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier, originalApplication: source)
+        #expect(try SignatureSnapshot.fingerprint(of: app) == SignatureSnapshot.fingerprint(of: source))
         #expect(await signer.verify(appURL: app) == .valid)
     }
 
@@ -617,9 +678,10 @@ struct CodeSignerTests {
         let app = workspace.root.appendingPathComponent("Chat.app")
         try makeBundle(at: app)
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
+        try await signer.backupOriginalSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
         try await signer.sign(appURL: app, bundleIdentifier: nil)
-        let snapshot = try #require(FileManager.default.contentsOfDirectory(at: workspace.backups, includingPropertiesForKeys: nil).first { $0.pathExtension == "app" })
+        let snapshot = try #require(try FileManager.default.contentsOfDirectory(at: workspace.backups, includingPropertiesForKeys: nil).first { $0.pathExtension == "app" })
         try Data("corrupt".utf8).write(to: snapshot.appendingPathComponent("Contents/MacOS/Fixture"))
         let before = try SignatureSnapshot.fingerprint(of: app)
         do {
@@ -637,7 +699,7 @@ struct CodeSignerTests {
         let app = workspace.root.appendingPathComponent("Chat.app")
         try makeBundle(at: app)
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
         let failing = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
                                 trashBackupSnapshot: { try SignatureSnapshot.remove($0) },
             exchangeApplications: { _, _ in throw CodeSigner.SigningError.atomicReplacementUnavailable })
@@ -647,6 +709,7 @@ struct CodeSignerTests {
             Issue.record("Forced sign exchange must fail")
         } catch CodeSigner.SigningError.atomicReplacementUnavailable {}
         #expect(try SignatureSnapshot.fingerprint(of: app) == original)
+        try await signer.backupOriginalSignature(appURL: app, bundleIdentifier: "com.appports.tests.fixture")
         try await signer.sign(appURL: app, bundleIdentifier: nil)
         let signed = try SignatureSnapshot.fingerprint(of: app)
         do {
@@ -659,7 +722,7 @@ struct CodeSignerTests {
         #expect(try SignatureSnapshot.fingerprint(of: app) == original)
     }
 
-    @Test("Legacy backups can be repaired using a matching original application")
+    @Test("An identity-only record cannot certify an ad-hoc selected original as official")
     func restoresLegacyBackupFromOriginal() async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
@@ -677,10 +740,13 @@ struct CodeSignerTests {
             "originalPath": app.path, "backupDate": Date()
         ], format: .xml, options: 0).write(to: workspace.backups.appendingPathComponent(identifier + ".plist"))
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
-        try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier, originalApplication: original)
-        #expect(try SignatureSnapshot.fingerprint(of: app) == SignatureSnapshot.fingerprint(of: original))
-        #expect(CodeSigner.isSandboxed(at: app))
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
+        let before = try SignatureSnapshot.fingerprint(of: app)
+        await #expect(throws: CodeSigner.SigningError.self) {
+            try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier, originalApplication: original)
+        }
+        #expect(try SignatureSnapshot.fingerprint(of: app) == before)
+        #expect(!CodeSigner.isSandboxed(at: app))
     }
 
     @Test("Different CodeSigner instances share a filesystem transaction lock")
@@ -693,7 +759,7 @@ struct CodeSignerTests {
         try #require(lock.tryAcquire())
         defer { lock.release() }
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
         let before = try SignatureSnapshot.fingerprint(of: app)
         do {
             try await signer.sign(appURL: app, bundleIdentifier: nil)
@@ -710,11 +776,11 @@ struct CodeSignerTests {
         let original = workspace.root.appendingPathComponent("Wrong.app")
         try makeBundle(at: app)
         let signer = CodeSigner(backupDirectoryURL: workspace.backups, allowAdministratorPrompt: false,
-                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) })
+                                trashBackupSnapshot: { try SignatureSnapshot.remove($0) }, recoveryDependencyCheck: { _ in })
         try await signer.sign(appURL: app, bundleIdentifier: nil)
         try SignatureSnapshot.copy(from: app, to: original)
         let info = original.appendingPathComponent("Contents/Info.plist")
-        var plist = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: info), format: nil) as? [String: Any])
+        var plist = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: info), format: nil) as? [String: Any])
         plist[key] = "wrong"
         try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: info)
         try codesign(["--force", "--sign", "-", original.path])
@@ -724,7 +790,7 @@ struct CodeSignerTests {
             Issue.record("A different app or version must not replace the installed app")
         } catch CodeSigner.SigningError.originalApplicationMismatch {}
         #expect(try SignatureSnapshot.fingerprint(of: app) == before)
-        #expect(await signer.hasBackup(bundleIdentifier: "com.appports.tests.fixture"))
+        #expect(await !signer.hasBackup(bundleIdentifier: "com.appports.tests.fixture"))
     }
 
     @Test("Refreshing an installed re-sign script preserves the old script if the source is missing")
@@ -768,7 +834,7 @@ struct CodeSignerTests {
 
     private func readBackup(in workspace: Workspace, identifier: String) throws -> [String: Any] {
         let data = try Data(contentsOf: workspace.backups.appendingPathComponent(identifier + ".plist"))
-        return try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        return try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
     }
 
     private func readAttribute(_ name: String, at url: URL) throws -> Data {
@@ -835,315 +901,53 @@ struct CodeSignerTests {
     }
 }
 
-@Suite("Data migration signing workflow")
+@Suite("Data migration independent completion")
 struct DataMigrationWorkflowTests {
-    private let appURL = URL(fileURLWithPath: "/test/Chat.app")
+    private enum Failure: Error { case validation, migration }
 
-    @Test("Migration waits for backup, and completion waits for signing")
-    func awaitsEveryStage() async throws {
-        let events = Events()
-        let backupStarted = Gate()
-        let finishBackup = Gate()
-        let signingStarted = Gate()
-        let finishSigning = Gate()
-        let operation = Task {
+    @Test("Validation prevents mutation and preserves its error")
+    func validationFailureStopsBeforeMigration() async {
+        let calls = Calls()
+        await #expect(throws: Failure.validation) {
             try await DataMigrationWorkflow.run(
-                associatedAppURL: appURL,
-                classicModeActive: true,
-                autoResignEnabled: true,
-                inspectSigningTarget: { DataMigrationWorkflow.SigningTarget(url: $0, isSandboxed: false) },
-                stageChanged: { stage in
-                    await events.append("stage-\(stage)")
-                },
-                backupSignature: { _ in
-                    await events.append("backup-started")
-                    await backupStarted.open()
-                    await finishBackup.wait()
-                    await events.append("backup-finished")
-                },
-                migrate: { await events.append("migrate") },
-                resignApp: { url, sandboxedAppApproved in
-                    #expect(url == appURL)
-                    #expect(sandboxedAppApproved == false)
-                    await events.append("signing-started")
-                    await signingStarted.open()
-                    await finishSigning.wait()
-                    await events.append("signing-finished")
-                }
+                validateBeforeMigration: { throw Failure.validation },
+                migrate: { await calls.append("migrate") }
             )
-            await events.append("completed")
         }
-
-        await backupStarted.wait()
-        #expect(await events.values == ["stage-backingUpApplication", "backup-started"])
-        await finishBackup.open()
-        await signingStarted.wait()
-        #expect(await events.values == ["stage-backingUpApplication", "backup-started", "backup-finished", "stage-migratingData", "migrate", "stage-resigningApplication", "signing-started"])
-        await finishSigning.open()
-        try await operation.value
-        #expect(await events.values == ["stage-backingUpApplication", "backup-started", "backup-finished", "stage-migratingData", "migrate", "stage-resigningApplication", "signing-started", "signing-finished", "completed"])
+        #expect(await calls.values.isEmpty)
     }
 
-    enum Stage: CaseIterable { case backup, migration, signing }
-    private enum TestFailure: Error { case expected }
+    @Test("Migration errors stay migration errors")
+    func migrationFailureIsNotWrappedAsSigningFailure() async {
+        await #expect(throws: Failure.migration) {
+            try await DataMigrationWorkflow.run(migrate: { throw Failure.migration })
+        }
+    }
 
-    @Test("Failures propagate at the correct stage", arguments: Stage.allCases)
-    func propagatesFailure(stage: Stage) async throws {
-        let events = Events()
-        do {
+    @Test("Cancellation before mutation cannot start a new transfer")
+    func cancellationBeforeMutation() async {
+        let calls = Calls()
+        let task = Task {
             try await DataMigrationWorkflow.run(
-                associatedAppURL: appURL,
-                classicModeActive: true,
-                explicitSigningChoice: true,
-                inspectSigningTarget: { DataMigrationWorkflow.SigningTarget(url: $0, isSandboxed: false) },
-                backupSignature: { _ in
-                    await events.append("backup")
-                    if stage == .backup { throw TestFailure.expected }
-                },
-                migrate: {
-                    await events.append("migration")
-                    if stage == .migration { throw TestFailure.expected }
-                },
-                resignApp: { _, _ in
-                    await events.append("signing")
-                    throw TestFailure.expected
-                }
+                validateBeforeMigration: { withUnsafeCurrentTask { $0?.cancel() } },
+                migrate: { await calls.append("migrate") }
             )
-            Issue.record("Failure must reach the caller")
-        } catch DataMigrationWorkflow.Failure.signingFailed(let underlying) {
-            #expect(stage == .signing)
-            #expect(underlying is TestFailure)
-        } catch TestFailure.expected {
-            #expect(stage != .signing)
         }
-        let expectedEvents: [String]
-        switch stage {
-        case .backup: expectedEvents = ["backup"]
-        case .migration: expectedEvents = ["backup", "migration"]
-        case .signing: expectedEvents = ["backup", "migration", "signing"]
+        do { try await task.value; Issue.record("Expected cancellation") }
+        catch { #expect(error is CancellationError) }
+        #expect(await calls.values.isEmpty)
+    }
+
+    @Test("A completed data switch returns its cleanup result unchanged")
+    func returnsCommittedCleanupWarning() async throws {
+        let result = try await DataMigrationWorkflow.run {
+            DataDirMover.CompletionResult(cleanupWarning: "Old copy is still in use")
         }
-        #expect(await events.values == expectedEvents)
+        #expect(result.cleanupWarning == "Old copy is still in use")
     }
 
-    @Test("Declining signing runs only the data migration")
-    func respectsSigningChoice() async throws {
-        let events = Events()
-        try await DataMigrationWorkflow.run(
-            associatedAppURL: appURL,
-            classicModeActive: true,
-            autoResignEnabled: true,
-            explicitSigningChoice: false,
-            inspectSigningTarget: { _ in
-                Issue.record("Declining signing must not inspect the app signature")
-                return .init(url: appURL, isSandboxed: false)
-            },
-            backupSignature: { _ in Issue.record("Backup must not run when signing is disabled") },
-            migrate: { await events.append("migration") },
-            resignApp: { _, _ in Issue.record("Signing must not run when disabled") }
-        )
-        #expect(await events.values == ["migration"])
-    }
-
-    @Test("An old automatic-signing preference cannot affect ordinary data outside classic mode", arguments: [nil, false, true] as [Bool?])
-    func ignoresSigningOutsideClassicMode(explicitChoice: Bool?) async throws {
-        let events = Events()
-        try await DataMigrationWorkflow.run(
-            associatedAppURL: appURL,
-            classicModeActive: false,
-            autoResignEnabled: true,
-            explicitSigningChoice: explicitChoice,
-            inspectSigningTarget: { _ in
-                Issue.record("Ordinary Application Support migration must not query the app signature")
-                return .init(url: appURL, isSandboxed: false)
-            },
-            stageChanged: { stage in
-                #expect(stage == .migratingData)
-                await events.append("migration-stage")
-            },
-            backupSignature: { _ in Issue.record("A hidden old preference must not back up the app") },
-            migrate: { await events.append("migration") },
-            resignApp: { _, _ in Issue.record("A hidden old preference must not re-sign the app") }
-        )
-        #expect(await events.values == ["migration-stage", "migration"])
-    }
-
-    @Test("A newly running app stops data movement even after a signature backup", arguments: [false, true])
-    func validatesRunningStateImmediatelyBeforeMigration(signingEnabled: Bool) async throws {
-        let events = Events()
-        if !signingEnabled { await events.append("launched") }
-        do {
-            try await DataMigrationWorkflow.run(
-                associatedAppURL: appURL,
-                classicModeActive: true,
-                explicitSigningChoice: signingEnabled,
-                inspectSigningTarget: { DataMigrationWorkflow.SigningTarget(url: $0, isSandboxed: false) },
-                validateBeforeMigration: {
-                    let launched = await events.values.contains("launched")
-                    let running: [AppRunningState.RunningApplication] = launched
-                        ? [.init(bundleURL: appURL, bundleIdentifier: nil)] : []
-                    if AppRunningState.isRunning(appURL: appURL, applications: running) {
-                        throw AppMoverError.appIsRunning
-                    }
-                },
-                backupSignature: { _ in await events.append("launched") },
-                migrate: { await events.append("migration") },
-                resignApp: { _, _ in await events.append("signing") }
-            )
-            Issue.record("The app started before data movement and must block migration")
-        } catch AppMoverError.appIsRunning {}
-        #expect(await events.values == ["launched"])
-    }
-
-    @Test("Classic mode still requires per-app approval before signing a sandboxed app")
-    func requiresSandboxApproval() async throws {
-        let target = DataMigrationWorkflow.SigningTarget(url: appURL, isSandboxed: true)
-        let events = Events()
-        do {
-            try await DataMigrationWorkflow.run(
-                associatedAppURL: appURL,
-                classicModeActive: true,
-                explicitSigningChoice: true,
-                inspectSigningTarget: { _ in target },
-                backupSignature: { _ in await events.append("backup") },
-                migrate: { await events.append("migration") },
-                resignApp: { _, _ in await events.append("signing") }
-            )
-            Issue.record("Classic mode must not replace per-app sandbox signing approval")
-        } catch CodeSigner.SigningError.sandboxedApplication(let url) {
-            #expect(url == target.url)
-        }
-        #expect(await events.values.isEmpty)
-    }
-
-    @Test("Matching sandbox approval signs only the resolved app after backup and migration")
-    func signsExplicitlyApprovedTarget() async throws {
-        let target = DataMigrationWorkflow.SigningTarget(
-            url: URL(fileURLWithPath: "/test/External/Chat.app"), isSandboxed: true
-        )
-        let inspector = TargetInspector(target)
-        let events = Events()
-        try await DataMigrationWorkflow.run(
-            associatedAppURL: appURL,
-            classicModeActive: true,
-            explicitSigningChoice: true,
-            approvedSandboxedTarget: target,
-            inspectSigningTarget: { await inspector.inspect(at: $0) },
-            backupSignature: { url in
-                #expect(url == target.url)
-                await events.append("backup")
-            },
-            migrate: { await events.append("migration") },
-            resignApp: { url, sandboxedAppApproved in
-                #expect(url == target.url)
-                #expect(sandboxedAppApproved)
-                await events.append("signing")
-            }
-        )
-        #expect(await events.values == ["backup", "migration", "signing"])
-        #expect(await inspector.requestedURLs == [appURL, appURL, appURL])
-    }
-
-    @Test("Approval for a previous portal target cannot authorize another sandboxed app")
-    func refusesRetargetedApproval() async throws {
-        let approved = DataMigrationWorkflow.SigningTarget(
-            url: URL(fileURLWithPath: "/test/External/Chat.app"), isSandboxed: true
-        )
-        let actual = DataMigrationWorkflow.SigningTarget(
-            url: URL(fileURLWithPath: "/test/External/Other.app"), isSandboxed: true
-        )
-        let events = Events()
-        do {
-            try await DataMigrationWorkflow.run(
-                associatedAppURL: appURL,
-                classicModeActive: true,
-                explicitSigningChoice: true,
-                approvedSandboxedTarget: approved,
-                inspectSigningTarget: { _ in actual },
-                backupSignature: { _ in await events.append("backup") },
-                migrate: { await events.append("migration") },
-                resignApp: { _, _ in await events.append("signing") }
-            )
-            Issue.record("Approval belongs to the app named in the warning")
-        } catch CodeSigner.SigningError.applicationChanged {}
-        #expect(await events.values.isEmpty)
-    }
-
-    @Test("Target and sandbox state are rechecked after long operations", arguments: [Stage.backup, .migration], [false, true])
-    func rechecksTarget(stage: Stage, changesSandboxStatus: Bool) async throws {
-        let target = DataMigrationWorkflow.SigningTarget(
-            url: URL(fileURLWithPath: "/test/External/Chat.app"), isSandboxed: false
-        )
-        let changed = DataMigrationWorkflow.SigningTarget(
-            url: changesSandboxStatus ? target.url : URL(fileURLWithPath: "/test/External/Other.app"),
-            isSandboxed: changesSandboxStatus
-        )
-        let inspector = TargetInspector(target)
-        let events = Events()
-        do {
-            try await DataMigrationWorkflow.run(
-                associatedAppURL: appURL,
-                classicModeActive: true,
-                explicitSigningChoice: true,
-                inspectSigningTarget: { await inspector.inspect(at: $0) },
-                backupSignature: { _ in
-                    await events.append("backup")
-                    if stage == .backup { await inspector.change(to: changed) }
-                },
-                migrate: {
-                    await events.append("migration")
-                    if stage == .migration { await inspector.change(to: changed) }
-                },
-                resignApp: { _, _ in await events.append("signing") }
-            )
-            Issue.record("A changed target must stop the remaining signing workflow")
-        } catch DataMigrationWorkflow.Failure.signingFailed(let underlying) {
-            #expect(stage == .migration)
-            guard case CodeSigner.SigningError.applicationChanged = underlying else {
-                Issue.record("Expected an application-changed error after migration")
-                return
-            }
-        } catch CodeSigner.SigningError.applicationChanged {
-            #expect(stage == .backup)
-        }
-        #expect(await events.values == (stage == .backup ? ["backup"] : ["backup", "migration"]))
-    }
-
-    private actor TargetInspector {
-        private var target: DataMigrationWorkflow.SigningTarget
-        private(set) var requestedURLs: [URL] = []
-
-        init(_ target: DataMigrationWorkflow.SigningTarget) {
-            self.target = target
-        }
-
-        func inspect(at url: URL) -> DataMigrationWorkflow.SigningTarget {
-            requestedURLs.append(url)
-            return target
-        }
-
-        func change(to target: DataMigrationWorkflow.SigningTarget) {
-            self.target = target
-        }
-    }
-
-    private actor Events {
-        private(set) var values: [String] = []
+    private actor Calls {
+        var values: [String] = []
         func append(_ value: String) { values.append(value) }
-    }
-
-    private actor Gate {
-        private var isOpen = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
-
-        func wait() async {
-            guard !isOpen else { return }
-            await withCheckedContinuation { waiters.append($0) }
-        }
-
-        func open() {
-            isOpen = true
-            for waiter in waiters { waiter.resume() }
-            waiters.removeAll()
-        }
     }
 }

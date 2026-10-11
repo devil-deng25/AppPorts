@@ -5,10 +5,8 @@
 
 import Foundation
 
-/// 管理“开机自动重签名” LaunchAgent 的安装与卸载
-///
-/// 安装后在 ~/Library/LaunchAgents/ 创建一个 plist，
-/// 用户每次登录时自动对签名已失效的已迁移应用执行 ad-hoc 重签名。
+/// Retires the historical login writer on every supported macOS version.
+/// Signature repair is an explicit foreground operation; no new agent is installed.
 enum AutoResignInstaller {
 
     static let enabledDefaultsKey = "autoResignAtLogin"
@@ -36,33 +34,20 @@ enum AutoResignInstaller {
     }
 
     static func supportsLoginResigning(macOSMajorVersion: Int) -> Bool {
-        macOSMajorVersion > 0 && macOSMajorVersion < 27
+        false
     }
 
     // MARK: - Install
 
-    /// macOS 27 起停用旧任务；较早系统先停止旧脚本，再同步带版本保护的新脚本。
+    /// Neutralize the installed script, then confirm the entire old process
+    /// group has stopped before deleting its login registration.
     static func refreshInstalledScriptIfNeeded() async throws {
-        // 测试宿主启动时不能修改开发机的真实登录任务或偏好。
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
-        if try await disableIfUnsupported(
+        try await disableIfUnsupported(
             macOSMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
-            defaults: .standard,
-            agentPlistURL: agentPlistURL,
-            scriptURL: scriptURL,
+            defaults: .standard, agentPlistURL: agentPlistURL, scriptURL: scriptURL,
             stopTask: { try await stopBackgroundTask() }
-        ) {
-            return
-        }
-
-        guard isInstalled else { return }
-        guard let bundledScript = Bundle.main.url(forResource: scriptName, withExtension: nil) else {
-            throw InstallError.scriptNotFound
-        }
-        if (try? Data(contentsOf: scriptURL)) != (try Data(contentsOf: bundledScript)) {
-            try await stopBackgroundTask()
-        }
-        try synchronizeScript(from: bundledScript, to: scriptURL)
+        )
     }
 
     /// 先把旧脚本改为空操作，再确认整个进程组退出，最后删除登录任务。
@@ -75,7 +60,7 @@ enum AutoResignInstaller {
         scriptURL: URL,
         stopTask: () async throws -> Void
     ) async throws -> Bool {
-        guard !supportsLoginResigning(macOSMajorVersion: macOSMajorVersion) else { return false }
+        _ = macOSMajorVersion // The retirement policy now applies to every system.
 
         let fm = FileManager.default
         let hadInstallation = fm.fileExists(atPath: agentPlistURL.path) || fm.fileExists(atPath: scriptURL.path)
@@ -86,8 +71,7 @@ enum AutoResignInstaller {
             do {
                 // 即使本次停止/清理失败，下一次登录也不能再执行旧脚本。
                 try fm.createDirectory(at: scriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try Data("#!/bin/bash\n# Login re-signing has been disabled by AppPorts.\nexit 0\n".utf8)
-                    .write(to: scriptURL, options: .atomic)
+                try DurableFileIO.write(Data("#!/bin/bash\n# Login re-signing has been disabled by AppPorts.\nexit 0\n".utf8), to: scriptURL)
                 try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
             } catch {
                 // 写入失败仍要尝试停止并卸载；只有后面的完整清理成功才算关闭完成。
@@ -102,7 +86,7 @@ enum AutoResignInstaller {
             try removeIfPresent(scriptURL)
             defaults.removeObject(forKey: policyErrorDefaultsKey)
             if hadInstallation || wasEnabled {
-                AppLogger.shared.log("当前系统不支持开机自动重签名，旧登录任务已停止并卸载")
+                AppLogger.shared.log("开机自动重签名已停用，旧登录任务及其子进程已停止并卸载")
             }
             return true
         } catch {
@@ -194,95 +178,16 @@ enum AutoResignInstaller {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
     }
 
-    static func install() throws {
-        guard isSupported else { throw InstallError.unsupportedSystem }
-        let fm = FileManager.default
-        let appSupportDirURL = appSupportDir
+    static func install() throws { throw InstallError.unsupportedSystem }
 
-        // 1. 确保 Application Support 目录存在
-        if !fm.fileExists(atPath: appSupportDirURL.path) {
-            try fm.createDirectory(at: appSupportDirURL, withIntermediateDirectories: true)
-        }
-
-        // 2. 复制脚本
-        guard let bundledScript = Bundle.main.url(forResource: scriptName, withExtension: nil) else {
-            throw InstallError.scriptNotFound
-        }
-        try synchronizeScript(from: bundledScript, to: scriptURL)
-
-        // 3. 创建 LaunchAgent plist
-        let plistContent = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>Label</key>
-                <string>\(label)</string>
-                <key>ProgramArguments</key>
-                <array>
-                    <string>/bin/bash</string>
-                    <string>\(scriptURL.path)</string>
-                </array>
-                <key>RunAtLoad</key>
-                <true/>
-                <key>EnvironmentVariables</key>
-                <dict>
-                    <key>PATH</key>
-                    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
-                </dict>
-            </dict>
-            </plist>
-            """
-
-        try plistContent.write(to: agentPlistURL, atomically: true, encoding: .utf8)
-
-        // 4. 加载 LaunchAgent
-        let load = Process()
-        load.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        load.arguments = ["bootstrap", "gui/\(getuid())", agentPlistURL.path]
-        try load.run()
-        load.waitUntilExit()
-
-        if load.terminationStatus != 0 {
-            // 降级：尝试旧版 load
-            let legacy = Process()
-            legacy.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            legacy.arguments = ["load", agentPlistURL.path]
-            try legacy.run()
-            legacy.waitUntilExit()
-
-            if legacy.terminationStatus != 0 {
-                throw InstallError.launchAgentLoadFailed
-            }
-        }
-
-        AppLogger.shared.log("开机自动重签名已安装")
-    }
-
-    // MARK: - Uninstall
-
+    /// Compatibility for the old settings toggle. Retirement itself remains an
+    /// awaited barrier for all file-mutating services and application startup.
     static func uninstall() {
-        let fm = FileManager.default
-
-        // 1. 卸载 LaunchAgent
-        let unload = Process()
-        unload.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        unload.arguments = ["bootout", "gui/\(getuid())", agentPlistURL.path]
-        try? unload.run()
-        unload.waitUntilExit()
-
-        // 降级
-        let legacy = Process()
-        legacy.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        legacy.arguments = ["unload", agentPlistURL.path]
-        try? legacy.run()
-        legacy.waitUntilExit()
-
-        // 2. 删除文件
-        try? fm.removeItem(at: agentPlistURL)
-        try? fm.removeItem(at: scriptURL)
-
-        AppLogger.shared.log("开机自动重签名已卸载")
+        UserDefaults.standard.set(false, forKey: enabledDefaultsKey)
+        Task {
+            do { try await refreshInstalledScriptIfNeeded() }
+            catch { AppLogger.shared.logError("旧登录重签任务尚未完成停用", error: error) }
+        }
     }
 
     // MARK: - Status
@@ -300,7 +205,7 @@ enum AutoResignInstaller {
         var errorDescription: String? {
             switch self {
             case .unsupportedSystem:
-                return "macOS 27 及以上不支持开机自动重签名，以免影响应用启动。请在应用内查看签名修复步骤。".localized
+                return "开机自动重签名已在所有系统停用。请在应用内对具体应用手动签名或恢复官方原件。".localized
             case .scriptNotFound:
                 return "找不到重签名脚本，安装失败".localized
             case .launchAgentLoadFailed:

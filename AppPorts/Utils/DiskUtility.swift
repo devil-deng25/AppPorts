@@ -13,11 +13,28 @@ struct ShellCommandResult: Sendable {
     let standardOutput: Data
     let standardError: Data
     let timedOut: Bool
+    var outputWasTruncated: Bool = false
+    var runningProcess: ShellCommandProcessReference? = nil
 
     var stdoutText: String { String(decoding: standardOutput, as: UTF8.self) }
     var stderrText: String { String(decoding: standardError, as: UTF8.self) }
     var combinedText: String {
         (stdoutText + "\n" + stderrText).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// A PID alone is not a durable process identity: it may be reused after exit.
+struct ShellCommandProcessReference: Codable, Equatable, Sendable {
+    let processIdentifier: Int32
+    let startSeconds: UInt64?
+    let startMicroseconds: UInt64?
+}
+
+struct ShellCommandUnconfirmedTermination: LocalizedError, Sendable {
+    let process: ShellCommandProcessReference
+    var errorDescription: String? {
+        "命令已请求停止，但尚未确认进程退出。临时副本已保留，请稍后从副本页继续清理（进程：".localized
+            + String(process.processIdentifier) + "）。"
     }
 }
 
@@ -28,6 +45,10 @@ protocol ShellCommandRunning: Sendable {
 
 /// 用 Process 执行外部命令。超时后终止进程，避免 diskutil 挂死时整个操作卡住。
 struct ProcessCommandRunner: ShellCommandRunning {
+    /// nil preserves complete plist/JSON responses for existing callers.
+    /// Logging commands can retain only a bounded tail while still draining pipes.
+    var captureLimit: Int? = nil
+
     func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
         // Include dispatch queueing and process launch in the caller's time budget.
         let deadline = ProcessInfo.processInfo.systemUptime + max(0, timeout)
@@ -37,7 +58,7 @@ struct ProcessCommandRunner: ShellCommandRunning {
             return try await withCheckedThrowingContinuation { continuation in
                 DispatchQueue.global(qos: .utility).async {
                     do { continuation.resume(returning: try Self.execute(executable: executable,
-                        arguments: arguments, deadline: deadline, cancellation: cancellation)) }
+                        arguments: arguments, deadline: deadline, cancellation: cancellation, captureLimit: captureLimit)) }
                     catch { continuation.resume(throwing: error) }
                 }
             }
@@ -47,7 +68,7 @@ struct ProcessCommandRunner: ShellCommandRunning {
     /// Nonblocking pipe reads let one deadline cover the child AND inherited pipes.
     /// This worker never blocks Foundation's process termination callback queue.
     private static func execute(executable: String, arguments: [String], deadline: TimeInterval,
-                                cancellation: CancellationState) throws -> ShellCommandResult {
+                                cancellation: CancellationState, captureLimit: Int?) throws -> ShellCommandResult {
         if cancellation.isCancelled { throw CancellationError() }
         guard ProcessInfo.processInfo.systemUptime < deadline else {
             return ShellCommandResult(status: -1, standardOutput: Data(), standardError: Data(), timedOut: true)
@@ -70,6 +91,7 @@ struct ProcessCommandRunner: ShellCommandRunning {
             }
         }
         try process.run()
+        let processReference = reference(process.processIdentifier)
         try? output.fileHandleForWriting.close()
         try? error.fileHandleForWriting.close()
         var streams = [Data(), Data()]
@@ -77,12 +99,25 @@ struct ProcessCommandRunner: ShellCommandRunning {
         var buffer = [UInt8](repeating: 0, count: 65_536)
         var stoppingAt: TimeInterval?
         var timedOut = false
+        var outputWasTruncated = false
         while true {
             // Bound each drain so an endlessly writing child cannot hide the deadline.
             for index in fds.indices where !ended[index] {
                 for _ in 0..<16 {
                     let count = Darwin.read(fds[index], &buffer, buffer.count)
-                    if count > 0 { streams[index].append(contentsOf: buffer.prefix(count)) }
+                    if count > 0 {
+                        let bytes = buffer.prefix(count)
+                        if let requested = captureLimit {
+                            let limit = max(0, requested)
+                            if streams[index].count + count > limit { outputWasTruncated = true }
+                            if count >= limit { streams[index] = Data(bytes.suffix(limit)) }
+                            else {
+                                let overflow = max(0, streams[index].count + count - limit)
+                                if overflow > 0 { streams[index].removeFirst(overflow) }
+                                streams[index].append(contentsOf: bytes)
+                            }
+                        } else { streams[index].append(contentsOf: bytes) }
+                    }
                     else if count == 0 { ended[index] = true; break }
                     else if errno == EINTR { continue }
                     else { break }
@@ -108,9 +143,34 @@ struct ProcessCommandRunner: ShellCommandRunning {
             // EOF pipes report immediately even while the child is still alive.
             if ended.contains(true) { Thread.sleep(forTimeInterval: 0.005) }
         }
-        if cancellation.isCancelled { throw CancellationError() }
+        if cancellation.isCancelled {
+            if process.isRunning { throw ShellCommandUnconfirmedTermination(process: processReference) }
+            throw CancellationError()
+        }
         return ShellCommandResult(status: process.isRunning ? -1 : process.terminationStatus,
-            standardOutput: streams[0], standardError: streams[1], timedOut: timedOut)
+            standardOutput: streams[0], standardError: streams[1], timedOut: timedOut,
+            outputWasTruncated: outputWasTruncated, runningProcess: process.isRunning ? processReference : nil)
+    }
+
+    private static func reference(_ pid: Int32) -> ShellCommandProcessReference {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        let read = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size)
+        return .init(processIdentifier: pid, startSeconds: read == size ? info.pbi_start_tvsec : nil,
+                     startMicroseconds: read == size ? info.pbi_start_tvusec : nil)
+    }
+
+    static func isRunning(_ process: ShellCommandProcessReference) throws -> Bool {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        if proc_pidinfo(process.processIdentifier, PROC_PIDTBSDINFO, 0, &info, size) == size {
+            if let seconds = process.startSeconds, let microseconds = process.startMicroseconds {
+                return seconds == info.pbi_start_tvsec && microseconds == info.pbi_start_tvusec
+            }
+            return true
+        }
+        if kill(process.processIdentifier, 0) != 0, errno == ESRCH { return false }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 
     private final class CancellationState: @unchecked Sendable {
@@ -266,6 +326,12 @@ struct DiskUtility: Sendable {
         struct Volume { let uuid: String; let device: String; let name: String }
         let uuid: String
         let volumes: [Volume]
+    }
+
+    /// Record the container namespace before requesting a new volume. An
+    /// interrupted creator can expose its intent without guessing a volume by name.
+    func apfsCreationContainerUUID(_ reference: String) async throws -> String {
+        try await creationContainer(reference).uuid
     }
 
     private func creationContainer(_ reference: String) async throws -> CreationContainer {

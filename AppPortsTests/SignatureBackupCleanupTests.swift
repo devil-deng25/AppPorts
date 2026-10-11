@@ -30,6 +30,7 @@ struct SignatureBackupCleanupTests {
         defer { fixture.remove() }
         let signer = fixture.signer()
         let original = try SignatureSnapshot.fingerprint(of: fixture.app)
+        try await signer.backupOriginalSignature(appURL: fixture.app, bundleIdentifier: fixture.identifier)
         try await signer.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier)
         let signed = try SignatureSnapshot.fingerprint(of: fixture.app)
         #expect(signed != original)
@@ -87,6 +88,7 @@ struct SignatureBackupCleanupTests {
         let second = fixture.root.appendingPathComponent("Second.app")
         try SignatureSnapshot.copy(from: fixture.app, to: second)
         let signer = fixture.signer()
+        try await signer.backupOriginalSignature(appURL: fixture.app, bundleIdentifier: fixture.identifier)
         try await signer.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier)
         let moved = fixture.root.appendingPathComponent("MovedSigned.app")
         try FileManager.default.moveItem(at: fixture.app, to: moved)
@@ -157,7 +159,8 @@ struct SignatureBackupCleanupTests {
         let signer = fixture.signer(deleteRecord: { _ in throw Expected.failure })
         let original = try SignatureSnapshot.fingerprint(of: fixture.app)
         if restore {
-            try await signer.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier)
+            try await signer.backupOriginalSignature(appURL: fixture.app, bundleIdentifier: fixture.identifier)
+        try await signer.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier)
             try await signer.restoreSignature(appURL: fixture.app, bundleIdentifier: fixture.identifier)
         } else {
             try await signer.backupOriginalSignature(appURL: fixture.app, bundleIdentifier: fixture.identifier)
@@ -176,7 +179,7 @@ struct SignatureBackupCleanupTests {
         #expect(try SignatureSnapshot.fingerprint(of: fixture.app) == original)
     }
 
-    @Test("A pending cleanup can finish before a later signing attempt creates its next backup")
+    @Test("A pending cleanup can finish without a later signature creating another permanent backup")
     func signingAfterCleanupInterruption() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -187,11 +190,11 @@ struct SignatureBackupCleanupTests {
             try await signer.discardUnusedOriginalBackup(bundleIdentifier: fixture.identifier)
         }
         let reopened = fixture.signer()
+        try await reopened.discardUnusedOriginalBackup(bundleIdentifier: fixture.identifier)
         try await reopened.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier)
-        let newSnapshot = try fixture.snapshot()
-        #expect(newSnapshot != oldSnapshot)
-        #expect(FileManager.default.fileExists(atPath: newSnapshot.path))
-        #expect(try fixture.plist(fixture.record)["cleanup"] == nil)
+        #expect(!FileManager.default.fileExists(atPath: oldSnapshot.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.record.path))
+        #expect(try FileManager.default.contentsOfDirectory(at: fixture.backups, includingPropertiesForKeys: nil).allSatisfy { $0.pathExtension != "app" })
         #expect(try await !reopened.discardUnusedOriginalBackup(bundleIdentifier: fixture.identifier))
     }
 
@@ -293,7 +296,8 @@ struct SignatureBackupCleanupTests {
         func signer(trash: (@Sendable (URL) throws -> Void)? = nil,
                     deleteRecord: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) -> CodeSigner {
             CodeSigner(backupDirectoryURL: backups, allowAdministratorPrompt: false,
-                       trashBackupSnapshot: trash ?? { try self.moveToFixtureTrash($0) }, deleteBackupRecordFile: deleteRecord)
+                       trashBackupSnapshot: trash ?? { try self.moveToFixtureTrash($0) }, deleteBackupRecordFile: deleteRecord,
+                       recoveryDependencyCheck: { _ in })
         }
 
         func moveToFixtureTrash(_ snapshot: URL) throws {

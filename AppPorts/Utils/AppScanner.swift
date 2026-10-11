@@ -1296,7 +1296,7 @@ actor AppScanner {
             if let localID = readBundleIdentifier(from: bundleURL) {
                 let originalID = localID.hasSuffix(".appports.stub")
                     ? String(localID.dropLast(".appports.stub".count)) : localID
-                if CodeSigner.originalSigningIdentity(bundleIdentifier: originalID, backupDirectoryURL: backupDirectoryURL) != nil {
+                if CodeSigner.hasUnavailableSignatureRecord(at: bundleURL, bundleIdentifier: originalID, backupDirectoryURL: backupDirectoryURL) {
                     return .unavailable
                 }
             }
@@ -1307,25 +1307,36 @@ actor AppScanner {
     }
 
     private func signingStatus(realAppURL: URL, bundleID: String) -> SigningStatus? {
-        guard let originalIdentity = CodeSigner.originalSigningIdentity(bundleIdentifier: bundleID, backupDirectoryURL: backupDirectoryURL) else {
-            return nil
-        }
-        // 预备份后、重签前仍可能是开发者签名；扫描不得删除恢复材料。
-        // 查不出来是独立状态，不能推断已经替换，也不能当作已恢复。
-        guard let currentlyAdHoc = isAdHocSigned(at: realAppURL) else { return .unavailable }
-        return SigningStatus(
-            isResigned: currentlyAdHoc,
-            signatureReplaced: CodeSigner.isSignatureReplaced(originalIdentity: originalIdentity, currentlyAdHoc: currentlyAdHoc)
-        )
+        do {
+            if let fact = try SignatureFactStore(backupDirectoryURL: backupDirectoryURL).currentFact(at: realAppURL) {
+                guard let adHoc = isAdHocSigned(at: realAppURL) else { return .unavailable }
+                return SigningStatus(isResigned: adHoc, signatureReplaced: adHoc && fact.signatureWasReplaced)
+            }
+            let history = SignatureHistoryStore(backupDirectoryURL: backupDirectoryURL)
+            guard let backup = try history.read(bundleIdentifier: bundleID),
+                  try history.belongs(backup, to: realAppURL) else { return nil }
+            if let snapshot = history.snapshotURL(for: backup) {
+                // Only small bundle metadata is read here. Full originals are
+                // verified lazily by an explicit recovery/cleanup operation.
+                guard try SignatureAppVersion.read(at: snapshot) == SignatureAppVersion.read(at: realAppURL) else { return nil }
+            } else if backup.applicationIdentity == nil {
+                // An old name/path-only record cannot prove which installation
+                // or version now occupies that path. Keep its inspection entry.
+                return .unavailable
+            }
+            guard let adHoc = isAdHocSigned(at: realAppURL) else { return .unavailable }
+            return SigningStatus(isResigned: adHoc,
+                signatureReplaced: CodeSigner.isSignatureReplaced(originalIdentity: backup.signingIdentity, currentlyAdHoc: adHoc))
+        } catch { return .unavailable }
     }
 
     /// 「签名已被替换」的轻量检查：只回答「AppPorts 签过名、现在签名仍是 ad-hoc、原始签名不是」的应用是哪些。
     ///
     /// 与 `scanLocalApps` 的区别是不计算体积、不探测 Sparkle/Electron，因此可以在主界面出现后立刻返回，
     /// 不必等首次完整扫描（实测可达十几分钟）跑完。名单口径与完整扫描一致：
-    /// 必须存在签名备份；应用已卸载则不出现在结果里。
+    /// 必须有当前安装的小型事实或匹配的历史记录；应用卸载后不出现在结果里。
     func signatureReplacedApps(searchRoots: [URL]) -> [SignatureReplacedApp] {
-        guard CodeSigner.hasSignatureBackups(backupDirectoryURL: backupDirectoryURL) else { return [] }
+        guard CodeSigner.hasSignatureRecords(backupDirectoryURL: backupDirectoryURL) else { return [] }
         let started = Date()
         var results: [SignatureReplacedApp] = []
         var seen = Set<String>()
@@ -1341,7 +1352,7 @@ actor AppScanner {
             }
         }
         AppLogger.shared.logContext(
-            "签名备份快检完成",
+            "签名状态快检完成",
             details: [
                 ("roots", searchRoots.map(\.path).joined(separator: ", ")),
                 ("count", String(results.count)),

@@ -606,37 +606,54 @@ final class DataDirMoverTests: XCTestCase {
         let item = DataDirItem(name: "ReadOnly", path: localURL, type: .caches,
                                priority: .optional, description: "Metadata failure fixture")
         let mover = makeMover(homeDir: workspace.homeURL)
+        let original = try TreeCopySession.snapshot(at: localURL)
         do {
             try await mover.migrate(item: item, to: externalBaseURL) { progress in
                 guard progress.currentFile.isEmpty else { return }
-                // A conflicting directory at the marker path forces a real atomic write failure.
+                // The copier now prepares a private candidate before publishing
+                // the destination. A conflicting marker must still stop the switch.
                 do {
-                    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: externalURL.path)
+                    let candidates = try FileManager.default.contentsOfDirectory(at: externalBaseURL,
+                        includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasPrefix(".appports-copy-") }
+                    XCTAssertEqual(candidates.count, 1)
+                    let candidate = try XCTUnwrap(candidates.first)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: candidate.path)
                     try FileManager.default.createDirectory(
-                        at: externalURL.appendingPathComponent(".appports-link-metadata.plist"),
+                        at: candidate.appendingPathComponent(".appports-link-metadata.plist"),
                         withIntermediateDirectories: false
                     )
-                    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: externalURL.path)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: candidate.path)
                 } catch {
                     XCTFail("Failed to prepare the metadata conflict: \(error)")
                 }
             }
             XCTFail("The metadata conflict must fail migration")
         } catch let error as DataDirError {
-            guard case .copyFailed = error else { return XCTFail("Unexpected error: \(error)") }
+            guard case .copyFailed(let cause) = error, let copyError = cause as? TreeCopyError,
+                  case .verificationFailed = copyError else { return XCTFail("Unexpected error: \(error)") }
         }
 
         try assertRealDirectory(localURL)
+        try TreeCopySession.verifyUnchanged(at: localURL, against: original)
         XCTAssertEqual(try String(contentsOf: localURL.appendingPathComponent("payload.txt")), "keep-source")
         XCTAssertEqual(try fileManager.attributesOfItem(atPath: localURL.path)[.posixPermissions] as? Int, 0o555)
-        XCTAssertTrue(fileManager.fileExists(atPath: externalURL.path))
+        XCTAssertFalse(fileManager.fileExists(atPath: externalURL.path))
+        let ledger = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("data-transfers.plist"))
+        let pending = try XCTUnwrap(try ledger.transfers().first)
+        let candidate = URL(fileURLWithPath: try XCTUnwrap(pending.preparationPath))
+        XCTAssertEqual(pending.phase, .needsRecovery)
+        XCTAssertNil(pending.baseline)
+        XCTAssertNotNil(pending.sourceBaseline)
+        XCTAssertNotNil(pending.destinationIdentity)
+        try assertRealDirectory(candidate.appendingPathComponent(".appports-link-metadata.plist"))
 
         do {
             try await mover.migrate(item: item, to: externalBaseURL, progressHandler: nil)
             XCTFail("Unverified partial copies must block an automatic retry")
         } catch { }
         try assertRealDirectory(localURL)
-        XCTAssertEqual(try String(contentsOf: externalURL.appendingPathComponent("payload.txt")), "keep-source")
+        XCTAssertEqual(try ledger.transfers(), [pending])
+        XCTAssertEqual(try String(contentsOf: candidate.appendingPathComponent("payload.txt")), "keep-source")
     }
 
     func testRestoreRejectsImmutableSourceWithoutTraversingDirectorySymlinks() async throws {
@@ -1321,7 +1338,7 @@ final class DataDirMoverTests: XCTestCase {
         }
     }
 
-    func testCleanupLineagePreflightFailureRemainsRetryableAfterAncestorCleanup() async throws {
+    func testMiddleCopyCleanupKeepsLineageAndRemainingCopiesRetryable() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }
         let local = workspace.homeURL.appendingPathComponent("Cache")
@@ -1337,14 +1354,73 @@ final class DataDirMoverTests: XCTestCase {
         let middle = try XCTUnwrap(try store.transfers().first { $0.priorOperationID == first.operationID })
         try await mover.restore(item: item, progressHandler: nil)
         let last = try XCTUnwrap(try store.transfers().first { $0.priorOperationID == middle.operationID })
-        do { try await mover.cleanupRetainedTransfer(operationID: middle.operationID); XCTFail("Middle lineage proof is still needed") }
+        let firstBackup = URL(fileURLWithPath: try XCTUnwrap(first.backupPath))
+        let firstBackupSnapshot = try TreeCopySession.snapshot(at: firstBackup)
+        let lastBackupSnapshot = try TreeCopySession.snapshot(at: normalized)
+        try Data("current local edits".utf8).write(to: local.appendingPathComponent("new-user-file.txt"))
+        let activeIdentity = try DataPathIdentity.capture(local)
+        let activeSnapshot = try TreeCopySession.snapshot(at: local)
+
+        // A matching path and contents cannot authorize cleanup from a
+        // different current root, even when the old copies are all available.
+        let savedLocal = workspace.rootURL.appendingPathComponent("SavedCurrentData")
+        try fileManager.moveItem(at: local, to: savedLocal)
+        try fileManager.copyItem(at: savedLocal, to: local)
+        XCTAssertFalse(try DataPathIdentity.capture(local).matchesFilesystemObject(activeIdentity))
+        let replacementSnapshot = try TreeCopySession.snapshot(at: local)
+        let beforeRejection = try store.transfers()
+        do { try await mover.cleanupRetainedTransfer(operationID: middle.operationID); XCTFail("A replaced current root cannot authorize cleanup") }
         catch { }
+        XCTAssertEqual(try store.transfers(), beforeRejection)
         XCTAssertEqual(try store.transfer(operationID: middle.operationID)?.phase, .awaitingUserVerification)
         XCTAssertEqual(try String(contentsOf: firstTarget.appendingPathComponent("payload.txt")), "history")
-        try await mover.cleanupRetainedTransfer(operationID: first.operationID)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: local), replacementSnapshot)
+        try fileManager.removeItem(at: local)
+        try fileManager.moveItem(at: savedLocal, to: local)
+
+        // The middle physical copy is independent of its still-needed small
+        // location proof. Removing it must preserve the other copies and the
+        // current local tree, including edits made after restoration.
         try await mover.cleanupRetainedTransfer(operationID: middle.operationID)
-        try await mover.cleanupRetainedTransfer(operationID: last.operationID)
-        XCTAssertTrue(try store.transfers().isEmpty)
+        let middleProof = try XCTUnwrap(try store.transfer(operationID: middle.operationID))
+        XCTAssertEqual(middleProof.phase, .cleanupRequested)
+        XCTAssertNotNil(middleProof.retainedCopyRemovedAt)
+        XCTAssertNil(middleProof.baseline)
+        XCTAssertNil(middleProof.sourceBaseline)
+        XCTAssertTrue(middleProof.materialPaths.isEmpty)
+        XCTAssertEqual(middleProof.priorOperationID, first.operationID)
+        XCTAssertEqual(middleProof.sourceIdentity, middle.sourceIdentity)
+        XCTAssertEqual(middleProof.destinationIdentity, middle.destinationIdentity)
+        XCTAssertFalse(fileManager.fileExists(atPath: firstTarget.path))
+        XCTAssertEqual(try TreeCopySession.snapshot(at: firstBackup), firstBackupSnapshot)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: normalized), lastBackupSnapshot)
+        XCTAssertEqual(try DataPathIdentity.capture(local), activeIdentity)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: local), activeSnapshot)
+        XCTAssertEqual(try store.completedLocation(after: first.operationID).operationID, last.operationID)
+        let group = try XCTUnwrap(DataTransferGroup.groups(from: store.transfers()).first)
+        XCTAssertEqual(group.retainedCopies.map(\.id), [first.operationID, last.operationID])
+
+        let coldStore = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("data-transfers.plist"))
+        let coldMover = DataDirMover(homeDir: workspace.homeURL, store: coldStore, runner: NoFixtureWriters())
+        let unavailable = workspace.rootURL.appendingPathComponent("UnavailableFirstBackup")
+        try fileManager.moveItem(at: firstBackup, to: unavailable)
+        let beforeRetry = try coldStore.transfers()
+        do { try await coldMover.cleanupRetainedTransfer(operationID: first.operationID); XCTFail("An unavailable ancestor cannot be called deleted") }
+        catch { }
+        XCTAssertEqual(try coldStore.transfers(), beforeRetry)
+        XCTAssertEqual(try coldStore.transfer(operationID: middle.operationID), middleProof)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: local), activeSnapshot)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: normalized), lastBackupSnapshot)
+        try fileManager.moveItem(at: unavailable, to: firstBackup)
+        try await coldMover.cleanupRetainedTransfer(operationID: first.operationID)
+        XCTAssertNil(try coldStore.transfer(operationID: middle.operationID))
+        try await coldMover.cleanupRetainedTransfer(operationID: middle.operationID)
+        try await coldMover.cleanupRetainedTransfer(operationID: last.operationID)
+        XCTAssertTrue(try coldStore.transfers().isEmpty)
+        XCTAssertFalse(fileManager.fileExists(atPath: firstBackup.path))
+        XCTAssertFalse(fileManager.fileExists(atPath: normalized.path))
+        XCTAssertEqual(try DataPathIdentity.capture(local), activeIdentity)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: local), activeSnapshot)
         XCTAssertEqual(try String(contentsOf: local.appendingPathComponent("payload.txt")), "history")
     }
 

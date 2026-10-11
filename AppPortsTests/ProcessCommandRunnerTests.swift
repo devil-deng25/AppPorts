@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import AppPorts
@@ -92,6 +93,63 @@ struct ProcessCommandRunnerTests {
         #expect(result.standardOutput == Data(repeating: 0, count: 1_048_576))
         #expect(result.standardError == Data(repeating: 0, count: 786_432))
         #expect(!result.timedOut)
+        #expect(!result.outputWasTruncated)
+    }
+
+    @Test("Bounded capture drains both full streams and retains each diagnostic tail")
+    func boundedOutputCapture() async throws {
+        let command = """
+        printf -v chunk '%0256d' 0
+        for ((i=0; i<4096; i++)); do
+          printf '%s' "$chunk"
+          printf '%s' "$chunk" >&2
+        done
+        printf 'stdout-tail'
+        printf 'stderr-tail' >&2
+        """
+        let result = try await ProcessCommandRunner(captureLimit: 4096).run(
+            executable: "/bin/bash", arguments: ["-c", command], timeout: 15)
+        #expect(result.status == 0)
+        #expect(!result.timedOut)
+        #expect(result.runningProcess == nil)
+        #expect(result.outputWasTruncated)
+        #expect(result.standardOutput.count == 4096)
+        #expect(result.standardError.count == 4096)
+        #expect(result.stdoutText.hasSuffix("stdout-tail"))
+        #expect(result.stderrText.hasSuffix("stderr-tail"))
+    }
+
+    @Test("Timeout escalates an owned TERM-ignoring shell to confirmed exit")
+    func timeoutConfirmsStoppedChild() async throws {
+        let fixture = try ChildFixture()
+        defer { fixture.remove() }
+        let started = ProcessInfo.processInfo.systemUptime
+        let result = try await ProcessCommandRunner(captureLimit: 4096).run(
+            executable: "/bin/bash", arguments: [fixture.script.path, fixture.pid.path], timeout: 0.5)
+        let pidText = try String(contentsOf: fixture.pid, encoding: .utf8)
+        let pid = try #require(Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(result.timedOut)
+        #expect(result.status == SIGKILL)
+        #expect(result.runningProcess == nil)
+        #expect(try !ProcessCommandRunner.isRunning(.init(processIdentifier: pid, startSeconds: nil, startMicroseconds: nil)))
+        #expect(ProcessInfo.processInfo.systemUptime - started < 2)
+    }
+
+    @Test("Cancellation waits until its owned TERM-ignoring shell has exited")
+    func cancellationConfirmsStoppedChild() async throws {
+        let fixture = try ChildFixture()
+        defer { fixture.remove() }
+        let task = Task {
+            try await ProcessCommandRunner(captureLimit: 4096).run(
+                executable: "/bin/bash", arguments: [fixture.script.path, fixture.pid.path], timeout: 10)
+        }
+        defer { task.cancel() }
+        let reference = try await fixture.waitForProcess()
+        let cancelled = ProcessInfo.processInfo.systemUptime
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try !ProcessCommandRunner.isRunning(reference))
+        #expect(ProcessInfo.processInfo.systemUptime - cancelled < 1.5)
     }
 
     @Test("Waits for trailing output after the immediate child exits")
@@ -158,5 +216,39 @@ struct ProcessCommandRunnerTests {
             }
             try await group.waitForAll()
         }
+    }
+
+    private struct ChildFixture {
+        let root: URL
+        let script: URL
+        let pid: URL
+
+        init() throws {
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("AppPorts-owned-command-\(UUID().uuidString)")
+            script = root.appendingPathComponent("ignore-term.sh")
+            pid = root.appendingPathComponent("child.pid")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            // Bash builtins only: no descendant survives if the shell is killed.
+            try "trap '' TERM\nprintf '%s\\n' \"$$\" > \"$1\"\nwhile :; do :; done\n".write(
+                to: script, atomically: true, encoding: .utf8)
+        }
+
+        func waitForProcess() async throws -> ShellCommandProcessReference {
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                if let text = try? String(contentsOf: pid, encoding: .utf8),
+                   let identifier = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    var info = proc_bsdinfo()
+                    let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+                    if proc_pidinfo(identifier, PROC_PIDTBSDINFO, 0, &info, size) == size {
+                        return .init(processIdentifier: identifier, startSeconds: info.pbi_start_tvsec, startMicroseconds: info.pbi_start_tvusec)
+                    }
+                }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            throw CocoaError(.fileReadUnknown)
+        }
+
+        func remove() { try? FileManager.default.removeItem(at: root) }
     }
 }

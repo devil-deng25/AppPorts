@@ -127,6 +127,67 @@ final class TreeCopySessionTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: w.root.appendingPathComponent("refused").path))
     }
 
+    func testHardlinkGroupsUseCanonicalPathsAndKeepEqualIndependentFilesSeparate() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        for name in ["a", "z"] { try fm.createDirectory(at: w.source.appendingPathComponent(name), withIntermediateDirectories: false) }
+        let linkedPaths = ["a/inner", "a.txt", "z/last"]
+        let first = w.source.appendingPathComponent(linkedPaths[0])
+        try Data("equal bytes".utf8).write(to: first)
+        for path in linkedPaths.dropFirst() {
+            XCTAssertEqual(link(first.path, w.source.appendingPathComponent(path).path), 0)
+        }
+        for path in ["independent-one", "independent-two"] {
+            try Data("equal bytes".utf8).write(to: w.source.appendingPathComponent(path))
+        }
+        let snapshot = try await TreeCopySession().copy(from: w.source, to: w.destination)
+        let entries = Dictionary(uniqueKeysWithValues: snapshot.entries.map { ($0.path, $0) })
+        let firstInode = try info(w.destination.appendingPathComponent(linkedPaths[0])).st_ino
+        for path in linkedPaths {
+            // Depth-first traversal sees a/inner before a.txt, while the
+            // canonical hardlink label is the lexically smallest full path.
+            XCTAssertEqual(try XCTUnwrap(entries[path]).hardlinkGroup, "a.txt")
+            let destination = try info(w.destination.appendingPathComponent(path))
+            XCTAssertEqual(destination.st_ino, firstInode)
+            XCTAssertEqual(destination.st_nlink, 3)
+        }
+        for path in ["independent-one", "independent-two"] {
+            XCTAssertNil(try XCTUnwrap(entries[path]).hardlinkGroup)
+            let destination = try info(w.destination.appendingPathComponent(path))
+            XCTAssertNotEqual(destination.st_ino, firstInode)
+            XCTAssertEqual(destination.st_nlink, 1)
+        }
+        try TreeCopySession.verifyUnchanged(at: w.source, against: snapshot)
+        try TreeCopySession.verifyCopy(at: w.destination, against: snapshot)
+
+        // An excluded name remains outside the selected tree even when the
+        // inode is also reachable through several included sibling paths.
+        XCTAssertEqual(link(first.path, w.source.appendingPathComponent("excluded").path), 0)
+        XCTAssertThrowsError(try TreeCopySession.snapshot(at: w.source, excludingRootEntries: ["excluded"])) { error in
+            guard case TreeCopyError.hardlinkOutsideSelection = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testHardlinkAddedAfterInitialVerificationStopsFinalVerification() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        let file = w.source.appendingPathComponent("payload")
+        let outside = w.root.appendingPathComponent("outside")
+        try Data("original".utf8).write(to: file)
+        do {
+            _ = try await TreeCopySession().copy(from: w.source, to: w.destination, progressHandler: { progress in
+                if progress.currentFile.isEmpty { XCTAssertEqual(link(file.path, outside.path), 0) }
+            })
+            XCTFail("A new outside hardlink must invalidate the copied baseline")
+        } catch TreeCopyError.hardlinkOutsideSelection { }
+        catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertEqual(try Data(contentsOf: file), Data("original".utf8))
+        XCTAssertEqual(try info(file).st_ino, try info(outside).st_ino)
+        XCTAssertTrue(fm.fileExists(atPath: w.destination.appendingPathComponent("payload").path))
+    }
+
     func testFileRootPreservesSetgidAndGroup() async throws {
         let w = try workspace()
         defer { cleanup(w.root) }
@@ -261,6 +322,46 @@ final class TreeCopySessionTests: XCTestCase {
         do { _ = try await task.value; XCTFail("Cancelled copy succeeded") } catch is CancellationError {} catch { XCTFail("Wrong cancellation error: \(error)") }
         XCTAssertEqual(try Data(contentsOf: file), Data("safe".utf8))
         XCTAssertFalse(fm.fileExists(atPath: w.destination.path))
+    }
+
+    func testUnsupportedExtentFallbackCancelsDuringOneFileAndRetries() async throws {
+        for unsupported in [ENOTSUP, EINVAL] {
+            let w = try workspace()
+            defer { cleanup(w.root) }
+            let file = w.source.appendingPathComponent("payload")
+            let bytes = Data(repeating: 0x5A, count: 8 * 1024 * 1024)
+            try bytes.write(to: file)
+            try setXattr("org.appports.fallback", Data("metadata".utf8), file)
+            XCTAssertEqual(chmod(file.path, 0o440), 0)
+            let baseline = try TreeCopySession.snapshot(at: w.source)
+            let session = TreeCopySession(extentSeek: { _, _, _ in errno = unsupported; return -1 })
+            let task = Task {
+                try await session.copy(from: w.source, to: w.destination, progressHandler: { progress in
+                    if progress.currentFile == "payload", progress.copiedBytes > 0 {
+                        withUnsafeCurrentTask { $0?.cancel() }
+                    }
+                })
+            }
+            do { _ = try await task.value; XCTFail("Fallback ignored mid-file cancellation") }
+            catch is CancellationError {}
+            catch { XCTFail("Wrong cancellation error: \(error)") }
+            let partialFile = w.destination.appendingPathComponent("payload")
+            let partialBytes = try Data(contentsOf: partialFile)
+            XCTAssertGreaterThan(partialBytes.count, 0)
+            XCTAssertLessThan(partialBytes.count, bytes.count)
+            XCTAssertEqual(partialBytes, bytes.prefix(partialBytes.count))
+            try TreeCopySession.verifyUnchanged(at: w.source, against: baseline)
+            // The pipeline's partial-copy contract must still recognize the
+            // actual prefix, so ordinary recovery can safely retry this copy.
+            let partial = try TreeCopySession.partialCopySnapshot(at: w.destination, source: w.source, against: baseline)
+            try TreeCopySession.removeVerifiedCopy(at: w.destination, against: partial)
+            let completed = try await session.copy(from: w.source, to: w.destination)
+            try TreeCopySession.verifyCopy(at: w.destination, against: completed)
+            try TreeCopySession.verifyUnchanged(at: w.source, against: baseline)
+            XCTAssertEqual(try Data(contentsOf: partialFile), bytes)
+            XCTAssertEqual(try info(partialFile).st_mode & 0o7777, 0o440)
+            XCTAssertEqual(try xattr("org.appports.fallback", partialFile), Data("metadata".utf8))
+        }
     }
 
     func testRelativeLinkIntoExcludedEntryCannotSilentlyChangeTarget() async throws {

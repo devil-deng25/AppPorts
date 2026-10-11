@@ -29,6 +29,11 @@ struct TreeCopySnapshot: Codable, Equatable, Sendable {
         let nanoseconds: Int64
     }
 
+    struct ResourceFork: Codable, Equatable, Sendable {
+        let size: Int64
+        let digest: Data
+    }
+
     struct Entry: Codable, Equatable, Sendable {
         enum Kind: String, Codable, Sendable { case directory, file, symbolicLink }
         let path: String
@@ -41,11 +46,20 @@ struct TreeCopySnapshot: Codable, Equatable, Sendable {
         let birthTime: Timestamp
         let modificationTime: Timestamp
         let extendedAttributes: [String: Data]
+        /// Absent in older records, which stored the entire fork as an xattr.
+        var resourceFork: ResourceFork? = nil
         let acl: String?
         let size: Int64
         let digest: Data?
         let linkTarget: String?
         let hardlinkGroup: String?
+
+        var logicalBytes: Int64 { (kind == .file ? size : 0) + (resourceFork?.size ?? Int64(extendedAttributes[ResourceForkStream.attributeName]?.count ?? 0)) }
+
+        private enum CodingKeys: String, CodingKey {
+            case path, kind, identity, mode, uid, gid, flags, birthTime, modificationTime
+            case extendedAttributes, resourceFork, acl, size, digest, linkTarget, hardlinkGroup
+        }
     }
 
     /// Only legacy mount restores may preserve the formerly projected root owner.
@@ -63,11 +77,49 @@ struct TreeCopySnapshot: Codable, Equatable, Sendable {
         return Entry(path: entry.path, kind: entry.kind, identity: entry.identity, mode: entry.mode,
                      uid: owner.uid, gid: owner.gid, flags: entry.flags, birthTime: entry.birthTime,
                      modificationTime: entry.modificationTime, extendedAttributes: entry.extendedAttributes,
+                     resourceFork: entry.resourceFork,
                      acl: entry.acl, size: entry.size, digest: entry.digest, linkTarget: entry.linkTarget,
                      hardlinkGroup: entry.hardlinkGroup)
     }
 
     let entries: [Entry]
     let excludedRootEntries: Set<String>
-    var logicalBytes: Int64 { entries.filter { $0.kind == .file }.reduce(0) { $0 + $1.size } }
+    var logicalBytes: Int64 { entries.reduce(0) { $0 + $1.logicalBytes } }
+}
+
+extension TreeCopySnapshot.Entry {
+    /// Decode old raw-xattr records once, then retain only the fork's compact
+    /// summary. A hybrid record must agree on both representations.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        path = try values.decode(String.self, forKey: .path)
+        kind = try values.decode(Kind.self, forKey: .kind)
+        identity = try values.decode(TreeCopySnapshot.Identity.self, forKey: .identity)
+        mode = try values.decode(UInt16.self, forKey: .mode)
+        uid = try values.decode(UInt32.self, forKey: .uid)
+        gid = try values.decode(UInt32.self, forKey: .gid)
+        flags = try values.decode(UInt32.self, forKey: .flags)
+        birthTime = try values.decode(TreeCopySnapshot.Timestamp.self, forKey: .birthTime)
+        modificationTime = try values.decode(TreeCopySnapshot.Timestamp.self, forKey: .modificationTime)
+        var attributes = try values.decode([String: Data].self, forKey: .extendedAttributes)
+        resourceFork = try values.decodeIfPresent(TreeCopySnapshot.ResourceFork.self, forKey: .resourceFork)
+        if let rawFork = attributes.removeValue(forKey: ResourceForkStream.attributeName) {
+            let legacy = TreeCopySnapshot.ResourceFork(size: Int64(rawFork.count), digest: try ResourceForkStream.digest(of: rawFork))
+            if let resourceFork, resourceFork != legacy {
+                throw DecodingError.dataCorruptedError(forKey: .resourceFork, in: values,
+                    debugDescription: "Resource fork summary disagrees with the historical raw value")
+            }
+            resourceFork = legacy
+        }
+        if let resourceFork, resourceFork.size < 0 || resourceFork.digest.count != 32 {
+            throw DecodingError.dataCorruptedError(forKey: .resourceFork, in: values,
+                debugDescription: "Invalid resource fork summary")
+        }
+        extendedAttributes = attributes
+        acl = try values.decodeIfPresent(String.self, forKey: .acl)
+        size = try values.decode(Int64.self, forKey: .size)
+        digest = try values.decodeIfPresent(Data.self, forKey: .digest)
+        linkTarget = try values.decodeIfPresent(String.self, forKey: .linkTarget)
+        hardlinkGroup = try values.decodeIfPresent(String.self, forKey: .hardlinkGroup)
+    }
 }
