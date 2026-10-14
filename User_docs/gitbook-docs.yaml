@@ -20,7 +20,7 @@ site:
     - type: space
       key: appports-zh-hant
       title: 繁體中文
-      path: zh-Hant
+      path: zh-hant
       content:
         directory: ./gitbook/zh-Hant
         language: zh-tw
