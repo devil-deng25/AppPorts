@@ -48,7 +48,7 @@ struct SignatureRepairSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(String(format: "修复「%@」的签名".localized, app.displayName))
                         .font(.title3.bold())
-                    Text("先检查数据位置，再恢复原始签名。请退出应用、连接外置盘，并保留现有数据和备份。".localized)
+                    Text("先还原应用数据，再恢复原始签名。请退出应用并连接外置盘。AppPorts 会处理备份。".localized)
                         .font(.callout)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -255,17 +255,11 @@ struct SignatureRepairSheet: View {
             let signer = CodeSigner()
             let signing = await AppScanner().checkSigningStatus(bundleURL: url)
             let authority = await signer.getSigningIdentity(appURL: url)
-            let status = await signer.verify(appURL: url)
-            let inspection = try? SignatureInspector.inspect(at: url)
-            let fact = try? SignatureFactStore().currentFact(at: url, inspection: inspection)
-            let originalMatches = fact?.originalDeveloper.map { original in
-                inspection?.developerIdentity.map { original.matches($0) } == true
-            } ?? true
+            let official = await signer.isVerifiedOfficialApplication(appURL: url)
             await MainActor.run {
                 guard signatureCheckToken == token else { return }
                 currentAuthority = signing.signatureCheckUnavailable ? nil : (signing.isResigned ? "Ad-hoc" : authority)
-                signatureRestored = !signing.signatureCheckUnavailable && authority != nil && status == .valid
-                    && !signing.isResigned && originalMatches
+                signatureRestored = !signing.signatureCheckUnavailable && !signing.isResigned && official
                 isCheckingSignature = false
             }
         }

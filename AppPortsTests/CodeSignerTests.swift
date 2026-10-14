@@ -483,14 +483,15 @@ struct CodeSignerTests {
         // 移动过应用也能恢复，不能依赖备份中的旧绝对路径。
         let moved = workspace.root.appendingPathComponent("Moved.app")
         try FileManager.default.moveItem(at: app, to: moved)
-        try await signer.restoreSignature(appURL: moved, bundleIdentifier: "com.appports.tests.fixture")
+        let restored = try await signer.restoreSignature(appURL: moved, bundleIdentifier: "com.appports.tests.fixture")
+        #expect(restored.cleanupWarning == nil)
         #expect(try SignatureSnapshot.fingerprint(of: moved) == before)
         #expect(try Data(contentsOf: moved.appendingPathComponent("Contents/Helpers/Helper.app/Contents/MacOS/Fixture")) == helperBytes)
         #expect(CodeSigner.isSandboxed(at: moved) == sandboxed)
         #expect(await signer.hasBackup(bundleIdentifier: "com.appports.tests.fixture") == false)
     }
 
-    @Test("Real certificate facts survive repeated signing and relocation before no-backup official recovery",
+    @Test("Real certificate originals survive repeated signing and relocation until official recovery completes",
           .enabled(if: SignedTestApplication.source != nil))
     func restoresCertificateSignedApplication() async throws {
         let workspace = try Workspace()
@@ -523,7 +524,9 @@ struct CodeSignerTests {
         #expect(second.originalDeveloper == first.originalDeveloper)
         #expect(second.originalFingerprint == original)
         #expect(try facts.facts().count == 1)
-        #expect(await !signer.hasBackup(bundleIdentifier: identifier))
+        #expect(await signer.hasBackup(bundleIdentifier: identifier))
+        let retained = try #require(try SignatureHistoryStore(backupDirectoryURL: workspace.backups).read(bundleIdentifier: identifier))
+        #expect(retained.originalFingerprint == original)
 
         let other = workspace.root.appendingPathComponent("IndependentInstallation.app")
         try SignatureSnapshot.copy(from: app, to: other)
@@ -630,7 +633,7 @@ struct CodeSignerTests {
         #expect(try readAttribute(attribute, at: app) == original)
     }
 
-    @Test("A verified official reinstall preserves historical originals without creating another backup",
+    @Test("A verified official reinstall retains its current original and retires only authenticated old backups",
           .enabled(if: SignedTestApplication.source != nil),
           arguments: [false, true])
     func renewsBackupAfterOfficialReinstall(legacy: Bool) async throws {
@@ -661,13 +664,22 @@ struct CodeSignerTests {
         let reinstalled = try SignatureSnapshot.fingerprint(of: app)
         try #require((oldRecord["restorableFingerprints"] as? [String])?.contains(reinstalled) != true)
         try await signer.sign(appURL: app, bundleIdentifier: identifier, allowSandboxed: true)
-        let newRecord = try readBackup(in: workspace, identifier: identifier)
-        #expect(newRecord as NSDictionary == oldRecord as NSDictionary)
-        #expect(FileManager.default.fileExists(atPath: oldSnapshot.path))
-        #expect(!FileManager.default.fileExists(atPath: workspace.backups.appendingPathComponent("retired").path))
-        #expect(try SignatureFactStore(backupDirectoryURL: workspace.backups).currentFact(at: app)?.originalFingerprint == reinstalled)
-        try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier, originalApplication: source)
-        #expect(try SignatureSnapshot.fingerprint(of: app) == SignatureSnapshot.fingerprint(of: source))
+        let fact = try #require(try SignatureFactStore(backupDirectoryURL: workspace.backups).currentFact(at: app))
+        let history = SignatureHistoryStore(backupDirectoryURL: workspace.backups)
+        let newRecordURL = URL(fileURLWithPath: try #require(fact.legacyBackupRecordPath))
+        let newRecord = try history.read(at: newRecordURL)
+        #expect(newRecord.originalFingerprint == reinstalled)
+        #expect(try SignatureSnapshot.fingerprint(of: history.verifiedSnapshot(for: newRecord)) == reinstalled)
+        #expect(FileManager.default.fileExists(atPath: oldSnapshot.path) == legacy)
+        if legacy {
+            #expect(try readBackup(in: workspace, identifier: identifier) as NSDictionary == oldRecord as NSDictionary)
+            #expect(newRecordURL.deletingLastPathComponent().lastPathComponent == "retired")
+        }
+        #expect(fact.originalFingerprint == reinstalled)
+        let restored = try await signer.restoreSignature(appURL: app, bundleIdentifier: identifier)
+        #expect(restored.cleanupWarning == nil)
+        #expect(try SignatureSnapshot.fingerprint(of: app) == reinstalled)
+        #expect(!FileManager.default.fileExists(atPath: newRecordURL.path))
         #expect(await signer.verify(appURL: app) == .valid)
     }
 

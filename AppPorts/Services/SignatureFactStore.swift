@@ -350,6 +350,10 @@ struct SignatureFactStore: Sendable {
             guard var record = try? operations.read(url), record.applicationPath == app.path,
                   record.candidateIdentity?.matchesFilesystemObject(identity) == true,
                   [.switching, .committed, .cleaning].contains(record.phase) else { continue }
+            guard record.originalBackup?.completed != false else {
+                // Relocation must not orphan the still-required official package.
+                throw CodeSigner.SigningError.operationInProgress
+            }
             guard let fact = try activePendingFact(record) else { continue }
             if let current = try currentFact(at: app, verifyContent: true), current.lastOperationID != record.id {
                 continue

@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// Read/write compatibility only. Production code never creates a new original
-/// snapshot or retires a generation when a user signs an application.
+/// Official originals remain available while the corresponding installation
+/// needs signature restoration. Temporary signing packages have a separate journal.
 struct SignatureBackup: Codable, Equatable, Sendable {
     let bundleIdentifier: String
     let signingIdentity: String
@@ -16,12 +16,16 @@ struct SignatureBackup: Codable, Equatable, Sendable {
     var cleanup: SignatureBackupCleanup?
     var applicationIdentity: DataPathIdentity?
     var version: SignatureAppVersion?
+    /// Kept before cleanup starts so a partially removed original can still be
+    /// reconciled against a later official update, without trusting a hash change.
+    var originalDeveloper: OriginalDeveloperIdentity?
+    var originalApplicationGroups: [String]?
 }
 
 struct SignatureBackupCleanup: Codable, Equatable, Sendable {
     let parentIdentity: DataPathIdentity
     let snapshotIdentity: DataPathIdentity?
-    let applicationFingerprint: String
+    var applicationFingerprint: String
     var removalManifest: SignatureRemovalManifest?
     var actualDeletionStarted: Bool?
 }
@@ -136,6 +140,16 @@ struct SignatureHistoryStore: Sendable {
         NotificationCenter.default.post(name: .appPortsRecordsDidChange, object: nil)
     }
 
+    /// XML history stores dates at whole-second precision; the binary operation
+    /// journal retains fractional seconds. Compare the exact history-format
+    /// representation so a committed write can be recognized after a restart.
+    func containsPersisted(_ backup: SignatureBackup, at url: URL) throws -> Bool {
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .xml
+        let persisted = try PropertyListDecoder().decode(SignatureBackup.self, from: encoder.encode(backup))
+        return try read(at: url) == persisted
+    }
+
     func snapshotURL(for backup: SignatureBackup) -> URL? {
         guard let name = backup.snapshotName, name.hasPrefix("original-"), name.hasSuffix(".app"),
               URL(fileURLWithPath: name).lastPathComponent == name else { return nil }
@@ -153,11 +167,12 @@ struct SignatureHistoryStore: Sendable {
         catch { throw CodeSigner.SigningError.snapshotInvalid }
     }
 
-    func belongs(_ backup: SignatureBackup, to app: URL, currentFingerprint: String? = nil, fact: SignatureFact? = nil) throws -> Bool {
+    func belongs(_ backup: SignatureBackup, to app: URL, currentFingerprint: String? = nil, fact: SignatureFact? = nil,
+                 recordURL: URL? = nil) throws -> Bool {
         guard backup.bundleIdentifier == CodeSigner.bundleIdentifier(at: app) else { return false }
         let identity = try DataPathIdentity.capture(app)
         if let saved = backup.applicationIdentity {
-            let recordPath = try recordURL(bundleIdentifier: backup.bundleIdentifier).path
+            let recordPath = try (recordURL ?? self.recordURL(bundleIdentifier: backup.bundleIdentifier)).path
             guard saved.matchesFilesystemObject(identity)
                 || (fact?.applicationIdentity.matchesFilesystemObject(identity) == true
                     && fact?.legacyBackupRecordPath == recordPath) else { return false }
@@ -230,6 +245,13 @@ struct SignatureHistoryStore: Sendable {
             let legacy = backup.schemaVersion != 2 || snapshot == nil
             let cleanup = backup.cleanup != nil
             let protected = hasPendingDeletion(for: record, snapshot: snapshot, recordID: id, inventory: deletionInventory)
+            // A missing file in an online local backup directory is not an
+            // available copy. Keep its historical metadata for provenance,
+            // while removing the stale row from the physical-copy inventory.
+            if let snapshot, exists == false, !cleanup, !protected,
+               isOnlineLocalSnapshotParent(snapshot.deletingLastPathComponent()) {
+                continue
+            }
             let missingAfterDeletion = exists == false && backup.cleanup?.actualDeletionStarted == true
                 && backup.cleanup?.removalManifest != nil && backup.cleanup?.snapshotIdentity != nil
             let canResume = cleanup && snapshot != nil && (isDirectory || missingAfterDeletion)
@@ -273,6 +295,17 @@ struct SignatureHistoryStore: Sendable {
         materials += deletionInventory.unreadableRecords.map(\.material)
         if let unavailable = deletionInventory.unavailableDirectory { materials.append(unavailable) }
         return materials
+    }
+
+    private func isOnlineLocalSnapshotParent(_ parent: URL) -> Bool {
+        do {
+            guard try SignatureSnapshot.info(at: parent).st_mode & S_IFMT == S_IFDIR,
+                  parent.standardizedFileURL == parent.resolvingSymlinksInPath().standardizedFileURL else { return false }
+            var fresh = parent
+            fresh.removeAllCachedResourceValues()
+            let values = try fresh.resourceValues(forKeys: [.volumeIsInternalKey, .volumeUUIDStringKey])
+            return values.volumeIsInternal == true && values.volumeUUIDString != nil
+        } catch { return false }
     }
 
     private func unreadableMaterial(at url: URL, id: String? = nil, detail: String,

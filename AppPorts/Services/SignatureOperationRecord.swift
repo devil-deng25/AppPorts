@@ -100,6 +100,7 @@ struct SignatureOperationRecord: Codable, Equatable, Sendable {
     var cleanupStarted = false
     var legacyRecordPath: String?
     var originalSourcePath: String?
+    var originalBackup: SignatureOriginalBackupIntent?
     var recoveryRequirements: SignatureRecoveryRequirementsRecord?
     var updateProtection: AppUpdateProtectionRelocation?
     var unconfirmedCommand: ShellCommandProcessReference?
@@ -108,6 +109,19 @@ struct SignatureOperationRecord: Codable, Equatable, Sendable {
     var applicationURL: URL { URL(fileURLWithPath: applicationPath) }
     var directoryURL: URL { URL(fileURLWithPath: directoryPath) }
     var candidateURL: URL { directoryURL.appendingPathComponent(applicationURL.lastPathComponent) }
+}
+
+/// Keeping the only official original is a durable obligation, separate from
+/// the short-lived signing workspace. Old writers reject this schema instead
+/// of deleting the exchanged original without honoring that obligation.
+struct SignatureOriginalBackupIntent: Codable, Equatable, Sendable {
+    let recordPath: String
+    let parentIdentity: DataPathIdentity
+    let recordParentIdentity: DataPathIdentity
+    var backup: SignatureBackup
+    var snapshotIdentity: DataPathIdentity?
+    var removalManifest: SignatureRemovalManifest?
+    var completed = false
 }
 
 /// Store only the entitlement declarations and original-object binding needed
@@ -205,7 +219,9 @@ struct SignatureOperationStore: Sendable {
 
     private func decode(_ data: Data, at url: URL) throws -> SignatureOperationRecord {
         let record = try PropertyListDecoder().decode(SignatureOperationRecord.self, from: data)
-        guard record.schemaVersion == 1, url.lastPathComponent == record.id.uuidString + ".plist",
+        guard (1...2).contains(record.schemaVersion),
+              record.originalBackup == nil || record.schemaVersion == 2 && record.kind == .sign,
+              url.lastPathComponent == record.id.uuidString + ".plist",
               record.applicationIdentity.isResolved, record.applicationParentIdentity.isResolved,
               record.directoryIdentity?.isResolved != false, record.candidateIdentity?.isResolved != false,
               record.applicationURL.standardizedFileURL.path == record.applicationPath,

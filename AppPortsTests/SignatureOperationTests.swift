@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Manual signature operation recovery")
 struct SignatureOperationTests {
-    @Test("Successful signing leaves one small current fact and no permanent original or temporary application")
+    @Test("Signing unsigned code leaves a current fact without inventing an official original")
     func noPermanentBackup() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -18,6 +18,157 @@ struct SignatureOperationTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.backups.appendingPathComponent("retired").path))
         let appDirectories = try FileManager.default.contentsOfDirectory(atPath: fixture.root.path).filter { $0.hasPrefix(".AppPorts-signature-") }
         #expect(appDirectories.isEmpty)
+    }
+
+    @Test("Classic signing automatically keeps its official original through repeated signing and restores it")
+    func automaticallyRetainsAndRestoresOfficialOriginal() async throws {
+        let fixture = try Fixture(sandboxed: true)
+        defer { fixture.remove() }
+        let original = try SignatureSnapshot.fingerprint(of: fixture.app)
+        let signer = fixture.signer(officialEvidence: true, captureOfficialOriginal: true)
+        let signed = try await signer.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier, allowSandboxed: true)
+        #expect(signed.committed && signed.cleanupWarning == nil)
+        let history = SignatureHistoryStore(backupDirectoryURL: fixture.backups)
+        let backup = try #require(try history.read(bundleIdentifier: fixture.identifier))
+        #expect(backup.originalFingerprint == original)
+        #expect(backup.originalDeveloper == Fixture.developer)
+        #expect(backup.originalApplicationGroups == ["group.not-related-to-app-name.shared"])
+        #expect(try SignatureSnapshot.fingerprint(of: history.verifiedSnapshot(for: backup)) == original)
+        _ = try await signer.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier)
+        #expect(try history.read(bundleIdentifier: fixture.identifier)?.snapshotName == backup.snapshotName)
+        _ = await signer.performAutomaticMaintenance()
+        #expect(try history.read(bundleIdentifier: fixture.identifier) != nil)
+        let restored = try await signer.restoreSignature(appURL: fixture.app, bundleIdentifier: fixture.identifier)
+        #expect(restored.committed && restored.cleanupWarning == nil)
+        #expect(try SignatureSnapshot.fingerprint(of: fixture.app) == original)
+        #expect(try history.read(bundleIdentifier: fixture.identifier) == nil)
+        #expect(try fixture.signingMaterialsAreEmpty())
+    }
+
+    @Test("A failed original-backup copy keeps the exchanged original and completes on a cold retry")
+    func originalRetentionResumesAfterPartialCopy() async throws {
+        let fixture = try Fixture(sandboxed: true)
+        defer { fixture.remove() }
+        let original = try SignatureSnapshot.fingerprint(of: fixture.app)
+        let failing = fixture.signer(officialEvidence: true, captureOfficialOriginal: true, copy: { source, destination in
+            if destination.lastPathComponent.hasPrefix("original-") {
+                try FileManager.default.createDirectory(at: destination.appendingPathComponent("Contents"), withIntermediateDirectories: false)
+                throw Injected.failure
+            }
+            try SignatureSnapshot.copyContents(from: source, into: destination)
+        })
+        let result = try await failing.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier, allowSandboxed: true)
+        #expect(result.committed && result.cleanupWarning != nil)
+        let operations = SignatureOperationStore(backupDirectoryURL: fixture.backups)
+        let pending = try #require(try operations.records().first)
+        #expect(pending.schemaVersion == 2 && pending.originalBackup?.completed == false)
+        #expect(!pending.cleanupStarted)
+        #expect(try SignatureSnapshot.fingerprint(of: pending.candidateURL) == original)
+        let warnings = await fixture.signer(officialEvidence: true, captureOfficialOriginal: true).performAutomaticMaintenance()
+        #expect(warnings.isEmpty)
+        #expect(try operations.records().isEmpty)
+        let history = SignatureHistoryStore(backupDirectoryURL: fixture.backups)
+        let backup = try #require(try history.read(bundleIdentifier: fixture.identifier))
+        #expect(try SignatureSnapshot.fingerprint(of: history.verifiedSnapshot(for: backup)) == original)
+    }
+
+    @Test("An official update retires a backup only after authenticated developer verification", arguments: [false, true])
+    func officialUpdateRetention(wrongDeveloper: Bool) async throws {
+        let fixture = try Fixture(sandboxed: true)
+        defer { fixture.remove() }
+        let official = fixture.root.appendingPathComponent("OfficialUpdate.app")
+        try SignatureSnapshot.copy(from: fixture.app, to: official)
+        let signer = fixture.signer(officialEvidence: true, captureOfficialOriginal: true)
+        _ = try await signer.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier, allowSandboxed: true)
+        try Data("official updated data".utf8).write(to: official.appendingPathComponent("Contents/Resources/payload"))
+        let signing = try await ProcessCommandRunner().run(executable: "/usr/bin/codesign",
+            arguments: ["--force", "--sign", "-", "--entitlements", fixture.root.appendingPathComponent("entitlements.plist").path, official.path], timeout: 30)
+        #expect(signing.status == 0)
+        try SignatureSnapshot.exchange(fixture.app, official)
+        let developer = wrongDeveloper ? OriginalDeveloperIdentity(authority: "Different Developer",
+            teamIdentifier: "OTHERTEAM0", designatedRequirement: "identifier other", certificateSHA256: String(repeating: "b", count: 64)) : Fixture.developer
+        _ = await fixture.signer(officialEvidence: true, captureOfficialOriginal: true, officialDeveloper: developer).performAutomaticMaintenance()
+        let history = SignatureHistoryStore(backupDirectoryURL: fixture.backups)
+        #expect((try history.read(bundleIdentifier: fixture.identifier) != nil) == wrongDeveloper)
+        #expect(try String(contentsOf: fixture.app.appendingPathComponent("Contents/Resources/payload"), encoding: .utf8) == "official updated data")
+    }
+
+    @Test("A saved original and signature fact can finish after the last retention checkpoint was interrupted")
+    func originalRetentionResumesAfterHistoryAndFactCommit() async throws {
+        let fixture = try Fixture(sandboxed: true)
+        defer { fixture.remove() }
+        let signer = fixture.signer(officialEvidence: true, captureOfficialOriginal: true, checkpoint: { record in
+            if record.originalBackup?.completed == true { throw Injected.failure }
+        })
+        let result = try await signer.sign(appURL: fixture.app, bundleIdentifier: fixture.identifier, allowSandboxed: true)
+        #expect(result.committed && result.cleanupWarning != nil)
+        let operations = SignatureOperationStore(backupDirectoryURL: fixture.backups)
+        let pending = try #require(try operations.records().first)
+        #expect(pending.originalBackup?.completed == false)
+        let history = SignatureHistoryStore(backupDirectoryURL: fixture.backups)
+        let backup = try #require(try history.read(bundleIdentifier: fixture.identifier))
+        let snapshotIdentity = try DataPathIdentity.capture(history.verifiedSnapshot(for: backup))
+        let warnings = await fixture.signer(officialEvidence: true, captureOfficialOriginal: true).performAutomaticMaintenance()
+        #expect(warnings.isEmpty)
+        #expect(try operations.records().isEmpty)
+        let retained = try #require(try history.read(bundleIdentifier: fixture.identifier))
+        #expect(try DataPathIdentity.capture(history.verifiedSnapshot(for: retained)) == snapshotIdentity)
+    }
+
+    @Test("An original-backup obligation cannot be decoded as a legacy signature operation")
+    func originalBackupRequiresNewOperationSchema() async throws {
+        let fixture = try Fixture(sandboxed: true)
+        defer { fixture.remove() }
+        _ = try await fixture.signer(officialEvidence: true, captureOfficialOriginal: true, checkpoint: { record in
+            if record.originalBackup?.completed == true { throw Injected.failure }
+        }).sign(appURL: fixture.app, bundleIdentifier: fixture.identifier, allowSandboxed: true)
+        let operations = SignatureOperationStore(backupDirectoryURL: fixture.backups)
+        var pending = try #require(try operations.records().first)
+        pending.schemaVersion = 1
+        let url = operations.directoryURL.appendingPathComponent(pending.id.uuidString + ".plist")
+        let bytes = try PropertyListEncoder().encode(pending)
+        try bytes.write(to: url)
+        #expect(throws: (any Error).self) { try operations.read(url) }
+        _ = await fixture.signer(officialEvidence: true, captureOfficialOriginal: true).performAutomaticMaintenance()
+        #expect(try Data(contentsOf: url) == bytes)
+        #expect(try SignatureSnapshot.entryExists(pending.candidateURL))
+    }
+
+    @Test("Official updates retain the old original while an operation depends on a removed application group")
+    func officialUpdateKeepsOldGroupDependencies() async throws {
+        let fixture = try Fixture(sandboxed: true)
+        defer { fixture.remove() }
+        let official = fixture.root.appendingPathComponent("OfficialUpdate.app")
+        try SignatureSnapshot.copy(from: fixture.app, to: official)
+        _ = try await fixture.signer(officialEvidence: true, captureOfficialOriginal: true)
+            .sign(appURL: fixture.app, bundleIdentifier: fixture.identifier, allowSandboxed: true)
+        let entitlements = fixture.root.appendingPathComponent("updated-entitlements.plist")
+        try PropertyListSerialization.data(fromPropertyList: ["com.apple.security.app-sandbox": true], format: .xml, options: 0)
+            .write(to: entitlements)
+        try Data("new official content".utf8).write(to: official.appendingPathComponent("Contents/Resources/payload"))
+        let signed = try await ProcessCommandRunner().run(executable: "/usr/bin/codesign",
+            arguments: ["--force", "--sign", "-", "--entitlements", entitlements.path, official.path], timeout: 30)
+        #expect(signed.status == 0)
+        try SignatureSnapshot.exchange(fixture.app, official)
+        let home = fixture.root.appendingPathComponent("Home")
+        let group = home.appendingPathComponent("Library/Group Containers/group.not-related-to-app-name.shared/Store")
+        try FileManager.default.createDirectory(at: group, withIntermediateDirectories: true)
+        try Data("latest group data".utf8).write(to: group.appendingPathComponent("payload"))
+        let data = ContainerMountStore(fileURL: fixture.root.appendingPathComponent("group-operation.plist"))
+        let pending = DataTransferRecord(mode: .symlink, direction: .migrate, appName: "Shared Group",
+            bundleIdentifier: "org.unrelated.app", dataDirType: "groupContainers", originalPath: group.path,
+            activePath: group.path, destinationPath: fixture.root.appendingPathComponent("ExternalGroup").path,
+            sourceIdentity: try DataPathIdentity.capture(group))
+        try data.beginTransfer(pending)
+        let maintenance = fixture.signer(officialEvidence: true, captureOfficialOriginal: true,
+            dataTransferStore: data, homeDirectory: home)
+        _ = await maintenance.performAutomaticMaintenance()
+        let history = SignatureHistoryStore(backupDirectoryURL: fixture.backups)
+        #expect(try history.read(bundleIdentifier: fixture.identifier) != nil)
+        try data.endUnswitchedTransfer(pending) { }
+        #expect(await maintenance.performAutomaticMaintenance().isEmpty)
+        #expect(try history.read(bundleIdentifier: fixture.identifier) == nil)
+        #expect(try String(contentsOf: group.appendingPathComponent("payload"), encoding: .utf8) == "latest group data")
     }
 
     @Test("Temporary-space preview charges sparse official content at logical size in the target's actual parent")
@@ -792,7 +943,7 @@ struct SignatureOperationTests {
     }
 
     @MainActor
-    @Test("Official repair completes with an unavailable historical original and the visible action only removes metadata")
+    @Test("Official repair completes after a local historical original moves and retains only its internal history")
     func unavailableOriginalDoesNotTrapOfficialRepair() async throws {
         let fixture = try Fixture(sandboxed: true)
         defer { fixture.remove() }
@@ -806,8 +957,8 @@ struct SignatureOperationTests {
         let snapshot = try #require(history.snapshotURL(for: backup))
         let recordURL = try history.recordURL(bundleIdentifier: fixture.identifier)
         let recordBytes = try Data(contentsOf: recordURL)
-        // Model an unavailable old location without deleting or using any real
-        // external volume. The saved object must survive both user actions.
+        // The old local path is provably absent; the moved original and its
+        // historical record survive while the available-copy row disappears.
         let unavailable = fixture.root.appendingPathComponent("DisconnectedOriginal.app")
         try FileManager.default.moveItem(at: snapshot, to: unavailable)
         let original = try SignatureSnapshot.fingerprint(of: unavailable)
@@ -816,31 +967,12 @@ struct SignatureOperationTests {
         #expect(result.committed && result.cleanupWarning == nil)
         #expect(try SignatureOperationStore(backupDirectoryURL: fixture.backups).records().isEmpty)
         #expect(try Data(contentsOf: recordURL) == recordBytes)
-        let item = try #require(try await signer.signatureMaterials().first)
-        #expect(item.url.path == snapshot.path && item.canRemoveRecord)
-        #expect(!item.canResume && !item.canRestore && !item.canDelete)
-        #expect(item.detail == "历史原件当前无法核实；位置可能离线或已改变。可选择官方原件，或仅移除记录。".localized)
+        #expect(try await signer.signatureMaterials().isEmpty)
 
-        let state = AppOperationState(notificationCenter: NotificationCenter())
-        let model = CopyManagementModel(dependencies: .init(load: {
-            do { return .init(signatureMaterials: try await signer.signatureMaterials()) }
-            catch { return .init(readErrors: [error.localizedDescription]) }
-        }, execute: { action in
-            try await CopyManagementModel.Dependencies.performSignatureAction(action, signer: signer)
-        }), operationState: state)
-        await model.refresh()
-        #expect(model.snapshot.signatureMaterials.count == 1)
-        await model.start(.removeSignatureRecord(item.id, confirmation: .keepAllFilesAndVolumes))?.value
-        #expect(model.errorMessage == nil && !state.isBusy && model.snapshot.isEmpty)
-        #expect(model.notice == "仅移除了记录。文件和卷均未更改，此操作没有释放存储空间。".localized)
-        #expect(try !SignatureSnapshot.entryExists(recordURL))
+        #expect(try Data(contentsOf: recordURL) == recordBytes)
         #expect(try SignatureSnapshot.fingerprint(of: fixture.app) == original)
         #expect(try SignatureSnapshot.fingerprint(of: unavailable) == original)
         #expect(try DataPathIdentity.capture(unavailable).matchesFilesystemObject(identity))
-        await model.start(.removeSignatureRecord(item.id, confirmation: .keepAllFilesAndVolumes))?.value
-        #expect(model.errorMessage == nil && model.snapshot.isEmpty)
-        #expect(model.notice == "所选记录已不存在或已改变；请查看刷新后的列表。未更改任何文件或卷。".localized)
-        #expect(try SignatureSnapshot.fingerprint(of: unavailable) == original)
     }
 
     @Test("A previously committed official restore can finish temporary cleanup after its independent history disappears")
@@ -862,6 +994,8 @@ struct SignatureOperationTests {
         let backup = try #require(try history.read(bundleIdentifier: fixture.identifier))
         let snapshot = try #require(history.snapshotURL(for: backup))
         let unavailable = fixture.root.appendingPathComponent("SavedOriginal.app")
+        let recordURL = try history.recordURL(bundleIdentifier: fixture.identifier)
+        let recordBytes = try Data(contentsOf: recordURL)
         try FileManager.default.moveItem(at: snapshot, to: unavailable)
         let original = try SignatureSnapshot.fingerprint(of: unavailable)
         let finished = try await signer.resumeSignatureMaterial(id: "operation:" + operation.id.uuidString)
@@ -870,8 +1004,23 @@ struct SignatureOperationTests {
         #expect(try !SignatureSnapshot.entryExists(operation.directoryURL))
         #expect(try SignatureSnapshot.fingerprint(of: fixture.app) == original)
         #expect(try SignatureSnapshot.fingerprint(of: unavailable) == original)
-        let item = try #require(try await signer.signatureMaterials().first)
-        #expect(item.canRemoveRecord && !item.canResume)
+        #expect(try await signer.signatureMaterials().isEmpty)
+        #expect(try Data(contentsOf: recordURL) == recordBytes)
+    }
+
+    @Test("Finder-deleted local snapshots disappear from available copies while history remains readable")
+    func externallyRemovedSnapshotDoesNotLeaveAnEmptyCopyRow() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let signer = fixture.signer()
+        try await signer.backupOriginalSignature(appURL: fixture.app, bundleIdentifier: fixture.identifier)
+        let history = SignatureHistoryStore(backupDirectoryURL: fixture.backups)
+        let backup = try #require(try history.read(bundleIdentifier: fixture.identifier))
+        let snapshot = try #require(history.snapshotURL(for: backup))
+        #expect(try await signer.signatureMaterials().count == 1)
+        try FileManager.default.removeItem(at: snapshot)
+        #expect(try await signer.signatureMaterials().isEmpty)
+        #expect(try history.read(bundleIdentifier: fixture.identifier) == backup)
     }
 
     @Test("A missing original without a deletion checkpoint keeps its record until explicit metadata-only removal")
@@ -1736,7 +1885,8 @@ struct SignatureOperationTests {
                 try #require(process.terminationStatus == 0)
             }
         }
-        func signer(officialEvidence: Bool = false, officialDeveloper: OriginalDeveloperIdentity? = nil,
+        func signer(officialEvidence: Bool = false, captureOfficialOriginal: Bool = false, officialDeveloper: OriginalDeveloperIdentity? = nil,
+                    copy: @escaping @Sendable (URL, URL) throws -> Void = { try SignatureSnapshot.copyContents(from: $0, into: $1) },
                     runner: any ShellCommandRunning = ProcessCommandRunner(),
                     checkpoint: @escaping @Sendable (SignatureOperationRecord) throws -> Void = { _ in },
                     synchronizeTree: @escaping @Sendable (URL) throws -> Void = { try DurableFileIO.syncTree(at: $0) },
@@ -1744,15 +1894,17 @@ struct SignatureOperationTests {
                     deleteTemporary: @escaping @Sendable (URL, SignatureRemovalManifest, Bool, Bool) throws -> Void = { try $1.remove(at: $0, allowingPartial: $2, unlockCopiedFlags: $3) },
                     recoveryCheck: @escaping @Sendable (SignatureRecoveryRequirements) async throws -> Void = { _ in },
                     availableTemporaryCapacity: @escaping @Sendable (URL) throws -> Int64 = { try CodeSigner.availableTemporarySpace(at: $0) },
-                    applicationTransferStore: AppTransferStore? = nil) -> CodeSigner {
+                    applicationTransferStore: AppTransferStore? = nil,
+                    dataTransferStore: ContainerMountStore? = nil,
+                    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> CodeSigner {
             CodeSigner(backupDirectoryURL: backups, allowAdministratorPrompt: false,
-                availableTemporaryCapacity: availableTemporaryCapacity, runner: runner,
+                copyApplication: copy, availableTemporaryCapacity: availableTemporaryCapacity, runner: runner,
                 inspectSignature: { app in
                     let actual = try SignatureInspector.inspect(at: app)
                     guard officialEvidence, actual.sandboxStatus == .sandboxed else { return actual }
                     // Simulate a verified certificate identity at the reader seam;
                     // application copies/signatures themselves are real synthetic code.
-                    return .init(sandboxStatus: actual.sandboxStatus, isAdHoc: actual.isAdHoc,
+                    return .init(sandboxStatus: actual.sandboxStatus, isAdHoc: captureOfficialOriginal ? false : actual.isAdHoc,
                         codeDirectoryHash: actual.codeDirectoryHash, developerIdentity: officialDeveloper ?? Self.developer,
                         applicationGroups: actual.applicationGroups, keychainAccessGroups: actual.keychainAccessGroups)
                 }, requireDeveloperIdentity: { expected, original in
@@ -1760,7 +1912,7 @@ struct SignatureOperationTests {
                 }, requireStopped: { _, _ in }, recoveryDependencyCheck: recoveryCheck,
                 checkpoint: checkpoint, synchronizeTree: synchronizeTree, synchronizeDirectory: synchronizeDirectory,
                 deleteTemporaryTree: deleteTemporary,
-                applicationTransferStore: applicationTransferStore)
+                applicationTransferStore: applicationTransferStore, dataTransferStore: dataTransferStore, homeDirectory: homeDirectory)
         }
         func signingMaterialsAreEmpty() throws -> Bool { try SignatureOperationStore(backupDirectoryURL: backups).records().isEmpty }
         func remove() { try? SignatureSnapshot.remove(root) }
