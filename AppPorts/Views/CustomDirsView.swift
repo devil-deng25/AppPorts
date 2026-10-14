@@ -51,15 +51,11 @@ struct CustomDirsView: View {
     @State private var completionWarning = ""
     @State private var retainedTransfers: [DataTransferRecord] = []
     @State private var managedLinks: [ManagedDataLinkRecord] = []
-    @State private var selectedTransferGroup: DataTransferGroup?
     private var transferGroups: [DataTransferGroup] { DataTransferGroup.groups(from: retainedTransfers) }
 
     @State private var showProgress = false
     @State private var progressTitle = ""
-    @State private var progressBytes: Int64 = 0
-    @State private var progressTotalBytes: Int64 = 0
-    @State private var progressFileName = ""
-    @State private var progressShowsBytes = true
+    @State private var transferProgress = DataTransferProgress()
 
     private var localEntries: [CustomDirEntry] {
         pairs.map(\.local)
@@ -108,17 +104,10 @@ struct CustomDirsView: View {
             VStack(spacing: 0) {
                 if !retainedTransfers.isEmpty {
                     HStack {
-                        Text("原件仍保留，清理后才会释放空间。".localized).foregroundStyle(.secondary)
+                        Text("操作尚未全部完成，AppPorts 会自动继续处理。".localized).foregroundStyle(.secondary)
                         Spacer()
-                        Menu("副本管理".localized) {
-                            ForEach(transferGroups) { group in
-                                Button { selectedTransferGroup = group } label: {
-                                    Text(verbatim: group.menuTitle)
-                                }
-                            }
-                        }
-                    }
-                    .padding(12)
+                        Button("重试".localized) { retryPendingOperations() }
+                    }.padding(12)
                 }
                 HSplitView {
                     localPane
@@ -136,10 +125,7 @@ struct CustomDirsView: View {
 
                 DataDirProgressOverlay(
                     title: progressTitle,
-                    copiedBytes: progressBytes,
-                    totalBytes: progressTotalBytes,
-                    currentFile: progressFileName,
-                    showsByteProgress: progressShowsBytes
+                    progress: transferProgress
                 )
             }
         }
@@ -158,18 +144,13 @@ struct CustomDirsView: View {
                 addAndMigrateConfig(config)
             }
         }
-        .sheet(item: $selectedTransferGroup) { oldGroup in
-            let group = transferGroups.first { $0.id == oldGroup.id } ?? oldGroup
-            DataTransferReviewView(group: group, onCleanup: { cleanupTransferGroup(group) },
-                                   onUnlock: { if let transfer = group.unlockTransfer { recoverTransfer(transfer, cancel: true) } },
-                                   onResume: { if let transfer = group.resumeTransfer { recoverTransfer(transfer) } })
-        }
+
         .alert("操作失败".localized, isPresented: $showError) {
             Button("好的".localized, role: .cancel) {}
         } message: {
             Text(errorMessage)
         }
-        .alert("已完成，但仍有清理事项".localized, isPresented: $showCompletionWarning) {
+        .alert("操作尚未完成".localized, isPresented: $showCompletionWarning) {
             Button("好的".localized, role: .cancel) {}
         } message: {
             Text(completionWarning)
@@ -347,9 +328,6 @@ struct CustomDirsView: View {
             retainedTransfers = try ContainerMountStore.shared.transfers().filter { transfer in
                 configs.contains { DataPathTopology.relationship($0.localURL.path, transfer.originalPath) == .same }
             }
-            if let selected = selectedTransferGroup {
-                selectedTransferGroup = transferGroups.first { $0.id == selected.id }
-            }
         } catch {
             managedLinks = []
             errorMessage = error.localizedDescription
@@ -376,100 +354,14 @@ struct CustomDirsView: View {
         isScanning = false
     }
 
-    private func recoverTransfer(_ transfer: DataTransferRecord, cancel: Bool = false) {
-        guard transfer.isPreparationRecoverable || transfer.isVerifiedSwitchRecoverable,
-              let operationID = beginOperation() else { return }
-        showProgress = true
-        progressTitle = cancel ? "取消并清理暂存".localized : "继续".localized
-        progressBytes = 0
-        progressTotalBytes = 0
-        progressFileName = ""
-        progressShowsBytes = false
-        operationState.startTask(for: operationID) { @MainActor in
-            let lock = OperationLock()
-            let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                showProgress = false
-                progressShowsBytes = true
-                if acquired { lock.release() }
-                operationState.finish(operationID)
-                refresh()
-            }
-            do {
-                guard acquired else { throw DataOperationSafety.Failure.occupied(transfer.originalPath) }
-                if !cancel {
-                    let progress: FileCopier.ProgressHandler = { value in
-                        await MainActor.run {
-                            self.progressFileName = value.currentFile
-                            self.progressShowsBytes = value.showsByteProgress
-                            self.progressBytes = value.copiedBytes
-                            self.progressTotalBytes = value.totalBytes
-                        }
-                    }
-                    let warning: String?
-                    if transfer.mode == .mount {
-                        warning = try await ContainerVolumeMigrator().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
-                    } else {
-                        warning = try await DataDirMover().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress)
-                    }
-
-                    let warnings = [warning].compactMap { $0 }
-                    completionWarning = warnings.joined(separator: "\n\n")
-                    showCompletionWarning = !warnings.isEmpty
-                } else if transfer.mode == .mount {
-                    try await ContainerVolumeMigrator().cancelPreparation(operationID: transfer.operationID)
-                } else {
-                    try await DataDirMover().cancelPreparation(operationID: transfer.operationID)
-                }
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
-        }
-    }
-
-    private func cleanupTransferGroup(_ group: DataTransferGroup) {
-        guard group.canCleanup, let operationID = beginOperation() else { return }
-        showProgress = true
-        progressTitle = "校验并清理这些副本".localized
-        progressBytes = 0
-        progressTotalBytes = 0
-        progressFileName = ""
-        progressShowsBytes = false
-        operationState.startTask(for: operationID) { @MainActor in
-            let lock = OperationLock()
-            let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                showProgress = false
-                progressShowsBytes = true
-                if acquired { lock.release() }
-                operationState.finish(operationID)
-                refresh()
-            }
-            do {
-                guard acquired else { throw DataOperationSafety.Failure.occupied(group.originalPath) }
-                var cleanupFailures: [String] = []
-                for transfer in group.cleanupTransfers {
-                    try Task.checkCancellation()
-                    progressFileName = transfer.backupPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? transfer.appName
-                    do {
-                        if transfer.mode == .mount {
-                            try await ContainerVolumeMigrator().cleanupRetainedTransfer(operationID: transfer.operationID)
-                        } else {
-                            try await DataDirMover().cleanupRetainedTransfer(operationID: transfer.operationID)
-                        }
-                    } catch is CancellationError {
-                        throw CancellationError()
-                    } catch {
-                        cleanupFailures.append(error.localizedDescription)
-                    }
-                }
-                completionWarning = cleanupFailures.joined(separator: "\n")
-                showCompletionWarning = !cleanupFailures.isEmpty
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
+    private func retryPendingOperations() {
+        guard let token = beginOperation() else { return }
+        operationState.startTask(for: token) { @MainActor in
+            let warnings = await OperationMaintenance.shared.run()
+            operationState.finish(token)
+            refresh()
+            completionWarning = warnings.joined(separator: "\n\n")
+            showCompletionWarning = !warnings.isEmpty
         }
     }
 
@@ -585,16 +477,12 @@ struct CustomDirsView: View {
         guard !selectedPairs.isEmpty else { return }
 
         progressTitle = title
-        progressBytes = 0
-        progressTotalBytes = 0
-        progressFileName = ""
-        progressShowsBytes = true
+        transferProgress = DataTransferProgress()
         showProgress = true
 
         let lock = OperationLock()
         let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
         defer {
-            progressShowsBytes = true
             if acquired { lock.release() }
         }
 
@@ -603,18 +491,13 @@ struct CustomDirsView: View {
             guard acquired else { throw DataOperationSafety.Failure.occupied(selectedPairs[0].config.localPath) }
             for pair in selectedPairs {
                 try Task.checkCancellation()
+                let progress = DataTransferProgress()
                 await MainActor.run {
-                    progressFileName = pair.config.displayName
-                    progressShowsBytes = true
+                    progressTitle = title + "\n" + pair.config.displayName
+                    transferProgress = progress
                 }
-
-                let warning = try await operation(pair) { progress in
-                    await MainActor.run {
-                        progressBytes = progress.copiedBytes
-                        progressTotalBytes = progress.totalBytes
-                        progressFileName = progress.currentFile.isEmpty ? pair.config.displayName : progress.currentFile
-                        progressShowsBytes = progress.showsByteProgress
-                    }
+                let warning = try await progress.track { handler in
+                    try await operation(pair, handler)
                 }
                 if let warning { warnings.append(pair.config.displayName + "\n" + warning) }
             }

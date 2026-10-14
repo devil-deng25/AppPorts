@@ -16,7 +16,7 @@ actor DataDirMover {
         var errorDescription: String? {
             switch self {
             case .previousRestoreNeedsCleanup(let details):
-                return String(format: "上次还原的旧副本尚未清理，新的迁移尚未开始。请先在副本管理中校验并清理后重试。%@".localized, "\n" + details)
+                return String(format: "上次还原的旧副本尚未清理，新的迁移尚未开始。AppPorts 会继续完成清理，条件恢复后可直接重试。%@".localized, "\n" + details)
             }
         }
     }
@@ -92,6 +92,7 @@ actor DataDirMover {
 
     private func migrateRetainingOriginal(item: DataDirItem, to externalBaseURL: URL,
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
+        await progressHandler?(.working(.preparing))
         let source = item.path.standardizedFileURL
         let destination = externalBaseURL.appendingPathComponent(source.lastPathComponent).standardizedFileURL
         try requirePolicy(source)
@@ -135,7 +136,7 @@ actor DataDirMover {
             try syncDirectory(at: destination.deletingLastPathComponent())
             try installMarker(source: source, destination: destination, type: item.type, baseline: baseline)
             try syncTree(at: destination)
-            await progressHandler?(.init(copiedBytes: baseline.logicalBytes, totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized))
+            await progressHandler?(.init(copiedBytes: baseline.logicalBytes, totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized, showsByteProgress: false, stage: .switching))
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: item.associatedBundleIdentifier)
             try requireIdentity(source, transfer.sourceIdentity)
             try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
@@ -148,7 +149,7 @@ actor DataDirMover {
             transfer.backupIdentity = try DataPathIdentity.capture(backup)
             try requireIdentity(backup, transfer.sourceIdentity)
             try store.updateTransfer(transfer)
-            await progressHandler?(.init(copiedBytes: baseline.logicalBytes, totalBytes: baseline.logicalBytes, currentFile: "正在创建符号链接...".localized))
+            await progressHandler?(.init(copiedBytes: baseline.logicalBytes, totalBytes: baseline.logicalBytes, currentFile: "正在创建符号链接...".localized, showsByteProgress: false, stage: .switching))
             try requireMarker(at: backup, for: source, type: item.type, allowOwned: false)
             try TreeCopySession.verifyUnchanged(at: backup, against: baseline)
             do { try createSymbolicLink(at: source, withDestinationURL: destination) }
@@ -188,6 +189,7 @@ actor DataDirMover {
 
     private func restoreRetainingOriginal(item: DataDirItem,
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
+        await progressHandler?(.working(.preparing))
         let local = item.path.standardizedFileURL
         try finishUnstartedRestoreIfNeeded(at: local)
         let indexed = try store.managedLink(forOriginalPath: local.path)
@@ -671,7 +673,7 @@ actor DataDirMover {
     func resumeVerifiedTransfer(operationID: UUID, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
         guard var transfer = try store.transfer(operationID: operationID) else { return nil }
         if transfer.isPreparationRecoverable {
-            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false))
+            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false, stage: .recovering))
             guard try store.transfer(operationID: operationID) == transfer else {
                 throw DataOperationSafety.Failure.conflict(transfer.originalPath)
             }
@@ -700,7 +702,7 @@ actor DataDirMover {
         var lastSaved = transfer
         do {
             try publishVerifiedPreparation(transfer, baseline: baseline)
-            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false))
+            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false, stage: .recovering))
             let before = try verifiedSwitchState(transfer, baseline: baseline)
             if !before.alreadySwitched {
                 try await safety.requireNoKnownWriters(at: before.source, bundleIdentifier: transfer.bundleIdentifier)
@@ -1074,8 +1076,7 @@ actor DataDirMover {
     private func completeSuccessfulTransfer(operationID: UUID, direction: DataTransferRecord.Direction,
                                              progressHandler: FileCopier.ProgressHandler?, requireUnchangedActive: Bool = false) async -> CompletionResult {
         do {
-            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized,
-                                        showsByteProgress: false))
+            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized, showsByteProgress: false, stage: .cleaning))
             let lineage = try retainedLineage(endingAt: operationID)
             try await verifyAutomaticCleanup(lineage, requireUnchangedActive: requireUnchangedActive)
             try await cleanupRetainedLineage(operationID: operationID)
@@ -1111,8 +1112,7 @@ actor DataDirMover {
             }
         }
         do {
-            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized,
-                                        showsByteProgress: false))
+            await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized, showsByteProgress: false, stage: .cleaning))
             try requirePolicy(local)
             guard !DiskUtility.isMountPoint(local) else { throw DataOperationSafety.Failure.conflict(local.path) }
             _ = try preflightWritePermission(at: externalBaseURL)
@@ -1133,11 +1133,11 @@ actor DataDirMover {
     /// authorizes a later migration after legitimate local application writes.
     private func completedRestoreLineage(at local: URL) throws -> [DataTransferRecord] {
         let transfers = try store.transfers()
-        let related = transfers.filter { $0.originalPath == local.path }
+        let related = transfers.filter { $0.originalPath == local.path && $0.rollbackCompletedAt == nil }
         let terminalRestores = related.filter { transfer in
             transfer.direction == .restore
                 && [.awaitingUserVerification, .cleanupRequested].contains(transfer.phase)
-                && !transfers.contains(where: { $0.priorOperationID == transfer.operationID })
+                && !transfers.contains(where: { $0.priorOperationID == transfer.operationID && $0.rollbackCompletedAt == nil })
         }
         guard !terminalRestores.isEmpty else { return [] }
         guard terminalRestores.count == 1, let terminal = terminalRestores.first else {

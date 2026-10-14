@@ -1,0 +1,168 @@
+import Foundation
+
+/// Presentation stages describe actual work, independently of the durable
+/// transaction state. A copied-byte total never means the operation is done.
+enum DataTransferStage: Equatable, Sendable {
+    case waiting, preparing, scanning, copying, synchronizing, verifying, switching, cleaning, recovering
+
+    var title: String {
+        switch self {
+        case .waiting: return "正在等待其他操作结束".localized
+        case .preparing: return "正在准备数据操作".localized
+        case .scanning: return "正在扫描源文件".localized
+        case .copying: return "正在复制文件".localized
+        case .synchronizing: return "正在写入磁盘".localized
+        case .verifying: return "正在校验文件".localized
+        case .switching: return "正在切换本地入口...".localized
+        case .cleaning: return "正在清理旧副本...".localized
+        case .recovering: return "正在自动恢复数据入口...".localized
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .waiting: return "其他磁盘操作结束后会自动继续。".localized
+        case .preparing: return "正在检查目录、访问权限和目标存储。".localized
+        case .scanning: return "正在读取文件内容和属性，建立校验清单；文件较多时需要一些时间。".localized
+        case .copying: return "此进度仅表示文件复制，随后还会校验并完成收尾。".localized
+        case .synchronizing: return "正在将文件内容和属性写入存储设备，等待系统确认。".localized
+        case .verifying: return "正在核对文件内容和属性，确保数据完整；大目录可能需要较长时间。".localized
+        case .switching: return "正在连接新的数据位置并保存迁移记录。".localized
+        case .cleaning: return "正在核验并移除旧副本，文件较多时清理可能较慢。".localized
+        case .recovering: return "正在检查实际数据位置并恢复可用入口。".localized
+        }
+    }
+}
+
+/// Workers update a small, locked snapshot. Only the overlay polls it, so a
+/// synchronous scan or thousands of copy callbacks never flood the main actor.
+/// This object is per operation; it must not be reused for the next directory.
+final class DataTransferProgress: @unchecked Sendable {
+    struct Snapshot: Sendable {
+        var stage: DataTransferStage = .waiting
+        var detail = ""
+        var currentFile = ""
+        var completedItems = 0
+        var readBytes: Int64 = 0
+        var copiedBytes: Int64 = 0
+        var totalBytes: Int64 = 0
+        var copyBytesPerSecond: Double?
+        var startedAt: TimeInterval
+        var stageStartedAt: TimeInterval
+        var lastActivityAt: TimeInterval
+        var sampledAt: TimeInterval
+
+        var elapsed: TimeInterval { max(0, sampledAt - startedAt) }
+        var stageElapsed: TimeInterval { max(0, sampledAt - stageStartedAt) }
+        var activityAge: TimeInterval { max(0, sampledAt - lastActivityAt) }
+        var fraction: Double? {
+            guard stage == .copying, totalBytes > 0 else { return nil }
+            return min(1, max(0, Double(copiedBytes) / Double(totalBytes)))
+        }
+
+        /// A changing timer is not evidence of filesystem progress.
+        var isWaitingForActivity: Bool { activityAge >= 15 }
+        var visibleCopyRate: Double? {
+            guard stage == .copying, activityAge < 3 else { return nil }
+            return copyBytesPerSecond
+        }
+    }
+
+    private let lock = NSLock()
+    private let clock: @Sendable () -> TimeInterval
+    private var state: Snapshot
+    private var rateSampleTime: TimeInterval
+    private var rateSampleBytes: Int64 = 0
+
+    init(clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.clock = clock
+        let now = clock()
+        state = Snapshot(startedAt: now, stageStartedAt: now, lastActivityAt: now, sampledAt: now)
+        rateSampleTime = now
+    }
+
+    func snapshot() -> Snapshot {
+        lock.lock(); defer { lock.unlock() }
+        var result = state
+        result.sampledAt = clock()
+        return result
+    }
+
+    func track<Result>(_ operation: (@escaping FileCopier.ProgressHandler) async throws -> Result) async rethrows -> Result {
+        try await DataTransferSession.$progress.withValue(self) {
+            try await DataTransferSession.run {
+                try await operation { self.update($0) }
+            }
+        }
+    }
+
+    func begin(_ stage: DataTransferStage, detail: String = "", currentFile: String = "") {
+        lock.lock(); defer { lock.unlock() }
+        transition(to: stage, detail: detail, at: clock())
+        if !currentFile.isEmpty, currentFile != state.currentFile {
+            state.currentFile = currentFile
+            state.lastActivityAt = clock()
+        }
+    }
+
+    func update(_ progress: FileCopier.Progress) {
+        lock.lock(); defer { lock.unlock() }
+        let now = clock()
+        let stage = progress.showsByteProgress ? progress.stage : (progress.stage == .copying ? .preparing : progress.stage)
+        transition(to: stage, detail: progress.detail, at: now)
+        let file = progress.showsByteProgress ? progress.currentFile : ""
+        if state.currentFile != file || (stage == .copying && state.copiedBytes != progress.copiedBytes) {
+            state.lastActivityAt = now
+        }
+        state.currentFile = file
+        guard stage == .copying else { return }
+        let bytes = max(0, progress.copiedBytes)
+        if bytes < state.copiedBytes {
+            rateSampleTime = now
+            rateSampleBytes = bytes
+            state.copyBytesPerSecond = nil
+        } else if now - rateSampleTime >= 0.5 {
+            state.copyBytesPerSecond = Double(bytes - rateSampleBytes) / (now - rateSampleTime)
+            rateSampleTime = now
+            rateSampleBytes = bytes
+        }
+        state.copiedBytes = bytes
+        state.totalBytes = max(0, progress.totalBytes)
+    }
+
+    /// A traversal resets its counters even when several verification passes
+    /// run in the same stage. Count work from this pass, not unique user files.
+    func startTraversal(at root: URL) {
+        lock.lock(); defer { lock.unlock() }
+        state.completedItems = 0
+        state.readBytes = 0
+        state.currentFile = root.lastPathComponent
+        state.lastActivityAt = clock()
+    }
+
+    func activity(file: String? = nil, bytesRead: Int64 = 0, completedItem: Bool = false) {
+        lock.lock(); defer { lock.unlock() }
+        if let file, !file.isEmpty { state.currentFile = file }
+        state.readBytes += max(0, bytesRead)
+        if completedItem { state.completedItems += 1 }
+        state.lastActivityAt = clock()
+    }
+
+    private func transition(to stage: DataTransferStage, detail: String, at now: TimeInterval) {
+        guard stage != state.stage || detail != state.detail else { return }
+        state.stage = stage
+        state.detail = detail
+        state.stageStartedAt = now
+        state.lastActivityAt = now
+        state.currentFile = ""
+        state.completedItems = 0
+        state.readBytes = 0
+        state.copyBytesPerSecond = nil
+        rateSampleTime = now
+        rateSampleBytes = stage == .copying ? 0 : state.copiedBytes
+        if stage == .copying {
+            state.copiedBytes = 0
+            state.totalBytes = 0
+        }
+    }
+}

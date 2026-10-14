@@ -8,6 +8,28 @@ import XCTest
 /// No DataDirsView, scanner or migration service is instantiated; preferences use isolated test suites.
 final class MigrationSafetyRenderTests: XCTestCase {
     @MainActor
+    func testRenderAPFSRecoveryEntryPoints() async throws {
+        guard let path = ProcessInfo.processInfo.environment["APPPORTS_RENDER_UI_OUTPUT"] else {
+            throw XCTSkip("Set APPPORTS_RENDER_UI_OUTPUT to export recovery renders")
+        }
+        let output = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let original = URL(fileURLWithPath: "/Users/example/Library/Containers/org.example/Data/Documents")
+        var item = DataDirItem(name: "Documents", path: original, type: .containers, priority: .critical, description: "")
+        item.status = DataDirStatus.volumeMissing
+        let missing = item
+        item.status = DataDirStatus.local
+        item.isMigratable = false
+        item.hasMountTransferRecord = true
+        item.recoveryOperationID = UUID()
+        let interrupted = item
+        try await render(VStack(alignment: .leading, spacing: 24) {
+            HStack { Text("外置盘未连接"); Spacer(); self.actions(for: missing) }
+            HStack { Text("还原中断"); Spacer(); self.actions(for: interrupted) }
+        }.padding(24), size: NSSize(width: 480, height: 180), to: output.appendingPathComponent("recovery-entry-points.png"))
+    }
+
+    @MainActor
     func testRenderMigrationSafetyComponents() async throws {
         guard let path = ProcessInfo.processInfo.environment["APPPORTS_RENDER_UI_OUTPUT"], path.hasPrefix("/") else {
             throw XCTSkip("Set APPPORTS_RENDER_UI_OUTPUT to export the synthetic render matrix")
@@ -16,14 +38,15 @@ final class MigrationSafetyRenderTests: XCTestCase {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 
         let items = fixtureItems()
-        for (name, title, bytes) in [
-            ("data-backup-progress", "正在备份原始应用".localized, Int64(0)),
-            ("data-signing-progress", "重签名此应用".localized, Int64(1_073_741_824)),
-            ("data-cleanup-progress", "正在清理旧副本...".localized, Int64(0))
+        for (name, title, stage) in [
+            ("data-backup-progress", "正在备份原始应用".localized, DataTransferStage.preparing),
+            ("data-signing-progress", "重签名此应用".localized, .verifying),
+            ("data-cleanup-progress", "正在清理旧副本...".localized, .cleaning)
         ] {
-            try await render(DataDirProgressOverlay(title: title, copiedBytes: bytes, totalBytes: bytes,
-                                                    currentFile: "Example.app", showsByteProgress: false),
-                             size: NSSize(width: 420, height: 230), to: output.appendingPathComponent("\(name).png"))
+            let progress = DataTransferProgress()
+            progress.begin(stage, currentFile: "Example.app")
+            try await render(DataDirProgressOverlay(title: title, progress: progress),
+                             size: NSSize(width: 540, height: 340), to: output.appendingPathComponent("\(name).png"))
         }
         for width: CGFloat in [580, 900] {
             for zeros in [false, true] {
@@ -48,61 +71,46 @@ final class MigrationSafetyRenderTests: XCTestCase {
             }
         }
 
-        let retained = fixtureTransfer(phase: .awaitingUserVerification)
-        try await render(DataTransferReviewView(transfer: retained, onCleanup: {}), size: NSSize(width: 580, height: 570),
-                   to: output.appendingPathComponent("retained-copy.png"))
-        let restored = DataTransferRecord(mode: .symlink, direction: .restore, appName: retained.appName,
-            dataDirType: retained.dataDirType, originalPath: retained.originalPath, activePath: retained.originalPath,
-            destinationPath: retained.originalPath, backupPath: retained.activePath,
-            sourceIdentity: try XCTUnwrap(retained.destinationIdentity), destinationIdentity: DataPathIdentity(device: 1, inode: 300),
-            backupIdentity: retained.destinationIdentity, priorOperationID: retained.operationID,
-            phase: .awaitingUserVerification, baseline: Data([1]))
-        let roundTrip = try XCTUnwrap(DataTransferGroup.groups(from: [restored, retained]).first)
-        XCTAssertEqual(roundTrip.state, .restored)
-        XCTAssertEqual(roundTrip.retainedCopies.count, 2)
-        XCTAssertTrue(roundTrip.canCleanup)
-        try await render(DataTransferReviewView(group: roundTrip, onCleanup: {}), size: NSSize(width: 580, height: 620),
-                         to: output.appendingPathComponent("restored-directory-copies.png"))
-        var cleanupPending = restored
-        cleanupPending.phase = .cleanupRequested
-        cleanupPending.recoverableReason = "旧副本的清理记录暂时写入失败，可重试完成。"
-        let pendingGroup = DataTransferGroup(transfer: cleanupPending)
-        XCTAssertEqual(pendingGroup.state, .restored)
-        XCTAssertTrue(pendingGroup.canCleanup)
-        try await render(DataTransferReviewView(group: pendingGroup, onCleanup: {}), size: NSSize(width: 580, height: 620),
-                         to: output.appendingPathComponent("cleanup-warning-retry.png"))
-        var verified = retained
-        verified.phase = .needsRecovery
-        verified.recoverableReason = "副本已完成，保存切换记录时中断。"
-        XCTAssertNotNil(DataTransferGroup(transfer: verified).resumeTransfer)
-        try await render(DataTransferReviewView(transfer: verified, onCleanup: {}, onResume: {}), size: NSSize(width: 580, height: 620),
-                         to: output.appendingPathComponent("verified-switch-retry.png"))
-        let incomplete = fixtureTransfer(phase: .needsRecovery)
-        try await render(DataTransferReviewView(transfer: incomplete, onCleanup: {}), size: NSSize(width: 580, height: 720),
-                   to: output.appendingPathComponent("incomplete-copy.png"))
-        var unstarted = incomplete
-        let original = URL(fileURLWithPath: unstarted.originalPath)
-        unstarted.backupPath = original.deletingLastPathComponent()
-            .appendingPathComponent(".appports-migration-backup-\(original.lastPathComponent)-\(unstarted.operationID.uuidString)").path
-        unstarted.destinationIdentity = nil
-        unstarted.backupIdentity = nil
-        unstarted.stagingPath = nil
-        unstarted.recoverableReason = "Synthetic preflight failure before copying; the original folder remains unchanged."
-        XCTAssertTrue(unstarted.isUnstartedSymlinkMigration, "Render the checked unlock action for an unstarted migration")
-        try await render(DataTransferReviewView(transfer: unstarted, onCleanup: {}, onUnlock: {}),
-                         size: NSSize(width: 580, height: 570), to: output.appendingPathComponent("unstarted-migration-unlock.png"))
-        let mountRestore = fixtureTransfer(phase: .awaitingUserVerification, mode: .mount, direction: .restore)
-        try await render(DataTransferReviewView(transfer: mountRestore, onCleanup: {}), size: NSSize(width: 580, height: 570),
-                   to: output.appendingPathComponent("retained-restore-volume.png"))
-        var longRecovery = incomplete
-        longRecovery.recoverableReason = Array(repeating: "Synthetic recovery detail: verify both copies before making changes.", count: 40).joined(separator: "\n")
-        try await render(DataTransferReviewView(transfer: longRecovery, onCleanup: {}), size: NSSize(width: 580, height: 720),
-                   to: output.appendingPathComponent("long-recovery-scroll.png"), requiresScrolling: true)
-
         let normalized = try XCTUnwrap(items.first { $0.status == DataDirStatus.needsNormalization })
         try await render(HStack(spacing: 6) { actions(for: normalized) }.frame(width: 180, height: 80), size: NSSize(width: 180, height: 80),
                    to: output.appendingPathComponent("normalize-and-restore-actions.png"))
         print("Synthetic migration UI renders: \(output.path)")
+    }
+
+    @MainActor
+    func testRenderDataTransferProgressStages() async throws {
+        guard let path = ProcessInfo.processInfo.environment["APPPORTS_RENDER_UI_OUTPUT"], path.hasPrefix("/") else {
+            throw XCTSkip("Set APPPORTS_RENDER_UI_OUTPUT to render transfer progress")
+        }
+        let output = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let originalLanguage = LanguageManager.shared.language
+        defer { LanguageManager.shared.language = originalLanguage }
+        let cases: [(String, DataTransferStage, Int64, Int64, Int, TimeInterval)] = [
+            ("preparing", .preparing, 0, 0, 0, 0),
+            ("scanning", .scanning, 0, 0, 12_431, 0),
+            ("copying", .copying, 18_330_000_000, 36_660_000_000, 0, 0),
+            ("verifying", .verifying, 36_660_000_000, 36_660_000_000, 26_012, 0),
+            ("cleaning", .cleaning, 36_660_000_000, 36_660_000_000, 41_520, 0),
+            ("waiting", .synchronizing, 36_660_000_000, 36_660_000_000, 0, 25)
+        ]
+        for language in ["zh-Hans", "en"] {
+            LanguageManager.shared.language = language
+            for scheme in [ColorScheme.light, .dark] {
+                for (name, stage, copied, total, items, age) in cases {
+                    let snapshot = DataTransferProgress.Snapshot(stage: stage,
+                        currentFile: stage == .preparing ? "" : "Data/Documents/xwechat_files/Example Account With A Long Name/db_storage/message/message_0.db",
+                        completedItems: items, readBytes: items > 0 ? 4_290_000_000 : 0,
+                        copiedBytes: copied, totalBytes: total, copyBytesPerSecond: 93_000_000,
+                        startedAt: 0, stageStartedAt: 60, lastActivityAt: 143 - age, sampledAt: 143)
+                    let title = String(format: "正在挂载迁移「%@」".localized,
+                        "Containers: Data/Documents/xwechat_files/Example Account With A Long Name")
+                    try await render(DataDirProgressContent(title: title, snapshot: snapshot),
+                        size: NSSize(width: 540, height: 420),
+                        to: output.appendingPathComponent("progress-\(language)-\(scheme)-\(name).png"), colorScheme: scheme)
+                }
+            }
+        }
     }
 
     @MainActor
@@ -217,20 +225,26 @@ final class MigrationSafetyRenderTests: XCTestCase {
     private func render<V: View>(_ view: V, size: NSSize, to url: URL, requiresScrolling: Bool = false,
                                  afterLayout: (() -> Void)? = nil, requiresNavigation: Bool = false,
                                  expectedTableRowCount: Int? = nil, defaults: UserDefaults? = nil,
-                                 inspect: ((NSView) -> Void)? = nil) async throws {
+                                 inspect: ((NSView) -> Void)? = nil, colorScheme: ColorScheme = .light) async throws {
         let suite = "AppPortsRender-\(UUID().uuidString)"
         let isolatedDefaults = try XCTUnwrap(defaults ?? UserDefaults(suiteName: suite))
         defer { if defaults == nil { isolatedDefaults.removePersistentDomain(forName: suite) } }
-        let host = NSHostingView(rootView: view.defaultAppStorage(isolatedDefaults).environment(\.colorScheme, .light).background(Color.white))
+        let appearance = try XCTUnwrap(NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua))
+        let originalAppearance = NSApp.appearance
+        NSApp.appearance = appearance
+        defer { NSApp.appearance = originalAppearance }
+        let host = NSHostingView(rootView: view.defaultAppStorage(isolatedDefaults).environment(\.colorScheme, colorScheme)
+            .background(colorScheme == .dark ? Color.black : Color.white))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.appearance = appearance
         defer { window.close() }
         window.contentView = host
-        if requiresNavigation || expectedTableRowCount != nil || inspect != nil {
-            window.setFrameOrigin(NSPoint(x: -10_000, y: 0))
-            window.orderFront(nil)
-        }
+        // Realize native control layers before capturing, without showing a
+        // test window over the user's workspace.
+        window.setFrameOrigin(NSPoint(x: -10_000, y: 0))
+        window.orderFront(nil)
         host.frame = NSRect(origin: .zero, size: size)
         host.layoutSubtreeIfNeeded()
         // Lists settle their lazy AppKit layout on the next run-loop turn.
@@ -284,7 +298,9 @@ final class MigrationSafetyRenderTests: XCTestCase {
         }
         inspect?(host)
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        appearance.performAsCurrentDrawingAppearance {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+        }
         XCTAssertEqual(bitmap.colorAt(x: 0, y: 0)?.alphaComponent, 1, "Export an opaque, reviewable snapshot")
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         XCTAssertGreaterThan(png.count, 1_000, "The production view should render visible content")
