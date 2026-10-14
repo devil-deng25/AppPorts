@@ -6,7 +6,129 @@ import XCTest
 final class TreeCopySessionTests: XCTestCase {
     private let fm = FileManager.default
 
-    func testSystemProvenanceIsDiagnosticWhileApplicationXattrsRemainStrict() async throws {
+    func testRealmNamedPipeSurvivesCopyUseRestoreAndCleanup() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        let database = w.source.appendingPathComponent("magic_mirror.realm")
+        let notification = w.source.appendingPathComponent("magic_mirror.realm.note")
+        try Data("database before migration".utf8).write(to: database)
+        XCTAssertEqual(mkfifo(notification.path, 0o640), 0)
+        try setXattr("org.appports.test.fifo", Data("notification metadata".utf8), notification)
+        try times(notification, birth: 1_650_000_000, modified: 1_700_000_000)
+
+        let migrated = try await TreeCopySession().copy(from: w.source, to: w.destination)
+        let copiedPipe = w.destination.appendingPathComponent(notification.lastPathComponent)
+        XCTAssertEqual(try info(copiedPipe).st_mode & S_IFMT, S_IFIFO)
+        XCTAssertEqual(try info(copiedPipe).st_mode & 0o7777, 0o640)
+        XCTAssertEqual(try xattr("org.appports.test.fifo", copiedPipe), Data("notification metadata".utf8))
+        try TreeCopySession.removeVerifiedCopy(at: w.source, against: migrated, requireSourceIdentity: true)
+        XCTAssertFalse(fm.fileExists(atPath: w.source.path))
+
+        // The application writes newer durable data after migration. Restoring
+        // must use that version and preserve the notification node's type.
+        try Data("database updated on external storage".utf8)
+            .write(to: w.destination.appendingPathComponent(database.lastPathComponent))
+        let restored = try await TreeCopySession().copy(from: w.destination, to: w.source)
+        let decoded = try PropertyListDecoder().decode(TreeCopySnapshot.self,
+            from: PropertyListEncoder().encode(restored))
+        try TreeCopySession.verifyCopy(at: w.source, against: decoded)
+        try TreeCopySession.removeVerifiedCopy(at: w.destination, against: decoded, requireSourceIdentity: true)
+        XCTAssertFalse(fm.fileExists(atPath: w.destination.path))
+        XCTAssertEqual(try info(notification).st_mode & S_IFMT, S_IFIFO)
+        XCTAssertEqual(try Data(contentsOf: database), Data("database updated on external storage".utf8))
+    }
+
+    func testNamedPipeCopyPreservesHardlinksWithoutConsumingRuntimeMessages() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        let first = w.source.appendingPathComponent("first.note")
+        let second = w.source.appendingPathComponent("second.note")
+        XCTAssertEqual(mkfifo(first.path, 0o600), 0)
+        XCTAssertEqual(link(first.path, second.path), 0)
+        let peer = open(first.path, O_RDWR | O_NONBLOCK | O_NOFOLLOW)
+        XCTAssertGreaterThanOrEqual(peer, 0)
+        defer { close(peer) }
+        var message: UInt8 = 0x42
+        XCTAssertEqual(write(peer, &message, 1), 1)
+
+        let baseline = try await TreeCopySession().copy(from: w.source, to: w.destination)
+        let copiedFirst = try info(w.destination.appendingPathComponent(first.lastPathComponent))
+        let copiedSecond = try info(w.destination.appendingPathComponent(second.lastPathComponent))
+        XCTAssertEqual(copiedFirst.st_mode & S_IFMT, S_IFIFO)
+        XCTAssertEqual(copiedFirst.st_ino, copiedSecond.st_ino)
+        XCTAssertEqual(baseline.logicalBytes, 0)
+        var received: UInt8 = 0
+        XCTAssertEqual(read(peer, &received, 1), 1)
+        XCTAssertEqual(received, message)
+
+        // A link outside the selected root is still rejected: copying only
+        // one endpoint would split the application's IPC relationship.
+        XCTAssertEqual(link(first.path, w.root.appendingPathComponent("outside.note").path), 0)
+        XCTAssertThrowsError(try TreeCopySession.snapshot(at: w.source))
+    }
+
+    func testReplacingNamedPipeWithNewFileBlocksCleanup() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        let notification = w.source.appendingPathComponent("database.note")
+        XCTAssertEqual(mkfifo(notification.path, 0o600), 0)
+        let baseline = try await TreeCopySession().copy(from: w.source, to: w.destination)
+        XCTAssertEqual(unlink(notification.path), 0)
+        try Data("new data must survive".utf8).write(to: notification)
+        XCTAssertThrowsError(try TreeCopySession.removeVerifiedCopy(at: w.source,
+            against: baseline, requireSourceIdentity: true))
+        XCTAssertEqual(try Data(contentsOf: notification), Data("new data must survive".utf8))
+        XCTAssertEqual(try info(w.destination.appendingPathComponent(notification.lastPathComponent)).st_mode & S_IFMT, S_IFIFO)
+    }
+
+    func testCompatibleNamedPipeCreatorUsesDirectoryDescriptorAndNeverOverwrites() throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        let parent = open(w.source.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        XCTAssertGreaterThanOrEqual(parent, 0)
+        defer { close(parent) }
+        let relocated = w.root.appendingPathComponent("relocated")
+        try fm.moveItem(at: w.source, to: relocated)
+        try fm.createDirectory(at: w.source, withIntermediateDirectories: false)
+        try Data("unrelated new file".utf8).write(to: w.source.appendingPathComponent("-database.note"))
+        try TreeCopySession.createNamedPipeUsingSystemUtility(parent: parent, name: "-database.note")
+        XCTAssertEqual(try info(relocated.appendingPathComponent("-database.note")).st_mode & S_IFMT, S_IFIFO)
+        XCTAssertEqual(try Data(contentsOf: w.source.appendingPathComponent("-database.note")), Data("unrelated new file".utf8))
+        let existing = relocated.appendingPathComponent("existing")
+        try Data("keep existing".utf8).write(to: existing)
+        XCTAssertThrowsError(try TreeCopySession.createNamedPipeUsingSystemUtility(parent: parent, name: "existing"))
+        XCTAssertEqual(try Data(contentsOf: existing), Data("keep existing".utf8))
+    }
+
+    func testDirtySharedMappingCannotReuseTimestampBasedContentEvidence() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        let file = w.source.appendingPathComponent("mapped")
+        try Data(repeating: 0x61, count: 8192).write(to: file)
+        try await DataTransferSession.run {
+            let fd = open(file.path, O_RDWR | O_NOFOLLOW)
+            XCTAssertGreaterThanOrEqual(fd, 0)
+            defer { close(fd) }
+            let mapping = mmap(nil, 8192, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
+            XCTAssertNotEqual(mapping, MAP_FAILED)
+            guard let mapping, mapping != MAP_FAILED else { return }
+            defer { munmap(mapping, 8192) }
+            let baseline = try TreeCopySession.snapshot(at: w.source)
+            let before = try self.info(file)
+            mapping.storeBytes(of: UInt8(0x62), as: UInt8.self)
+            // No msync: dirty mapped bytes are already readable while APFS may
+            // still report exactly the same size, mtime and ctime.
+            let after = try self.info(file)
+            XCTAssertEqual(before.st_size, after.st_size)
+            XCTAssertEqual(before.st_mtimespec.tv_sec, after.st_mtimespec.tv_sec)
+            XCTAssertEqual(before.st_mtimespec.tv_nsec, after.st_mtimespec.tv_nsec)
+            XCTAssertEqual(before.st_ctimespec.tv_sec, after.st_ctimespec.tv_sec)
+            XCTAssertEqual(before.st_ctimespec.tv_nsec, after.st_ctimespec.tv_nsec)
+            XCTAssertThrowsError(try TreeCopySession.verifyUnchanged(at: w.source, against: baseline))
+        }
+    }
+
+    func testSystemAccessTagsDoNotBlockCopyOrCleanupWhileApplicationXattrsRemainStrict() async throws {
         let w = try workspace()
         defer { cleanup(w.root) }
         try Data("content".utf8).write(to: w.source.appendingPathComponent("payload"))
@@ -15,7 +137,11 @@ final class TreeCopySessionTests: XCTestCase {
         var entries = try XCTUnwrap(raw["entries"] as? [[String: Any]])
         var attributes = try XCTUnwrap(entries[0]["extendedAttributes"] as? [String: Data])
         attributes["com.apple.provenance"] = Data("old OS provenance".utf8)
+        attributes["com.apple.macl"] = Data("old OS access grant".utf8)
         entries[0]["extendedAttributes"] = attributes
+        var fileAttributes = try XCTUnwrap(entries[1]["extendedAttributes"] as? [String: Data])
+        fileAttributes["com.apple.macl"] = Data("different per-file OS grant".utf8)
+        entries[1]["extendedAttributes"] = fileAttributes
         raw["entries"] = entries
         func decode() throws -> TreeCopySnapshot {
             try PropertyListDecoder().decode(TreeCopySnapshot.self,
@@ -31,6 +157,9 @@ final class TreeCopySessionTests: XCTestCase {
         let changed = try decode()
         XCTAssertThrowsError(try TreeCopySession.verifyCopy(at: w.destination, against: changed))
         XCTAssertThrowsError(try TreeCopySession.verifyUnchanged(at: w.source, against: changed))
+        try TreeCopySession.removeVerifiedCopy(at: w.source, against: historical, requireSourceIdentity: true)
+        XCTAssertFalse(fm.fileExists(atPath: w.source.path))
+        XCTAssertEqual(try Data(contentsOf: w.destination.appendingPathComponent("payload")), Data("content".utf8))
     }
 
     func testLegacyOwnershipOverrideIsNotAllowedForOrdinaryDirectories() async throws {
@@ -295,17 +424,13 @@ final class TreeCopySessionTests: XCTestCase {
         await assertFails { try await TreeCopySession().copy(from: w.source, to: w.source.appendingPathComponent("self")) }
     }
 
-    func testRejectsSpecialNodesAndImmutableFlagBeforeCreatingDestination() async throws {
+    func testRejectsImmutableFlagBeforeCreatingDestination() async throws {
         let w = try workspace()
         defer { cleanup(w.root) }
-        let fifo = w.source.appendingPathComponent("fifo")
-        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
-        await assertFails { try await TreeCopySession().copy(from: w.source, to: w.destination) }
-        XCTAssertFalse(fm.fileExists(atPath: w.destination.path))
-        try fm.removeItem(at: fifo)
-        try Data("locked".utf8).write(to: fifo)
-        XCTAssertEqual(chflags(fifo.path, UInt32(UF_IMMUTABLE)), 0)
-        defer { _ = chflags(fifo.path, 0) }
+        let file = w.source.appendingPathComponent("immutable")
+        try Data("locked".utf8).write(to: file)
+        XCTAssertEqual(chflags(file.path, UInt32(UF_IMMUTABLE)), 0)
+        defer { _ = chflags(file.path, 0) }
         await assertFails { try await TreeCopySession().copy(from: w.source, to: w.destination) }
         XCTAssertFalse(fm.fileExists(atPath: w.destination.path))
     }
@@ -519,18 +644,20 @@ final class TreeCopySessionTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: w.destination.path))
     }
 
-    func testFinalCallbackDestinationWriteIsAlsoRejected() async throws {
-        let w = try workspace()
-        defer { cleanup(w.root) }
-        try Data("source".utf8).write(to: w.source.appendingPathComponent("payload"))
-        await assertFails {
-            try await TreeCopySession().copy(from: w.source, to: w.destination, progressHandler: { progress in
-                guard progress.currentFile.isEmpty else { return }
-                try! Data("changed copy".utf8).write(to: w.destination.appendingPathComponent("payload"))
-            })
+    func testDestinationWritesDuringAndAfterCopyAreRejected() async throws {
+        for duringCopy in [true, false] {
+            let w = try workspace()
+            defer { cleanup(w.root) }
+            try Data("source".utf8).write(to: w.source.appendingPathComponent("payload"))
+            await assertFails {
+                try await TreeCopySession().copy(from: w.source, to: w.destination, progressHandler: { progress in
+                    guard duringCopy ? progress.currentFile == "payload" && progress.copiedBytes > 0 : progress.currentFile.isEmpty else { return }
+                    try! Data("changed copy".utf8).write(to: w.destination.appendingPathComponent("payload"))
+                })
+            }
+            XCTAssertEqual(try Data(contentsOf: w.source.appendingPathComponent("payload")), Data("source".utf8))
+            XCTAssertEqual(try Data(contentsOf: w.destination.appendingPathComponent("payload")), Data("changed copy".utf8))
         }
-        XCTAssertEqual(try Data(contentsOf: w.source.appendingPathComponent("payload")), Data("source".utf8))
-        XCTAssertEqual(try Data(contentsOf: w.destination.appendingPathComponent("payload")), Data("changed copy".utf8))
     }
 
     func testDestinationSymlinkAndMisleadingExcludedNodeAreUntouched() async throws {
@@ -621,6 +748,40 @@ final class TreeCopySessionTests: XCTestCase {
         try fm.removeItem(at: w.destination.appendingPathComponent("first"))
         XCTAssertThrowsError(try TreeCopySession.removeVerifiedCopy(at: w.destination, against: snapshot))
         XCTAssertEqual(try Data(contentsOf: w.destination.appendingPathComponent("second")), Data("modified".utf8))
+    }
+
+    func testCleanupRechecksBytesAfterDeletionCheckpoint() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        try Data("original".utf8).write(to: w.source.appendingPathComponent("payload"))
+        let snapshot = try await TreeCopySession().copy(from: w.source, to: w.destination)
+        let payload = w.destination.appendingPathComponent("payload")
+        var checkpointed = false
+        XCTAssertThrowsError(try TreeCopySession.removeVerifiedCopy(at: w.destination, against: snapshot) {
+            checkpointed = true
+            // An open writer can change bytes without changing the directory.
+            let handle = try FileHandle(forWritingTo: payload)
+            try handle.write(contentsOf: Data("new data".utf8))
+            try handle.close()
+        })
+        XCTAssertTrue(checkpointed)
+        XCTAssertEqual(try Data(contentsOf: payload), Data("new data".utf8))
+        XCTAssertEqual(try Data(contentsOf: w.source.appendingPathComponent("payload")), Data("original".utf8))
+    }
+
+    func testCleanupCheckpointFailureAndForeignIdentityPreventDeletion() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        try Data("original".utf8).write(to: w.source.appendingPathComponent("payload"))
+        let snapshot = try await TreeCopySession().copy(from: w.source, to: w.destination)
+        var checkpointed = false
+        XCTAssertThrowsError(try TreeCopySession.removeVerifiedCopy(at: w.destination, against: snapshot,
+            requireSourceIdentity: true) { checkpointed = true })
+        XCTAssertFalse(checkpointed)
+        XCTAssertThrowsError(try TreeCopySession.removeVerifiedCopy(at: w.destination, against: snapshot) {
+            throw CocoaError(.fileWriteUnknown)
+        })
+        XCTAssertEqual(try Data(contentsOf: w.destination.appendingPathComponent("payload")), Data("original".utf8))
     }
 
     func testVerifiedCleanupRefusesExistingExcludedMarkerBeforeAnyDeletion() async throws {

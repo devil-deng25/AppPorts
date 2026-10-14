@@ -35,7 +35,7 @@ struct TreeCopySnapshot: Codable, Equatable, Sendable {
     }
 
     struct Entry: Codable, Equatable, Sendable {
-        enum Kind: String, Codable, Sendable { case directory, file, symbolicLink }
+        enum Kind: String, Codable, Sendable { case directory, file, symbolicLink, namedPipe }
         let path: String
         let kind: Kind
         let identity: Identity

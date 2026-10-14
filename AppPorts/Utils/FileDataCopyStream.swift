@@ -16,7 +16,7 @@ struct FileDataCopyStream {
     private var offset: off_t = 0
     private var extentEnd: off_t = 0
     private var holes: [(off_t, off_t)] = []
-    private var buffer = [UInt8](repeating: 0, count: FileDataCopyStream.bufferByteCount)
+    private var buffer: [UInt8]
     private var finished = false
     private(set) var usesExtentFallback = false
 
@@ -27,6 +27,7 @@ struct FileDataCopyStream {
         self.size = size
         self.path = path
         self.extentSeek = extentSeek
+        buffer = [UInt8](repeating: 0, count: max(1, min(Self.bufferByteCount, Int(clamping: size))))
     }
 
     /// Returns the logical end of the chunk just written. A nil result means

@@ -18,6 +18,13 @@ actor FileCopier {
         let currentFile: String
         /// Verification and cleanup are work in progress without copied-byte totals.
         var showsByteProgress = true
+        var stage: DataTransferStage = .copying
+        var detail = ""
+
+        static func working(_ stage: DataTransferStage, detail: String = "") -> Self {
+            Self(copiedBytes: 0, totalBytes: 0, currentFile: stage.title,
+                 showsByteProgress: false, stage: stage, detail: detail)
+        }
 
         var percentage: Double {
             totalBytes > 0 ? min(1, max(0, Double(copiedBytes) / Double(totalBytes))) : 0

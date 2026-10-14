@@ -139,7 +139,10 @@ enum ResourceForkStream {
 
     static func digest(in handle: Handle, byteCount: Int64) throws -> Data {
         var hash = SHA256()
-        try forEachChunk(in: handle, byteCount: byteCount) { hash.update(bufferPointer: $0) }
+        try forEachChunk(in: handle, byteCount: byteCount) {
+            hash.update(bufferPointer: $0)
+            DataTransferSession.progress?.activity(bytesRead: Int64($0.count))
+        }
         return Data(hash.finalize())
     }
 

@@ -16,6 +16,7 @@ struct DurableFileIOTests {
         try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: false)
         try Data("payload".utf8).write(to: tree.appendingPathComponent("data"))
         try FileManager.default.createSymbolicLink(atPath: tree.appendingPathComponent("link").path, withDestinationPath: "data")
+        #expect(mkfifo(tree.appendingPathComponent("database.realm.note").path, 0o600) == 0)
         #expect(chmod(tree.path, 0o750) == 0)
         let before = try TreeCopySession.snapshot(at: tree)
         try DurableFileIO.syncTree(at: tree)
@@ -50,11 +51,27 @@ struct DurableFileIOTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let payload = root.appendingPathComponent("payload")
         try Data("keep".utf8).write(to: payload)
-        let fifo = root.appendingPathComponent("pipe")
-        #expect(mkfifo(fifo.path, 0o600) == 0)
+        let node = root.appendingPathComponent("socket")
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        #expect(descriptor >= 0)
+        defer { close(descriptor) }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        let bytes = Array(node.path.utf8CString)
+        try #require(bytes.count <= MemoryLayout.size(ofValue: address.sun_path))
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+            for (index, byte) in bytes.enumerated() { buffer[index] = UInt8(bitPattern: byte) }
+        }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        #expect(bound == 0)
         #expect(throws: (any Error).self) { try DurableFileIO.syncTree(at: root) }
         #expect(try Data(contentsOf: payload) == Data("keep".utf8))
-        #expect(FileManager.default.fileExists(atPath: fifo.path))
+        #expect(FileManager.default.fileExists(atPath: node.path))
     }
 
     @Test("Configured parent aliases require explicit anchoring and tree roots never follow links")
@@ -78,7 +95,8 @@ struct DurableFileIOTests {
     }
 
     private func temporaryRoot() throws -> URL {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AppPortsDurability-\(UUID())").resolvingSymlinksInPath()
+        // Keep Unix socket test paths within sockaddr_un.sun_path's limit.
+        let root = URL(fileURLWithPath: "/private/tmp/AppPortsDurability-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         return root
     }

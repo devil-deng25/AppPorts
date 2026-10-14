@@ -210,19 +210,29 @@ struct DataTransferWorkflowAuditTests {
         _ = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
         let externalIdentity = try DataPathIdentity.capture(fixture.destination)
         if failure == "copying-save" { writer.failRestoreCopying = true }
-        let pipe = fixture.destination.appendingPathComponent("temporary-pipe")
-        if failure == "unsupported-source" { #expect(mkfifo(pipe.path, 0o600) == 0) }
+        let unsupported = fixture.destination.appendingPathComponent("temporary-hardlink")
+        if failure == "unsupported-source" { try linkOutsideSelection(unsupported, root: fixture.root) }
         await #expect(throws: (any Error).self) { try await fixture.mover.restoreAndComplete(item: fixture.item, progressHandler: nil) }
         #expect(try fixture.store.transfers().isEmpty)
         #expect(try fixture.store.managedLinks().count == 1)
         #expect(try DataPathIdentity.capture(fixture.destination) == externalIdentity)
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.home.path) == ["Payload"])
         writer.failRestoreCopying = false
-        if failure == "unsupported-source" { try FileManager.default.removeItem(at: pipe) }
+        if failure == "unsupported-source" { try FileManager.default.removeItem(at: unsupported) }
         let result = try await fixture.mover.restoreAndComplete(item: fixture.item, progressHandler: nil)
         #expect(result.cleanupWarning == nil)
         #expect(try fixture.store.transfers().isEmpty)
         #expect(try fixture.text("a.txt") == "first")
+    }
+
+    /// A hard link whose peer lives outside the copied tree. The copier copies
+    /// named pipes and refuses only nodes it cannot reproduce, so a link count
+    /// the selection cannot account for is what forces an unsupported source
+    /// here; the earlier FIFO fixture stopped failing once pipes were copied.
+    private func linkOutsideSelection(_ url: URL, root: URL) throws {
+        let outside = root.appendingPathComponent("outside-payload")
+        try Data("outside".utf8).write(to: outside)
+        try FileManager.default.linkItem(at: outside, to: url)
     }
 
     @Test("A cleanup checkpoint save failure never starts physical deletion")

@@ -45,6 +45,8 @@ enum DurableFileIO {
     /// directory and one device-cache barrier. Traversal does not follow links
     /// and refuses nested mounts or unsupported filesystem nodes.
     static func syncTree(at root: URL, excludingRootEntries: Set<String> = [], allowParentAlias: Bool = false) throws {
+        DataTransferSession.progress?.begin(.synchronizing)
+        DataTransferSession.progress?.startTraversal(at: root)
         let descriptor = try openDescriptor(root.path, flags: O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         defer { _ = close(descriptor) }
         var status = stat()
@@ -78,11 +80,14 @@ enum DurableFileIO {
     }
 
     private static func syncNode(_ descriptor: Int32, url: URL, device: dev_t, exclusions: Set<String> = []) throws {
+        DataTransferSession.progress?.activity(file: url.lastPathComponent)
         var value = stat()
         guard fstat(descriptor, &value) == 0 else { throw failure("inspect tree node", url) }
         guard value.st_dev == device else { throw failure("sync nested mount", url, code: EXDEV) }
         switch value.st_mode & S_IFMT {
-        case S_IFREG:
+        case S_IFREG, S_IFIFO:
+            // A FIFO has persistent inode metadata, but no durable byte stream.
+            // It was opened with O_NONBLOCK and is never read during the barrier.
             try synchronize(descriptor, url: url, full: false)
         case S_IFDIR:
             let duplicate = dup(descriptor)
@@ -124,6 +129,7 @@ enum DurableFileIO {
         default:
             throw failure("sync unsupported node", url, code: ENOTSUP)
         }
+        DataTransferSession.progress?.activity(completedItem: true)
     }
 
     private static func synchronize(_ descriptor: Int32, url: URL, full: Bool) throws {
