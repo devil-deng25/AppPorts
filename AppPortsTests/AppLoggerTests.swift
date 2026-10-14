@@ -171,6 +171,22 @@ final class AppLoggerTests: XCTestCase {
         XCTAssertEqual(mismatches, 0)
     }
 
+    func testAutomaticRecoveryLogsOriginalFailureAndRecoveryFailure() throws {
+        let operation = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM),
+            userInfo: [NSFilePathErrorKey: "/synthetic/source/payload"])
+        let recovery = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError,
+            userInfo: [NSFilePathErrorKey: "/synthetic/restore/staging"])
+        logger.logError("RESTORED", error: ContainerVolumeMigrator.AutomaticRecoveryError.restored(
+            operation: operation, retainedDetails: nil))
+        logger.logError("INCOMPLETE", error: ContainerVolumeMigrator.AutomaticRecoveryError.incomplete(
+            operation: operation, recovery: recovery))
+        let contents = try String(contentsOf: logger.logFileURL, encoding: .utf8)
+        XCTAssertTrue(contents.contains("error_underlying_domain: NSPOSIXErrorDomain"))
+        XCTAssertTrue(contents.contains("error_underlying_file_path: /synthetic/source/payload"))
+        XCTAssertTrue(contents.contains("error_detailed_0_domain: NSCocoaErrorDomain"))
+        XCTAssertTrue(contents.contains("error_detailed_0_file_path: /synthetic/restore/staging"))
+    }
+
     func testAppendLogDataThrowsInsteadOfRaisingAnExceptionOnWriteFailure() throws {
         let logURL = logger.logFileURL
         let original = Data("original\n".utf8)

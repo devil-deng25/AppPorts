@@ -4,6 +4,53 @@ import Testing
 @testable import AppPorts
 
 struct DataPreparationRecoveryTests {
+    @Test("Maintenance retires claimed inactive restore staging while preserving newer active data",
+          arguments: ["claimed", "replaced", "unclaimed", "empty-active"])
+    func retiresPreservedRestoreStage(_ scenario: String) async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        let id = UUID()
+        let staging = fixture.local.deletingLastPathComponent().appendingPathComponent(".appports-restore-staging-" + id.uuidString)
+        let recovery = fixture.root.appendingPathComponent("mounts/recovery-" + id.uuidString)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        try Data("older private copy".utf8).write(to: staging.appendingPathComponent("a.txt"))
+        var transfer = DataTransferRecord(operationID: id, mode: .mount, direction: .restore,
+            appName: "Fixture", dataDirType: DataDirType.containers.rawValue,
+            originalPath: fixture.local.path, activePath: fixture.local.path, destinationPath: fixture.local.path,
+            backupPath: recovery.path, sourceIdentity: try DataPathIdentity.capture(fixture.local))
+        transfer.stagingPath = staging.path
+        transfer.preparationPath = staging.path
+        transfer.preparationParentIdentity = try DataPathIdentity.capture(staging.deletingLastPathComponent())
+        transfer.destinationIdentity = try DataPathIdentity.capture(staging)
+        transfer.phase = .copying
+        var material = DataTransferMaterial(transfer: transfer, reason: "Interrupted restore")
+        if scenario == "unclaimed" { material.recoveryRecord = nil }
+        if scenario == "replaced" {
+            try FileManager.default.moveItem(at: staging, to: fixture.root.appendingPathComponent("original-stage"))
+            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+            try Data("unclaimed replacement".utf8).write(to: staging.appendingPathComponent("a.txt"))
+        }
+        if scenario == "empty-active" {
+            for name in try FileManager.default.contentsOfDirectory(atPath: fixture.local.path) {
+                try FileManager.default.removeItem(at: fixture.local.appendingPathComponent(name))
+            }
+        } else { try Data("latest application data".utf8).write(to: fixture.local.appendingPathComponent("a.txt")) }
+        let active = try TreeCopySession.snapshot(at: fixture.local)
+        let encoded = try PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(material), format: nil)
+        try DurableFileIO.write(PropertyListSerialization.data(fromPropertyList: ["schemaVersion": 9,
+            "mounts": [], "cleanups": [], "transfers": [], "preservedMaterials": [encoded]], format: .binary, options: 0), to: fixture.ledger)
+        let messages = await fixture.mountMover().cleanupPreservedRestoreMaterials()
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == active)
+        if scenario == "claimed" {
+            #expect(messages.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: staging.path))
+            #expect(try fixture.store.preservedMaterials().isEmpty)
+        } else {
+            #expect(FileManager.default.fileExists(atPath: staging.path))
+            #expect(try fixture.store.preservedMaterials() == [material])
+        }
+    }
+
     @Test("A partial real copy can be cancelled or restarted after reopening its ledger",
           arguments: ["symlink-migrate", "symlink-restore", "mount-migrate", "mount-restore"], [false, true])
     func partialCopyHasExit(scenario: String, restart: Bool) async throws {
@@ -125,7 +172,7 @@ struct DataPreparationRecoveryTests {
         let pending = try #require(try fixture.store.transfers().first)
         let identity = try #require(pending.destinationIdentity)
         #expect(pending.baseline == nil)
-        let creations = fixture.runner.commands(prefix: ["-A"])
+        let creations = fixture.runner.commands(prefix: ["apfs", "addVolume"])
         let cold = ContainerMountStore(fileURL: fixture.ledger)
         let warning: String?
         if mount { warning = try await fixture.mountMover(store: cold).resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) }
@@ -133,7 +180,7 @@ struct DataPreparationRecoveryTests {
         #expect(warning == nil)
         let active = mount ? fixture.local : fixture.external.appendingPathComponent("Payload")
         #expect(try DataPathIdentity.capture(active, volumeUUID: mount ? pending.createdVolumeUUID : nil).matchesFilesystemObject(identity))
-        #expect(fixture.runner.commands(prefix: ["-A"]) == creations)
+        #expect(fixture.runner.commands(prefix: ["apfs", "addVolume"]) == creations)
     }
 
     @Test("A noowners restore partial can cancel or restart without leaving temporary ownership options", arguments: [false, true])
@@ -142,9 +189,18 @@ struct DataPreparationRecoveryTests {
         defer { fixture.remove() }
         try await fixture.migrateFirst()
         let runner = fixture.runner, local = fixture.local
+        let previousCallCount = runner.calls.count
         let flags: @Sendable (URL) -> UInt32? = { url in
             guard url.path == local.path else { return UInt32(MNT_DONTBROWSE) }
-            let noowners = runner.commands(prefix: ["-u"]).last.map { $0[2].split(separator: ",").contains("noowners") } ?? true
+            var noowners = true
+            for call in runner.calls.dropFirst(previousCallCount) {
+                let arguments = call.arguments
+                if arguments.first == "-u", arguments.count >= 3 {
+                    noowners = arguments[2].split(separator: ",").contains("noowners")
+                } else if arguments.first == "mount", arguments.count == 7, arguments[3] == local.path {
+                    noowners = arguments[5] == "noowners"
+                }
+            }
             return UInt32(MNT_DONTBROWSE | MNT_NODEV | MNT_NOSUID) | (noowners ? UInt32(MNT_IGNORE_OWNERSHIP) : 0)
         }
         let source = try TreeCopySession.snapshot(at: local)

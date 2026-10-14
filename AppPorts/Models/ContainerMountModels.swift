@@ -41,8 +41,8 @@ struct ContainerMountRecord: Codable, Equatable, Identifiable, Sendable {
     /// 迁移时用户选择的外部存储根目录（记录来源，不参与挂载）
     let externalRootPath: String
     let createdAt: Date
-    /// Missing in historical records: explicitly use noowners for legacy application access.
-    /// New verified migrations require real ownership, even after backup cleanup.
+    /// Missing means noowners, the normal application-data policy used in 1.9.0.
+    /// Keep decoding owners for interrupted operations from earlier 1.9.1 builds.
     var ownershipPolicy: OwnershipPolicy?
 
     init(

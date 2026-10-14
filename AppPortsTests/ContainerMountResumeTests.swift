@@ -4,6 +4,48 @@ import Testing
 @testable import AppPorts
 
 struct ContainerMountResumeTests {
+    @Test("Ordinary restore resumes an interrupted restore without a separate recovery action", arguments: [
+        Checkpoint.restoreVerified, .restoreSwitch, .restoreFinalized
+    ])
+    func ordinaryRestoreResumesPendingWork(checkpoint: Checkpoint) async throws {
+        let fixture = try Fixture(checkpoint: checkpoint)
+        defer { fixture.remove() }
+        let migration = try await fixture.migrate()
+        await #expect(throws: (any Error).self) {
+            try await fixture.mover().restore(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil)
+        }
+        // The last mount can disappear before local activation. Its durable
+        // transfer must keep the login/reconnect recovery agent installed.
+        #expect(try ContainerMountAgentInstaller.requiresAgent(store: fixture.store))
+        let created = fixture.runner.commands(prefix: ["apfs", "addVolume"])
+        #expect(try await fixture.mover().restoreAndComplete(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil) == nil)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.store.recordsStrict().isEmpty)
+        #expect(try !ContainerMountAgentInstaller.requiresAgent(store: fixture.store))
+        #expect(fixture.runner.commands(prefix: ["apfs", "addVolume"]) == created)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+    }
+
+    @Test("A missing or replaced old backup cannot prevent retrieval of newly written active data", arguments: [false, true])
+    func restoresCurrentDataWithoutOldBackup(replaced: Bool) async throws {
+        let fixture = try Fixture(checkpoint: .migrationCommitted)
+        defer { fixture.remove() }
+        await #expect(throws: (any Error).self) { try await fixture.migrate() }
+        let pending = try #require(try fixture.store.transfers().first)
+        let record = try #require(pending.recoveryMountRecord)
+        let backup = URL(fileURLWithPath: try #require(pending.backupPath))
+        try FileManager.default.moveItem(at: backup, to: fixture.root.appendingPathComponent("UserSavedOriginal"))
+        if replaced {
+            try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
+            try Data("unrelated replacement".utf8).write(to: backup.appendingPathComponent("keep"))
+        }
+        try Data("latest active data".utf8).write(to: fixture.source.appendingPathComponent("payload.txt"))
+        _ = try await fixture.mover().restoreAndComplete(record: record, estimatedTotalBytes: 0, progressHandler: nil)
+        #expect(!fixture.runner.isMounted(fixture.source))
+        #expect(try fixture.payload(at: fixture.source) == "latest active data")
+        if replaced { #expect(try String(contentsOf: backup.appendingPathComponent("keep"), encoding: .utf8) == "unrelated replacement") }
+    }
+
     @Test("Activated mount and restored local trees accept writes before final recovery", arguments: [Checkpoint.migrationCommitted, .restoreFinalized])
     func activeWritesAfterFinalSaveFailure(checkpoint: Checkpoint) async throws {
         let fixture = try Fixture(checkpoint: checkpoint)
@@ -22,10 +64,10 @@ struct ContainerMountResumeTests {
         try Data("new document".utf8).write(to: fixture.source.appendingPathComponent("created-after-switch.txt"))
         #expect(chmod(fixture.source.path, 0o700) == 0)
         let active = try TreeCopySession.snapshot(at: fixture.source)
-        let created = fixture.runner.commands(prefix: ["-A"])
+        let created = fixture.runner.commands(prefix: ["apfs", "addVolume"])
         #expect(try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) == nil)
         #expect(try TreeCopySession.snapshot(at: fixture.source) == active)
-        #expect(fixture.runner.commands(prefix: ["-A"]) == created)
+        #expect(fixture.runner.commands(prefix: ["apfs", "addVolume"]) == created)
         #expect(try fixture.store.transfers().isEmpty)
     }
     @Test("Verified mount migration resumes its original operation without creating or copying another volume", arguments: [
@@ -38,7 +80,7 @@ struct ContainerMountResumeTests {
         let pending = try #require(try fixture.store.transfers().first)
         let mount = try #require(pending.recoveryMountRecord)
         #expect(pending.isVerifiedSwitchRecoverable || pending.isPreparationRecoverable)
-        let created = fixture.runner.commands(prefix: ["-A"])
+        let created = fixture.runner.commands(prefix: ["apfs", "addVolume"])
 
         let warning = try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil)
 
@@ -46,7 +88,7 @@ struct ContainerMountResumeTests {
         #expect(try fixture.store.recordsStrict() == [mount])
         #expect(try fixture.store.transfers().isEmpty)
         #expect(fixture.runner.mountedUUID(at: fixture.source) == mount.volumeUUID)
-        #expect(fixture.runner.commands(prefix: ["-A"]) == created)
+        #expect(fixture.runner.commands(prefix: ["apfs", "addVolume"]) == created)
         #expect(try fixture.payload(at: fixture.source) == "original")
         let completedCalls = fixture.runner.calls
         #expect(try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) == nil)
@@ -66,7 +108,7 @@ struct ContainerMountResumeTests {
         let pending = try #require(try fixture.store.transfers().first { $0.direction == .restore })
         #expect(pending.isVerifiedSwitchRecoverable || pending.isPreparationRecoverable)
         let copiedIdentity = try #require(pending.destinationIdentity)
-        let created = fixture.runner.commands(prefix: ["-A"])
+        let created = fixture.runner.commands(prefix: ["apfs", "addVolume"])
 
         let warning = try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil)
 
@@ -75,7 +117,7 @@ struct ContainerMountResumeTests {
         #expect(try fixture.store.transfers().isEmpty)
         #expect(!fixture.runner.isMounted(fixture.source))
         #expect(try DataPathIdentity.capture(fixture.source).matchesFilesystemObject(copiedIdentity))
-        #expect(fixture.runner.commands(prefix: ["-A"]) == created)
+        #expect(fixture.runner.commands(prefix: ["apfs", "addVolume"]) == created)
         #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
         #expect(try fixture.payload(at: fixture.source) == "original")
     }
@@ -248,11 +290,42 @@ struct ContainerMountResumeTests {
             try await fixture.mover(diskRunner: intercepted).resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil)
         }
 
-        #expect(fixture.runner.commands(prefix: ["mount"]) == mounts)
-        #expect(!FileManager.default.fileExists(atPath: fixture.source.path))
-        #expect(try fixture.payload(at: backup) == "new retained data")
-        #expect(try fixture.store.transfer(operationID: pending.operationID)?.isVerifiedSwitchRecoverable == true)
-        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        #expect(fixture.runner.commands(prefix: ["mount"]).filter { $0.contains(fixture.source.path) }
+            == mounts.filter { $0.contains(fixture.source.path) })
+        #expect(!FileManager.default.fileExists(atPath: backup.path))
+        #expect(try fixture.payload(at: fixture.source) == "new retained data")
+        #expect(try fixture.store.transfer(operationID: pending.operationID) == nil)
+        #expect(try fixture.store.recordsForInspection().preservedMaterials.isEmpty)
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+    }
+
+    @Test("Rolled-back private staging cannot block a fresh restore or replace its new data")
+    func rollbackCleanupDoesNotOwnTheNextRestore() async throws {
+        let fixture = try Fixture(checkpoint: .restoreSwitch)
+        defer { fixture.remove() }
+        let migration = try await fixture.migrate()
+        await #expect(throws: (any Error).self) {
+            try await fixture.mover().restore(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil)
+        }
+        let pending = try #require(try fixture.store.transfers().first { $0.direction == .restore })
+        let staging = URL(fileURLWithPath: try #require(pending.stagingPath))
+        try Data("unclaimed changed content".utf8).write(to: staging.appendingPathComponent("preserve-me"))
+        _ = try await fixture.mover().recoverWithIndependentBudget(pending, finishPreparedRestore: false)
+        let rolledBack = try #require(try fixture.store.transfer(operationID: pending.operationID))
+        #expect(rolledBack.rollbackCompletedAt != nil)
+        #expect(rolledBack.topologyEntries.allSatisfy { $0.path != fixture.source.path })
+        try Data("written after rollback".utf8).write(to: fixture.source.appendingPathComponent("payload.txt"))
+        let warning = try await fixture.mover().restoreAndComplete(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil)
+        #expect(warning != nil)
+        #expect(try fixture.payload(at: fixture.source) == "written after rollback")
+        #expect(!fixture.runner.isMounted(fixture.source))
+        #expect(try fixture.store.recordsStrict().isEmpty)
+        // A cold maintenance pass must not put the old mount back or touch the
+        // unknown staging file just because this old record still exists.
+        _ = await fixture.mover().performAutomaticMaintenance()
+        #expect(try fixture.payload(at: fixture.source) == "written after rollback")
+        #expect(try fixture.store.recordsStrict().isEmpty)
+        #expect(try String(contentsOf: staging.appendingPathComponent("preserve-me"), encoding: .utf8) == "unclaimed changed content")
     }
 
     @Test("A replacement volume during the writer probe is rejected before any ownership update")

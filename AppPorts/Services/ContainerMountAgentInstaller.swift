@@ -4,12 +4,13 @@
 //
 
 import Foundation
+import Security
 
 /// 管理「登录后自动重挂载容器卷」LaunchAgent 的安装与卸载。
 ///
 /// 挂载到容器路径需要 Full Disk Access，普通脚本做不到；代理直接运行 AppPorts 自身的
-/// 可执行文件并带 `--mount-agent` 参数，沿用主应用的 TCC 授权。挂载记录存在时自动安装，
-/// 最后一条记录被还原后自动卸载。
+/// 可执行文件并带 `--mount-agent` 参数，沿用主应用的 TCC 授权。挂载或恢复任务存在时安装，
+/// 最后一项还原和清理完成后自动卸载。
 enum ContainerMountAgentInstaller {
 
     static let label = "com.shimoko.AppPorts.container-mount"
@@ -38,7 +39,7 @@ enum ContainerMountAgentInstaller {
     static func refreshAtLaunch(store: ContainerMountStore = .shared) async {
         // 测试宿主也会走到这里；不能让跑测试改写开发机上真实的登录代理。
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
-              !store.records().isEmpty else { return }
+              (try? requiresAgent(store: store)) == true else { return }
         // 定义有变化时要先 bootout 正在运行的代理；拿锁，免得在它挂到一半时把它停掉。
         let lock = OperationLock()
         guard await lock.acquire(timeout: OperationLock.appWaitTimeout) else {
@@ -47,7 +48,7 @@ enum ContainerMountAgentInstaller {
         }
         defer { lock.release() }
         // 等锁期间最后一条记录可能已被还原；此时不要重新安装刚卸载的代理。
-        guard !store.records().isEmpty else { return }
+        guard (try? requiresAgent(store: store)) == true else { return }
         do {
             try install()
         } catch {
@@ -59,13 +60,23 @@ enum ContainerMountAgentInstaller {
         }
     }
 
-    /// 存在挂载记录时安装代理；没有记录时卸载。任何一步失败只记日志，不影响迁移结果。
+    /// A restore temporarily removes its mount record before switching. Its
+    /// transaction must keep the restart/reconnect worker installed throughout.
+    static func requiresAgent(store: ContainerMountStore) throws -> Bool {
+        if try !store.recordsStrict().isEmpty { return true }
+        return try store.transfers().contains { $0.mode == .mount }
+    }
+
+    /// Keep an existing agent when the index is unreadable; absence must be proven.
     static func installIfNeeded(store: ContainerMountStore = .shared) {
-        if store.records().isEmpty {
-            uninstall()
-            return
-        }
+        // The agent reconciles once the whole attempt has finished. bootout
+        // or rebootstrap here would terminate recovery halfway through its loop.
+        guard !isRunningAsAgent else { return }
         do {
+            guard try requiresAgent(store: store) else {
+                uninstall()
+                return
+            }
             try install()
         } catch {
             AppLogger.shared.logError(
@@ -95,8 +106,8 @@ enum ContainerMountAgentInstaller {
     /// （exit 0）不会被反复重启。原来的 `ProcessType: Background` 也去掉了：它等于主动
     /// 告诉 launchd "我不急"，与这里的意图相反。
     /// 抽成纯函数是为了能被测试守住，避免哪天被改回去。
-    static func launchAgentPayload(executablePath: String) -> [String: Any] {
-        [
+    static func launchAgentPayload(executablePath: String, signatureIdentity: String? = nil) -> [String: Any] {
+        var payload: [String: Any] = [
             "Label": label,
             "ProgramArguments": [executablePath, launchArgument],
             "RunAtLoad": true,
@@ -104,6 +115,20 @@ enum ContainerMountAgentInstaller {
             "LimitLoadToSessionType": ["Aqua"],
             "WatchPaths": ["/Volumes"]
         ]
+        // Rebootstrap after an in-place update too. launchd binds its managed
+        // launch constraint to the signing identity seen at registration.
+        if let signatureIdentity { payload["AppPortsSignatureIdentity"] = signatureIdentity }
+        return payload
+    }
+
+    private static func executableSignatureIdentity(at path: String) -> String? {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code) == errSecSuccess,
+              let code else { return nil }
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+              let values = information as? [String: Any], let hash = values[kSecCodeInfoUnique as String] as? Data else { return nil }
+        return hash.map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - 代理运行哪一份 AppPorts
@@ -210,11 +235,12 @@ enum ContainerMountAgentInstaller {
         guard let executablePath = agentExecutablePath(running: runningExecutable, recorded: recordedExecutable) else {
             throw InstallError.temporaryLocation
         }
-        let plist = launchAgentPayload(executablePath: executablePath)
+        let plist = launchAgentPayload(executablePath: executablePath,
+                                      signatureIdentity: executableSignatureIdentity(at: executablePath))
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
 
         // 定义未变化时不重新加载：bootstrap 会立刻再跑一遍代理，没有必要。
-        if existing == data {
+        if existing == data, runLaunchctl(["print", "gui/\(getuid())/\(label)"]) == 0 {
             return
         }
 
@@ -284,8 +310,9 @@ enum ContainerMountAgentInstaller {
             reportAgentResult(result)
             semaphore.signal()
         }
-        // 主线程只等待，不进入 AppKit 事件循环。等待窗口与每轮尝试都在这个上限之内。
-        _ = semaphore.wait(timeout: .now() + 600)
+        // Each disk command and idle reconnect loop is bounded. A valid large
+        // copy/verification must finish before this process can exit.
+        semaphore.wait()
         AppLogger.shared.log("容器卷自动挂载代理退出")
         exit(0)
     }
@@ -312,7 +339,15 @@ enum ContainerMountAgentInstaller {
             return .deferred
         }
         defer { lock.release() }
-        return .results(await migrator.remountAvailableRecords())
+        await migrator.performAutomaticMaintenance()
+        let outcomes = await migrator.remountAvailableRecords()
+        if (try? requiresAgent(store: .shared)) == false {
+            // All filesystem work and journal writes are complete. Remove the
+            // persisted definition before bootout can terminate this process.
+            try? FileManager.default.removeItem(at: agentPlistURL)
+            runLaunchctl(["bootout", "gui/\(getuid())/\(label)"])
+        }
+        return .results(outcomes)
     }
 
     /// 代理一轮运行的收尾日志。空跑只留一行，逐条详单只在真的动过盘子（或读不到卷）时才写。

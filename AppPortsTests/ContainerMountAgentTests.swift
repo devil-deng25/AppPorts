@@ -10,6 +10,16 @@ import Testing
 /// `WatchPaths` 让代理在系统把外置卷挂上 `/Volumes` 时立刻再跑一次，实测能提前约 20 秒。
 final class ContainerMountAgentTests: XCTestCase {
 
+    func testReplacingSignedAppAtSamePathRefreshesAgentRegistration() throws {
+        let path = "/Applications/AppPorts.app/Contents/MacOS/AppPorts"
+        let old = ContainerMountAgentInstaller.launchAgentPayload(executablePath: path, signatureIdentity: "old-cdhash")
+        let updated = ContainerMountAgentInstaller.launchAgentPayload(executablePath: path, signatureIdentity: "new-cdhash")
+        XCTAssertNotEqual(try PropertyListSerialization.data(fromPropertyList: old, format: .xml, options: 0),
+                          try PropertyListSerialization.data(fromPropertyList: updated, format: .xml, options: 0))
+        XCTAssertEqual(old["ProgramArguments"] as? [String], updated["ProgramArguments"] as? [String])
+        XCTAssertEqual(old["WatchPaths"] as? [String], updated["WatchPaths"] as? [String])
+    }
+
     func testLaunchAgentWatchesVolumesSoItRunsBeforeSelfStartingApps() {
         let payload = ContainerMountAgentInstaller.launchAgentPayload(
             executablePath: "/Applications/AppPorts.app/Contents/MacOS/AppPorts"

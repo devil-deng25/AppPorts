@@ -230,7 +230,6 @@ struct ContentView: View {
     // 受保护应用迁移预警（App Store / root 拥有，自动迁移可能因权限失败）
     @State private var protectedAppsRequest: WarningSheetRequest?
     // 经典模式下重签名沙盒应用前的二次确认
-    @State private var showCopyManagement = false
     @State private var manualResignRequest: WarningSheetRequest?
     @State private var pendingManualResignApp: AppItem? = nil
     @State private var pendingManualResignTarget: DataMigrationWorkflow.SigningTarget?
@@ -392,11 +391,21 @@ struct ContentView: View {
             stopMonitoringExternal()
             stopObservingVolumeMounts()
         }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in
+            remountContainerVolumes(trigger: "application-exited")
+        }
+        .task {
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { break }
+                remountContainerVolumes(trigger: "retry")
+            }
+        }
         .onChange(of: operationState.recordsRevision) { _ in
             guard isVisible else { return }
             scanBothAppsAtomic()
         }
         .onChange(of: operationState.isBusy) { isBusy in
+            if !isBusy { remountContainerVolumes(trigger: "operation-finished") }
             // 补上操作期间延后的监控刷新，也初始化操作期间新打开的窗口。
             if !isBusy, needsAppRescan || localScanState.request == nil || externalScanState.request == nil {
                 scanBothAppsAtomic()
@@ -438,7 +447,6 @@ struct ContentView: View {
         .warningSheet($signatureRepairReminderRequest)
         .warningSheet($signatureRestoreSourceRequest)
         .warningSheet($manualResignRequest)
-        .sheet(isPresented: $showCopyManagement) { CopyManagementView() }
         .sheet(item: $signatureRepairApp) { app in
             signatureRepairSheet(for: app)
         }
@@ -843,12 +851,6 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .disabled(operationState.isBusy || externalDriveURL == nil)
         }
-
-        Button { showCopyManagement = true } label: {
-            Label("副本管理".localized, systemImage: "doc.on.doc")
-        }
-        .buttonStyle(.borderless)
-        .accessibilityIdentifier("copy-management")
 
         // App Store Settings Button（始终显示）
         Button(action: { showAppStoreSettings = true }) {
@@ -2716,11 +2718,9 @@ struct ContentView: View {
                     details: [("app_name", app.displayName), ("real_path", realURL.path), ("bundle_id", bundleID)]
                 )
                 guard !isAppRunning(url: realURL) else { throw AppMoverError.appIsRunning }
-                let requirements = try await signer.recoveryRequirements(appURL: realURL, bundleIdentifier: bundleID, originalApplication: originalApplication)
-                try await SignatureRecoveryDependencyCheck.requireSafeRestore(requirements)
                 let result = try await signer.restoreSignature(appURL: realURL, bundleIdentifier: bundleID, originalApplication: originalApplication)
                 if let warning = result.cleanupWarning {
-                    showError(title: "应用已恢复，副本待清理".localized, message: warning)
+                    showError(title: "应用已恢复，正在完成收尾".localized, message: warning)
                 }
                 await MainActor.run {
                     scanLocalApps()
@@ -2795,7 +2795,7 @@ struct ContentView: View {
             expectedIdentity: target.identity
         )
         if let warning = result.cleanupWarning {
-            showError(title: "签名已完成，副本待清理".localized, message: warning)
+            showError(title: "签名已完成，正在完成收尾".localized, message: warning)
         }
         scanBothAppsAtomic()
     }
@@ -3101,7 +3101,7 @@ struct ContentView: View {
         guard !records.isEmpty else { return }
         guard records.contains(where: { !DiskUtility.isMountPoint($0.mountPointURL) }) else { return }
         AppLogger.shared.logContext(
-            "检测到容器挂载点被外部卸载，刷新数据目录",
+            "检测到容器挂载点已卸载，刷新数据目录",
             details: [("record_count", String(records.count))]
         )
         dataDirsRefreshTrigger += 1
@@ -3109,39 +3109,11 @@ struct ContentView: View {
 
     @MainActor
     private func remountContainerVolumes(trigger: String) {
-        // 测试宿主不应自动操作开发机上的真实容器卷。
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
-        guard !ContainerMountStore.shared.records().isEmpty else { return }
-        // 迁移进行中不动挂载点；操作结束后的目录变更刷新会再触发扫描。
-        guard !operationState.isBusy else { return }
-        Task.detached(priority: .utility) {
-            // 登录代理（监听 /Volumes）可能正在挂同一批卷：拿到锁再动手，拿不到就交给它。
-            let operationLock = OperationLock()
-            guard await operationLock.acquire(timeout: OperationLock.appWaitTimeout) else {
-                AppLogger.shared.logContext(
-                    "容器卷自动挂载跳过",
-                    details: [("trigger", trigger), ("reason", "挂载代理正在运行")]
-                )
-                return
-            }
-            defer { operationLock.release() }
-            let outcomes = await ContainerVolumeMigrator().remountAvailableRecords()
-            let mountedCount = outcomes.filter { $0.state == .mounted }.count
-            AppLogger.shared.logContext(
-                "容器卷自动挂载完成",
-                details: [
-                    ("trigger", trigger),
-                    ("record_count", String(outcomes.count)),
-                    ("newly_mounted", String(mountedCount)),
-                    ("unavailable", String(outcomes.filter { $0.state == .unavailable }.count))
-                ]
-            )
-            // 卷也可能是后台代理在别的进程里挂好的，这时 mountedCount 是 0，
-            // 但列表里的大小还是挂载前的旧值，同样要刷新一次。
-            let mountedRecords = outcomes.filter { $0.state == .mounted || $0.state == .alreadyMounted }
-            if !mountedRecords.isEmpty {
-                await MainActor.run { self.dataDirsRefreshTrigger += 1 }
-            }
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+              !operationState.isBusy else { return }
+        Task {
+            _ = await OperationMaintenance.shared.run()
+            dataDirsRefreshTrigger += 1
         }
     }
 }

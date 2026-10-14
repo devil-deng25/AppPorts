@@ -349,8 +349,8 @@ struct DataTransferStoreTests {
         #expect(throws: ContainerMountStore.StoreError.self) { try fixture.store.updateTransfer(restore) }
     }
 
-    @Test("An unstarted restore retries with its original operation identity and paths", arguments: [false, true])
-    func unstartedRestoreResumesSameIntent(sourceInspected: Bool) throws {
+    @Test("An unstarted restore retries with its original operation identity and paths", arguments: [false, true], [false, true])
+    func unstartedRestoreResumesSameIntent(sourceInspected: Bool, useProjectedOwnership: Bool) throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let mount = fixture.mount("A")
@@ -373,10 +373,15 @@ struct DataTransferStoreTests {
 
         let reopened = ContainerMountStore(fileURL: fixture.file)
         let saved = try #require(try reopened.transfer(operationID: restore.operationID))
-        let resumed = try reopened.resumeUnstartedMountRestore(saved, record: mount)
+        let resumed = try reopened.resumeUnstartedMountRestore(saved, record: mount, useProjectedOwnership: useProjectedOwnership)
         var expected = saved
         expected.phase = .preparing
         expected.recoverableReason = nil
+        if useProjectedOwnership {
+            expected.originalSourceMountFlags = saved.legacyMountFlags
+            expected.legacyRootOwnership = nil
+            expected.legacyMountFlags = nil
+        }
         #expect(resumed == expected)
         #expect(try reopened.transfers() == [expected])
         #expect(try reopened.recordsStrict() == [mount])
@@ -384,6 +389,26 @@ struct DataTransferStoreTests {
         let before = try Data(contentsOf: fixture.file)
         #expect(throws: ContainerMountStore.StoreError.self) {
             try reopened.resumeUnstartedMountRestore(saved, record: mount)
+        }
+        #expect(try Data(contentsOf: fixture.file) == before)
+    }
+
+    @Test("A saved source snapshot cannot be reinterpreted as a new projected-ownership intent")
+    func projectedRetryRejectsExistingSourceBaseline() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let mount = fixture.mount("A")
+        try fixture.store.upsert(mount)
+        var restore = fixture.restore(mount)
+        restore.sourceIdentity = DataPathIdentity(device: 3, inode: 600, volumeUUID: mount.volumeUUID)
+        restore.preparationPath = restore.stagingPath
+        restore.preparationParentIdentity = try DataPathIdentity.capture(fixture.root)
+        restore.sourceBaseline = try PropertyListEncoder().encode(TreeCopySession.snapshot(at: fixture.root))
+        try fixture.store.beginTransfer(restore)
+        #expect(restore.isUnstartedMountRestore)
+        let before = try Data(contentsOf: fixture.file)
+        #expect(throws: ContainerMountStore.StoreError.self) {
+            try fixture.store.resumeUnstartedMountRestore(restore, record: mount, useProjectedOwnership: true)
         }
         #expect(try Data(contentsOf: fixture.file) == before)
     }

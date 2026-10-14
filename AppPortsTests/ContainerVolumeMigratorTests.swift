@@ -204,6 +204,17 @@ final class FakeDiskCommandRunner: ShellCommandRunning, @unchecked Sendable {
         mountedPaths.insert(Self.normalized(path))
     }
 
+    /// Model a pre-existing mounted root without moving its contents. Future
+    /// unmount/mount calls preserve the volume inode and reveal this empty root.
+    func modelUnderlyingDirectory(at url: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        let path = Self.normalized(url.path)
+        guard mountedPaths.contains(path), underlyingDirectories[path] == nil else { throw CocoaError(.fileWriteUnknown) }
+        let underlying = url.deletingLastPathComponent().appendingPathComponent(".fake-underlying-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: underlying, withIntermediateDirectories: false)
+        underlyingDirectories[path] = underlying
+    }
+
     func markOnline(_ volume: String) {
         lock.lock(); defer { lock.unlock() }
         onlineVolumes.insert(volume)
@@ -288,14 +299,14 @@ final class FakeDiskCommandRunner: ShellCommandRunning, @unchecked Sendable {
                 ["APFSVolumeUUID": volumeUUID(for: device), "DeviceIdentifier": device, "Name": name]
             }
             return success(plist: ["Containers": [["ContainerReference": containerReference, "APFSContainerUUID": "TEST-CONTAINER-UUID", "Volumes": volumes]]])
-        case "-A":
+        case "apfs" where subcommand == "addVolume":
             while createdVolumeNames["disk7s\(nextDeviceNumber)"] != nil { nextDeviceNumber += 1 }
             let device = "disk7s\(nextDeviceNumber)"
             createdUUIDByDevice[device] = nextCreatedUUID ?? createdVolumeUUID ?? "VOLUME-UUID-\(device)"
             nextCreatedUUID = nil
             onlineVolumes.insert(device)
             onlineVolumes.insert(volumeUUID(for: device))
-            createdVolumeNames[device] = arguments.dropFirst(7).first ?? "AppPortsTest"
+            createdVolumeNames[device] = arguments.dropFirst(4).first ?? "AppPortsTest"
             return success(text: "Will export new APFS Volume from APFS Container Reference \(containerReference)\nCreated new APFS Volume \(device)\n")
         case "apfs" where subcommand == "deleteVolume":
             let target = arguments.last ?? ""
@@ -420,6 +431,135 @@ final class FakeDiskCommandRunner: ShellCommandRunning, @unchecked Sendable {
 
 @Suite("Container volume migration", .serialized)
 struct ContainerVolumeMigratorTests {
+    @Test("Ownership recovery checks the local parent before detaching a usable data volume")
+    func ownershipRecoveryChecksParentBeforeUnmount() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "PermissionBoundary")
+        let record = workspace.record(mountPoint: source)
+        let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
+        runner.markVolumeMounted(record.volumeUUID, at: source.path)
+        try runner.modelUnderlyingDirectory(at: source)
+        let parent = source.deletingLastPathComponent()
+        // A traversable but unreadable local parent models the permission gap:
+        // the mounted external root is readable, its local parent cannot open.
+        try #require(chmod(parent.path, 0o100) == 0)
+        defer { _ = chmod(parent.path, 0o700) }
+        let current = UInt32(MNT_DONTBROWSE | MNT_NODEV | MNT_NOSUID)
+        let mover = workspace.makeMigrator(runner: runner, mountFlags: { _ in current })
+
+        await #expect(throws: (any Error).self) {
+            try await mover.restoreOriginalMountOptions(mountPoint: source, volumeUUID: record.volumeUUID,
+                originalFlags: current | UInt32(MNT_IGNORE_OWNERSHIP))
+        }
+
+        #expect(runner.commands(prefix: ["unmount"]).isEmpty)
+        #expect(runner.commands(prefix: ["mount"]).isEmpty)
+        #expect(runner.mountedUUID(at: source) == record.volumeUUID)
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("payload".utf8))
+    }
+
+    @Test("A denied destination lease leaves a volume at its existing usable location")
+    func deniedMountTargetDoesNotDetachSource() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let target = try workspace.makeContainerDirectory(named: "DeniedTarget")
+        try FileManager.default.removeItem(at: target.appendingPathComponent("payload.txt"))
+        let current = try workspace.makeContainerDirectory(named: "UsableSource")
+        let record = workspace.record(mountPoint: target)
+        let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
+        runner.markVolumeMounted(record.volumeUUID, at: current.path)
+        let mover = workspace.makeMigrator(runner: runner, makeMountPointLease: { _ in throw POSIXError(.EPERM) })
+
+        await #expect(throws: (any Error).self) {
+            try await mover.mountVolume(record.volumeUUID, at: target, operationID: "denied-target",
+                knownMountPoint: .mounted(at: current))
+        }
+
+        #expect(runner.commands(prefix: ["unmount"]).isEmpty)
+        #expect(runner.commands(prefix: ["mount"]).isEmpty)
+        #expect(runner.mountedUUID(at: current) == record.volumeUUID)
+        #expect(try Data(contentsOf: current.appendingPathComponent("payload.txt")) == Data("payload".utf8))
+    }
+
+    @Test("Parent access lost after copying stops ordinary restore before detaching its source and can retry")
+    func restoreChecksParentAgainAfterCopy() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "LatePermissionFailure")
+        let parent = source.deletingLastPathComponent()
+        defer { _ = chmod(parent.path, 0o700) }
+        // Recovery verifies the native filesystem UUID even with a simulated
+        // disk runner. Use this fixture's real namespace, never bypass that check.
+        let fixtureVolumeUUID = try #require(DiskUtility.mountedVolumeUUID(at: source))
+        let runner = FakeDiskCommandRunner(createdVolumeUUID: fixtureVolumeUUID)
+        let mover = workspace.makeMigrator(runner: runner)
+        let migration = try await mover.migrateAndComplete(item: workspace.item(for: source),
+            externalRootURL: workspace.externalRootURL, appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        try Data("latest application write".utf8).write(to: source.appendingPathComponent("payload.txt"))
+        let unmounts = runner.commands(prefix: ["unmount"])
+
+        await #expect(throws: (any Error).self) {
+            try await mover.restore(record: migration.record, estimatedTotalBytes: 0) { progress in
+                if progress.currentFile == "正在切换本地入口...".localized {
+                    #expect(chmod(parent.path, 0o100) == 0)
+                }
+            }
+        }
+
+        #expect(runner.commands(prefix: ["unmount"]) == unmounts)
+        #expect(runner.mountedUUID(at: source) == migration.record.volumeUUID)
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("latest application write".utf8))
+        #expect(try workspace.store.recordsStrict() == [migration.record])
+        #expect(chmod(parent.path, 0o700) == 0)
+        #expect(try await mover.restoreAndComplete(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil) == nil)
+        #expect(!runner.isMounted(source))
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("latest application write".utf8))
+        #expect(try workspace.store.transfers().isEmpty)
+    }
+
+    @Test("A partial restore reconnects its current source without treating its own journal as an overlap")
+    func partialRestoreReconnectPreservesNewData() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "InterruptedCopy")
+        var record = workspace.record(mountPoint: source)
+        record.ownershipPolicy = .owners
+        try workspace.store.upsert(record)
+        let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
+        runner.markVolumeMounted(record.volumeUUID, at: source.path)
+        try runner.modelUnderlyingDirectory(at: source)
+        var pending = unstartedRestore(workspace, record)
+        pending.phase = .copying
+        pending.sourceIdentity = try DataPathIdentity.capture(source, volumeUUID: record.volumeUUID)
+        pending.sourceBaseline = try PropertyListEncoder().encode(TreeCopySession.snapshot(at: source))
+        pending.recoveryMountRecord = record
+        pending.originalSourceMountFlags = UInt32(MNT_DONTBROWSE)
+        let staging = URL(fileURLWithPath: try #require(pending.stagingPath))
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        try Data("pay".utf8).write(to: staging.appendingPathComponent("payload.txt"))
+        pending.destinationIdentity = try DataPathIdentity.capture(staging)
+        pending.preparationPath = staging.path
+        pending.preparationParentIdentity = try DataPathIdentity.capture(staging.deletingLastPathComponent())
+        try seedUnstartedRestore(pending, store: workspace.store)
+        try Data("latest active data".utf8).write(to: source.appendingPathComponent("payload.txt"))
+        _ = try await runner.run(executable: "/usr/sbin/diskutil", arguments: ["unmount", source.path], timeout: 5)
+        let cold = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("container-mounts.plist"))
+        let mover = workspace.makeMigrator(runner: runner, storeOverride: cold)
+
+        let outcomes = await mover.remountAvailableRecords()
+
+        #expect(outcomes.map(\.state) == [.mounted])
+        #expect(runner.mountedUUID(at: source) == record.volumeUUID)
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("latest active data".utf8))
+        #expect(try Data(contentsOf: staging.appendingPathComponent("payload.txt")) == Data("pay".utf8))
+        #expect(try cold.transfer(operationID: pending.operationID)?.rollbackCompletedAt != nil)
+        _ = try await runner.run(executable: "/usr/sbin/diskutil", arguments: ["unmount", source.path], timeout: 5)
+        #expect(await mover.remountAvailableRecords().map(\.state) == [.mounted])
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("latest active data".utf8))
+        #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+    }
+
     @Test("Legacy remount explicitly ignores ownership; modern remount requires owners", arguments: [false, true])
     func remountOwnershipPolicy(modern: Bool) async throws {
         let workspace = try Workspace()
@@ -497,7 +637,7 @@ struct ContainerVolumeMigratorTests {
         let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
         let saved = try workspace.store.transfers()
         let outcomes = await workspace.makeMigrator(runner: runner).remountAvailableRecords()
-        guard case .requiresIntervention = outcomes.first?.state else { Issue.record("Must not relax advanced restore intent"); return }
+        guard case .failed = outcomes.first?.state else { Issue.record("Must not relax advanced restore intent"); return }
         #expect(runner.commands(prefix: ["mount"]).isEmpty)
         #expect(try workspace.store.transfers() == saved)
     }
@@ -521,7 +661,7 @@ struct ContainerVolumeMigratorTests {
         let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
         let saved = try workspace.store.transfers()
         let outcomes = await workspace.makeMigrator(runner: runner).remountAvailableRecords()
-        guard case .requiresIntervention = outcomes.first?.state else { Issue.record("Must keep conflicting data blocked"); return }
+        guard case .failed = outcomes.first?.state else { Issue.record("Must keep conflicting data blocked"); return }
         #expect(runner.commands(prefix: ["mount"]).isEmpty)
         #expect(try workspace.store.transfers() == saved)
         if kind != "symlink" { #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data("keep".utf8)) }
@@ -536,7 +676,7 @@ struct ContainerVolumeMigratorTests {
         let source = try workspace.makeContainerDirectory(named: "Policy")
         let result = try await migrator.migrate(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
             appName: "Chat", bundleIdentifier: "com.example.chat", progressHandler: nil)
-        #expect(result.record.ownershipPolicy == .owners)
+        #expect(result.record.ownershipPolicy == nil)
         let file = workspace.rootURL.appendingPathComponent("container-mounts.plist")
         var document = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: file), format: nil) as? [String: Any])
         var mounts = try #require(document["mounts"] as? [[String: Any]])
@@ -559,7 +699,7 @@ struct ContainerVolumeMigratorTests {
         #expect(old.ownershipPolicy == nil)
         #expect(try Data(contentsOf: file) == legacyBytes)
         let noowners = workspace.makeMigrator(runner: runner, mountFlags: { _ in UInt32(MNT_IGNORE_OWNERSHIP) })
-        await #expect(throws: (any Error).self) { try await noowners.mount(record: old) }
+        try await noowners.mount(record: old)
         let transfer = try #require(try workspace.store.transfers().first)
         try workspace.store.requestCleanup(operationID: transfer.operationID)
         try workspace.store.finishTransfer(operationID: transfer.operationID, deletionConfirmed: true)
@@ -596,7 +736,7 @@ struct ContainerVolumeMigratorTests {
         if removesRecord {
             changed.recoveryMountRecord = nil
         } else {
-            recovery.ownershipPolicy = nil
+            recovery.ownershipPolicy = .owners
             changed.recoveryMountRecord = recovery
         }
         #expect(throws: ContainerMountStore.StoreError.self) { try reopened.updateTransfer(changed) }
@@ -633,10 +773,11 @@ struct ContainerVolumeMigratorTests {
         #expect(workspace.store.records().map(\.id) == [record.id])
         #expect(workspace.store.records().first?.volumeUUID == record.volumeUUID)
         #expect(runner.isMounted(source))
-        #expect(runner.commands(prefix: ["-A"]) == [["-A", "-w", "-U", String(getuid()), "-G", String(getgid()), "-v", record.volumeName, "disk7"]])
+        #expect(runner.commands(prefix: ["apfs", "addVolume"]) == [["apfs", "addVolume", "disk7", "APFS", record.volumeName, "-nomount"]])
         let mounts = runner.commands(prefix: ["mount"])
         #expect(mounts.count == 2)
-        #expect(mounts.last == ["mount", "nobrowse", "-mountPoint", source.path, "-mountOptions", "owners", record.volumeUUID])
+        #expect(mounts.last == ["mount", "nobrowse", "-mountPoint", source.path, "-mountOptions", "noowners", record.volumeUUID])
+        #expect(record.ownershipPolicy == nil)
         #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
         let retained = try #require(try workspace.store.transfers().first)
         #expect(retained.phase == .awaitingUserVerification)
@@ -680,7 +821,7 @@ struct ContainerVolumeMigratorTests {
                 appName: "Chat", bundleIdentifier: "com.example.chat", progressHandler: nil)
             Issue.record("Encrypted destinations require an explicit supported encryption flow")
         } catch ContainerVolumeMigrator.MigrationError.encryptedDestination {}
-        #expect(runner.commands(prefix: ["-A"]).isEmpty)
+        #expect(runner.commands(prefix: ["apfs", "addVolume"]).isEmpty)
         #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
     }
 
@@ -699,7 +840,7 @@ struct ContainerVolumeMigratorTests {
         let migrator = workspace.makeMigrator(runner: runner)
         if operation == "remount" {
             let outcomes = await migrator.remountAvailableRecords()
-            guard case .requiresIntervention = outcomes.first?.state else {
+            guard case .failed = outcomes.first?.state else {
                 Issue.record("A different mounted volume must be reported as failed")
                 return
             }
@@ -854,7 +995,8 @@ struct ContainerVolumeMigratorTests {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
         let source = try workspace.makeContainerDirectory(named: "MountedOfflineRetry")
-        let record = workspace.record(mountPoint: source)
+        var record = workspace.record(mountPoint: source)
+        record.ownershipPolicy = .owners
         try workspace.store.upsert(record)
         let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
         runner.hideContentsOnUnmount()
@@ -936,22 +1078,191 @@ struct ContainerVolumeMigratorTests {
         #expect(runner.calls.isEmpty)
     }
 
-    @Test("Failed ownership update restores current flags and reports rollback failure", arguments: [false, true], [false, true])
-    func restoreRollsBackOwnershipUpdate(rollbackFails: Bool, fastUUIDAvailable: Bool) async throws {
+    @Test("An unchanged mount keeps its original error without a redundant rollback", arguments: [false, true], [false, true])
+    func restoreSkipsUnchangedOwnershipRollback(commandFails: Bool, fastUUIDAvailable: Bool) async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "Legacy")
+        var record = workspace.record(mountPoint: source)
+        record.ownershipPolicy = .owners
+        try workspace.store.upsert(record)
+        let flags = UInt32(MNT_IGNORE_OWNERSHIP | MNT_NODEV | MNT_NOSUID | MNT_DONTBROWSE)
+        let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
+        runner.markVolumeMounted(record.volumeUUID, at: source.path)
+        if commandFails { runner.failWhen(prefix: ["-u"]) }
+        let service = workspace.makeMigrator(runner: runner,
+            mountedVolumeUUID: { fastUUIDAvailable ? runner.mountedUUID(at: $0) : nil }, mountFlags: { _ in flags })
+        do {
+            _ = try await service.restore(record: record, estimatedTotalBytes: 0, progressHandler: nil)
+            Issue.record("Restore must fail while flags still report noowners")
+        } catch {
+            if case ContainerVolumeMigrator.MigrationError.ownershipRollbackFailed = error {
+                Issue.record("Unchanged options must not be reported as a failed rollback")
+            }
+            let failed = try #require(try workspace.store.transfers().first)
+            #expect(failed.recoverableReason == error.localizedDescription)
+            #expect(failed.isUnstartedMountRestore)
+        }
+        #expect(runner.commands(prefix: ["-u"]).map { $0[2] } == ["nobrowse,nodev,nosuid,owners"])
+        #expect(runner.commands(prefix: ["unmount"]).isEmpty)
+        #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        #expect(try workspace.store.recordsStrict() == [record])
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("payload".utf8))
+    }
+
+    @Test("Cancelled ownership authorization keeps the original mount and can be retried", arguments: [false, true])
+    func restoreOwnershipAuthorizationCancelled(originallyHidden: Bool) async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "Legacy")
+        var record = workspace.record(mountPoint: source)
+        record.ownershipPolicy = .owners
+        try workspace.store.upsert(record)
+        let flags = UInt32(MNT_IGNORE_OWNERSHIP | MNT_NODEV | MNT_NOSUID) | (originallyHidden ? UInt32(MNT_DONTBROWSE) : 0)
+        let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
+        runner.markVolumeMounted(record.volumeUUID, at: source.path)
+        runner.denyUnprivileged(prefix: ["-u"])
+        let service = workspace.makeMigrator(runner: runner, administratorRunner: { _, _ in
+            throw DiskUtility.Failure.administratorPromptCancelled(command: "mount")
+        }, mountFlags: { _ in flags })
+        for _ in 0..<2 {
+            do {
+                _ = try await service.restore(record: record, estimatedTotalBytes: 0, progressHandler: nil)
+                Issue.record("Cancelled authorization must stop the restore")
+            } catch DiskUtility.Failure.administratorPromptCancelled { }
+        }
+        let transfers = try workspace.store.transfers()
+        try #require(transfers.count == 1)
+        let pending = try #require(transfers.first)
+        #expect(pending.isUnstartedMountRestore)
+        #expect(runner.commands(prefix: ["-u"]).map { $0[2] } == Array(repeating: "nobrowse,nodev,nosuid,owners", count: 2))
+        #expect(runner.commands(prefix: ["unmount"]).isEmpty)
+        #expect(try workspace.store.recordsStrict() == [record])
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("payload".utf8))
+    }
+
+    @Test("A legacy noowners restore skips ownership authorization, including a failed old intent", arguments: [false, true])
+    func legacyRestoreKeepsNoowners(retry: Bool) async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
         let source = try workspace.makeContainerDirectory(named: "Legacy")
         let record = workspace.record(mountPoint: source)
         try workspace.store.upsert(record)
         let flags = UInt32(MNT_IGNORE_OWNERSHIP | MNT_NODEV | MNT_NOSUID | MNT_DONTBROWSE)
+        var operationID: UUID?
+        if retry {
+            var intent = unstartedRestore(workspace, record)
+            intent.legacyRootOwnership = .init(uid: geteuid(), gid: getegid())
+            intent.legacyMountFlags = flags
+            try seedUnstartedRestore(intent, store: workspace.store)
+            operationID = intent.operationID
+        }
         let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
         runner.markVolumeMounted(record.volumeUUID, at: source.path)
-        if rollbackFails { runner.failWhen(prefix: ["-u"]) }
+        runner.hideContentsOnUnmount()
+        defer { runner.stashedVolumeContents.forEach { try? FileManager.default.removeItem(at: $0) } }
+        runner.denyUnprivileged(prefix: ["-u"])
+        let migrator = workspace.makeMigrator(runner: runner, administratorRunner: { _, _ in
+            Issue.record("A legacy restore requested administrator ownership authorization")
+            throw DiskUtility.Failure.administratorPromptCancelled(command: "mount")
+        }, mountFlags: { _ in flags })
+        _ = try await migrator.restore(record: record, estimatedTotalBytes: 0, progressHandler: nil)
+        let completed = try #require(try workspace.store.transfers().first)
+        #expect(completed.phase == .awaitingUserVerification)
+        #expect(completed.legacyRootOwnership == nil && completed.legacyMountFlags == nil)
+        #expect(completed.originalSourceMountFlags == flags)
+        if let operationID { #expect(completed.operationID == operationID) }
+        #expect(runner.commands(prefix: ["-u"]).isEmpty)
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("payload".utf8))
+    }
+
+    @Test("A modern owners record restores its files after administrator authorization")
+    func restoreUsesAdministratorForOwnership() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "Legacy")
+        var record = workspace.record(mountPoint: source)
+        // The fixture is an ordinary directory, so it cannot exercise the
+        // separate legacy root-owner projection that requires a real mount.
+        record.ownershipPolicy = .owners
+        try workspace.store.upsert(record)
+        let flags = UInt32(MNT_IGNORE_OWNERSHIP | MNT_NODEV | MNT_NOSUID | MNT_DONTBROWSE)
+        let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
+        runner.markVolumeMounted(record.volumeUUID, at: source.path)
+        runner.hideContentsOnUnmount()
+        defer { runner.stashedVolumeContents.forEach { try? FileManager.default.removeItem(at: $0) } }
+        runner.denyUnprivileged(prefix: ["-u"])
         let service = workspace.makeMigrator(runner: runner,
-            mountedVolumeUUID: { fastUUIDAvailable ? runner.mountedUUID(at: $0) : nil }, mountFlags: { _ in flags })
+            administratorRunner: { try runner.runAsAdministrator(executable: $0, arguments: $1) },
+            mountFlags: { _ in
+                let options = runner.commands(prefix: ["sudo", "-u"]).last?[3].split(separator: ",") ?? []
+                return options.contains("owners") ? flags & ~UInt32(MNT_IGNORE_OWNERSHIP) : flags
+            })
+
+        _ = try await service.restore(record: record, estimatedTotalBytes: 0, progressHandler: nil)
+
+        #expect(!runner.isMounted(source))
+        #expect(try workspace.store.recordsStrict().isEmpty)
+        #expect(try workspace.store.transfers().first?.phase == .awaitingUserVerification)
+        #expect(runner.commands(prefix: ["sudo", "-u"]) == [["sudo", "-u", "-o", "nobrowse,nodev,nosuid,owners", source.path]])
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("payload".utf8))
+    }
+
+    @Test("A saved strict source baseline keeps owners on retry even without a destination claim")
+    func retryPreservesUnclaimedStrictBaseline() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "Legacy")
+        let record = workspace.record(mountPoint: source)
+        try workspace.store.upsert(record)
+        var pending = unstartedRestore(workspace, record)
+        pending.sourceIdentity = try DataPathIdentity.capture(source, volumeUUID: record.volumeUUID)
+        pending.preparationPath = pending.stagingPath
+        pending.preparationParentIdentity = try DataPathIdentity.capture(source.deletingLastPathComponent())
+        pending.sourceBaseline = try PropertyListEncoder().encode(TreeCopySession.snapshot(at: source,
+            excludingRootEntries: ContainerVolumeMigrator.volumeSystemArtifacts))
+        try seedUnstartedRestore(pending, store: workspace.store)
+        let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
+        runner.markVolumeMounted(record.volumeUUID, at: source.path)
+        runner.hideContentsOnUnmount()
+        defer { runner.stashedVolumeContents.forEach { try? FileManager.default.removeItem(at: $0) } }
+        let migrator = workspace.makeMigrator(runner: runner, mountFlags: { _ in
+            UInt32(MNT_DONTBROWSE) | (runner.commands(prefix: ["-u"]).isEmpty ? UInt32(MNT_IGNORE_OWNERSHIP) : 0)
+        })
+        _ = try await migrator.restore(record: record, estimatedTotalBytes: 0, progressHandler: nil)
+        let completed = try #require(try workspace.store.transfer(operationID: pending.operationID))
+        #expect(completed.sourceBaseline == pending.sourceBaseline)
+        #expect(completed.phase == .awaitingUserVerification)
+        #expect(runner.commands(prefix: ["-u"]).map { $0[2] } == ["nobrowse,owners"])
+    }
+
+    @Test("A failure after ownership changes restores current flags and reports actual rollback failure", arguments: [false, true], [false, true])
+    func restoreRollsBackOwnershipUpdate(rollbackFails: Bool, fastUUIDAvailable: Bool) async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "Legacy")
+        var record = workspace.record(mountPoint: source)
+        record.ownershipPolicy = .owners
+        try workspace.store.upsert(record)
+        let flags = UInt32(MNT_IGNORE_OWNERSHIP | MNT_NODEV | MNT_NOSUID | MNT_DONTBROWSE)
+        let runner = FakeDiskCommandRunner(onlineVolumes: [record.volumeUUID])
+        runner.markVolumeMounted(record.volumeUUID, at: source.path)
+        // The forward update succeeds; a hardlink outside the selected tree
+        // stops the copy before switching paths, so the owners change must be
+        // reversed. Named pipes are supported and cannot trigger this failure.
+        try #require(link(source.appendingPathComponent("payload.txt").path,
+                          workspace.rootURL.appendingPathComponent("outside-hardlink").path) == 0)
+        try runner.modelUnderlyingDirectory(at: source)
+        if rollbackFails { runner.failWhen(prefix: ["mount", "nobrowse", "-mountPoint", source.path, "-mountOptions", "noowners"]) }
+        let service = workspace.makeMigrator(runner: runner,
+            mountedVolumeUUID: { fastUUIDAvailable ? runner.mountedUUID(at: $0) : nil }, mountFlags: { _ in
+                let updates = runner.commands(prefix: ["-u"])
+                let remounted = runner.commands(prefix: ["mount"]).last?.contains("noowners") == true
+                return updates.isEmpty || (!rollbackFails && remounted) ? flags : flags & ~UInt32(MNT_IGNORE_OWNERSHIP)
+            })
         do {
             _ = try await service.restore(record: record, estimatedTotalBytes: 0, progressHandler: nil)
-            Issue.record("Restore must fail while flags still report noowners")
+            Issue.record("The outside hardlink must stop the restore")
         } catch {
             if rollbackFails {
                 guard case ContainerVolumeMigrator.MigrationError.ownershipRollbackFailed = error else {
@@ -961,11 +1272,17 @@ struct ContainerVolumeMigratorTests {
             let failed = try #require(try workspace.store.transfers().first)
             #expect(failed.recoverableReason == error.localizedDescription)
             #expect(failed.isUnstartedMountRestore)
-            #expect(failed.legacyMountFlags == flags)
+            #expect(failed.originalSourceMountFlags == flags)
         }
-        #expect(runner.commands(prefix: ["-u"]).map { $0[2] } == ["nobrowse,nodev,nosuid,owners", "nobrowse,nodev,nosuid,noowners"])
-        #expect(runner.commands(prefix: ["unmount"]).isEmpty)
+        #expect(runner.commands(prefix: ["-u"]).map { $0[2] } == ["nobrowse,nodev,nosuid,owners"])
+        #expect(runner.commands(prefix: ["unmount"]) == [["unmount", source.path]])
+        var expectedMounts = [["mount", "nobrowse", "-mountPoint", source.path, "-mountOptions", "noowners", record.volumeUUID]]
+        if rollbackFails {
+            expectedMounts.append(["mount", "nobrowse", "-mountPoint", source.path, "-mountOptions", "owners", record.volumeUUID])
+        }
+        #expect(runner.commands(prefix: ["mount"]) == expectedMounts)
         #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        #expect(runner.mountedUUID(at: source) == record.volumeUUID)
         #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("payload".utf8))
     }
 
@@ -1055,7 +1372,9 @@ struct ContainerVolumeMigratorTests {
         }
         let recovery = try #require(try workspace.store.transfers().first)
         #expect(recovery.phase == .needsRecovery)
-        let foreignPath = URL(fileURLWithPath: runner.commands(prefix: ["mount"])[mountCommand - 1][3])
+        let mountCommands = runner.commands(prefix: ["mount"])
+        try #require(mountCommands.indices.contains(mountCommand - 1))
+        let foreignPath = URL(fileURLWithPath: mountCommands[mountCommand - 1][3])
         let original = mountCommand == 1 ? source : URL(fileURLWithPath: try #require(recovery.backupPath))
         #expect(try String(contentsOf: original.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
         #expect(runner.isMounted(foreignPath))
@@ -1130,8 +1449,8 @@ struct ContainerVolumeMigratorTests {
         #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
     }
 
-    @Test("The last volume query cannot make a new cleanup checkpoint accept a missing retained file")
-    func initialCleanupRechecksBackupAfterFinalVolumeQuery() async throws {
+    @Test("The deletion checkpoint cannot authorize a retained file disappearing during that write")
+    func initialCleanupRechecksBackupAfterCheckpoint() async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
         let runner = FakeDiskCommandRunner()
@@ -1142,12 +1461,10 @@ struct ContainerVolumeMigratorTests {
         let transfer = try #require(try workspace.store.transfers().first)
         let backup = URL(fileURLWithPath: try #require(transfer.backupPath))
         let backupIdentity = try DataPathIdentity.capture(backup)
-        // Arm the mutation at the first checkpoint so it fires in the final
-        // asynchronous volume query, after the earlier full-tree verification.
+        // The checkpoint now follows the final volume query and full scan.
+        // There is no suspension between this write and per-object deletion.
         let writer = CleanupCheckpointMutationWriter {
-            runner.mutateBeforeCommand(["info", "-plist", source.path]) {
-                try FileManager.default.removeItem(at: backup.appendingPathComponent("payload.txt"))
-            }
+            try FileManager.default.removeItem(at: backup.appendingPathComponent("payload.txt"))
         }
         let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("container-mounts.plist"),
             writeData: { try writer.write($0, to: $1) })
@@ -1360,10 +1677,13 @@ struct ContainerVolumeMigratorTests {
 
         let result = await workspace.makeMigrator(runner: runner).retryCleanup(warning)
 
-        #expect(result != nil)
+        #expect(result == nil)
         #expect(runner.commands(prefix: ["unmount"]).isEmpty)
         #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
-        #expect(try workspace.store.pendingCleanups().count == 1)
+        #expect(try workspace.store.pendingCleanups().isEmpty)
+        let preserved = try #require(try workspace.store.preservedMaterials().first)
+        #expect(preserved.volumeUUID == record.volumeUUID)
+        #expect(runner.mountedUUID(at: otherPath) == record.volumeUUID)
         #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
     }
 
@@ -1658,7 +1978,7 @@ struct ContainerVolumeMigratorTests {
 
         let outcomes = await migrator.remountAvailableRecords()
 
-        guard case .requiresIntervention(let message)? = outcomes.first?.state else {
+        guard case .failed(let message)? = outcomes.first?.state else {
             Issue.record("期望失败状态，实际 \(String(describing: outcomes.first?.state))")
             return
         }
@@ -1806,7 +2126,7 @@ struct ContainerVolumeMigratorTests {
         #expect(runner.isMounted(source))
         let elevatedMounts = runner.commands(prefix: ["sudo", "mount"])
         #expect(elevatedMounts.count == 2)
-        #expect(elevatedMounts.last == ["sudo", "mount", "nobrowse", "-mountPoint", source.path, "-mountOptions", "owners", record.volumeUUID])
+        #expect(elevatedMounts.last == ["sudo", "mount", "nobrowse", "-mountPoint", source.path, "-mountOptions", "noowners", record.volumeUUID])
         #expect(workspace.store.records().map(\.id) == [record.id])
     }
 
@@ -1830,7 +2150,7 @@ struct ContainerVolumeMigratorTests {
             Issue.record("A privileged mount without a prompt must fail")
         } catch ContainerVolumeMigrator.MigrationError.mountFailed(let mountPoint, let message) {
             let mountArguments = ["mount", "nobrowse", "-mountPoint", mountPoint.path,
-                                  "-mountOptions", "owners", "VOLUME-UUID-disk7s9"]
+                                  "-mountOptions", "noowners", "VOLUME-UUID-disk7s9"]
             #expect(runner.commands(prefix: ["mount"]) == [mountArguments])
             let expectedMessage = String(
                 format: "此系统版本要求管理员权限才能执行磁盘命令，当前环境无法弹出授权框（%@）".localized,
@@ -1894,13 +2214,14 @@ struct ContainerVolumeMigratorTests {
         #expect(runner.isMounted(URL(fileURLWithPath: systemMountPoint)) == false)
     }
 
-    @Test("A volume stuck on its system mount point fails loudly and leaves the container path alone")
-    func reportsFailureWhenSystemMountPointCannotBeDetached() async throws {
+    @Test("A volume stuck on its system mount point fails safely, checking local data first", arguments: [false, true])
+    func reportsFailureWhenSystemMountPointCannotBeDetached(localDataExists: Bool) async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
         let runner = FakeDiskCommandRunner(onlineVolumes: ["AUTO-UUID"])
         let migrator = workspace.makeMigrator(runner: runner)
         let mountPoint = try workspace.makeContainerDirectory(named: "Payload")
+        if !localDataExists { try FileManager.default.removeItem(at: mountPoint.appendingPathComponent("payload.txt")) }
         let systemMountPoint = "/Volumes/AppPorts-com.example.chat-Payload-937e9e"
         runner.markVolumeMounted("AUTO-UUID", at: systemMountPoint)
         runner.failWhen(prefix: ["unmount"])
@@ -1915,13 +2236,21 @@ struct ContainerVolumeMigratorTests {
             try await migrator.mount(record: record)
             Issue.record("卸不掉系统挂载点时不能假装挂载成功")
         } catch ContainerVolumeMigrator.MigrationError.unmountFailed(let url, _) {
+            #expect(!localDataExists)
             #expect(url.path == systemMountPoint)
+        } catch ContainerVolumeMigrator.MigrationError.mountPointNotEmpty(let url) {
+            #expect(localDataExists)
+            #expect(url.path == mountPoint.path)
         }
 
         #expect(runner.commands(prefix: ["mount"]).isEmpty)
         #expect(runner.isMounted(mountPoint) == false)
+        #expect(runner.isMounted(URL(fileURLWithPath: systemMountPoint)))
+        #expect(runner.commands(prefix: ["unmount"]) == (localDataExists ? [] : [["unmount", systemMountPoint]]))
         // 容器路径上的本地数据必须原样保留。
-        #expect(try String(contentsOf: mountPoint.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+        if localDataExists {
+            #expect(try String(contentsOf: mountPoint.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+        }
     }
 
     @Test("Volume names are filesystem safe and carry the application identity")
@@ -2129,7 +2458,7 @@ struct ContainerVolumeMigratorTests {
 
         // Reusing the displayed path cannot borrow the old restore's identity.
         let recordsBeforeReplacement = try workspace.store.transfers()
-        let createsBeforeReplacement = runner.commands(prefix: ["-A"]).count
+        let createsBeforeReplacement = runner.commands(prefix: ["apfs", "addVolume"]).count
         let savedLocal = workspace.rootURL.appendingPathComponent("SavedRestoredData")
         try FileManager.default.moveItem(at: source, to: savedLocal)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: false)
@@ -2143,7 +2472,7 @@ struct ContainerVolumeMigratorTests {
             }
         }
         #expect(try workspace.store.transfers() == recordsBeforeReplacement)
-        #expect(runner.commands(prefix: ["-A"]).count == createsBeforeReplacement)
+        #expect(runner.commands(prefix: ["apfs", "addVolume"]).count == createsBeforeReplacement)
         #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "foreign local object")
         try FileManager.default.removeItem(at: source)
         try FileManager.default.moveItem(at: savedLocal, to: source)
@@ -2242,13 +2571,13 @@ struct ContainerVolumeMigratorTests {
         try FileManager.default.moveItem(at: source, to: source.deletingLastPathComponent().appendingPathComponent("SavedRestoredData"))
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: false)
         try Data("unrelated replacement".utf8).write(to: source.appendingPathComponent("payload.txt"))
-        let creationCount = runner.commands(prefix: ["-A"]).count
+        let creationCount = runner.commands(prefix: ["apfs", "addVolume"]).count
         await #expect(throws: (any Error).self) {
             try await migrator.migrateAndComplete(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
                 appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
         }
         #expect(try workspace.store.transfers() == before)
-        #expect(runner.commands(prefix: ["-A"]).count == creationCount)
+        #expect(runner.commands(prefix: ["apfs", "addVolume"]).count == creationCount)
         #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
         #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "unrelated replacement")
     }
@@ -2377,7 +2706,235 @@ struct ContainerVolumeMigratorTests {
         }
     }
 
+    @Test("A reentrant resume cannot roll back the migration that owns the path")
+    func reentrantResumeDoesNotRecoverAnotherOperation() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "ReentrantResume")
+        let runner = FakeDiskCommandRunner()
+        let migrator = workspace.makeMigrator(runner: runner)
+        let probes = ResumeProbeCount()
+        let result = try await migrator.migrateAndComplete(item: workspace.item(for: source),
+            externalRootURL: workspace.externalRootURL, appName: "Synthetic", bundleIdentifier: nil) { progress in
+                guard progress.currentFile == "正在切换本地入口...".localized else { return }
+                await probes.record()
+                do {
+                    let pending = try #require(try workspace.store.transfers().first)
+                    let commands = runner.calls
+                    do {
+                        _ = try await migrator.resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil)
+                        Issue.record("The already owned path must reject reentrant resume")
+                    } catch {
+                        guard case DataOperationSafety.Failure.occupied(let path) = error else {
+                            Issue.record("Admission error unexpectedly triggered recovery: \(error)"); return
+                        }
+                        #expect(path == source.path)
+                    }
+                    #expect(try workspace.store.transfer(operationID: pending.operationID) == pending)
+                    #expect(runner.calls == commands)
+                } catch { Issue.record("Could not inspect the migration: \(error)") }
+            }
+        #expect(await probes.count == 1)
+        #expect(result.cleanupWarning == nil)
+        #expect(runner.isMounted(source))
+        #expect(try workspace.store.transfers().isEmpty)
+        #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+    }
+
+    private actor ResumeProbeCount {
+        var count = 0
+        func record() { count += 1 }
+    }
+
     /// Scripted diskutil replies only; this runner never invokes a disk command.
+    @Test("Normal migration restores the original entry and removes its unused volume after final mount failure")
+    func normalMigrationAutomaticallyRollsBack() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "AutomaticRollback")
+        let original = try DataPathIdentity.capture(source)
+        let runner = FakeDiskCommandRunner()
+        runner.failWhen(prefix: ["mount", "nobrowse", "-mountPoint", source.path])
+        let migrator = workspace.makeMigrator(runner: runner)
+        await #expect(throws: ContainerVolumeMigrator.AutomaticRecoveryError.self) {
+            try await migrator.migrateAndComplete(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+                appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        }
+        #expect(try DataPathIdentity.capture(source).matchesFilesystemObject(original))
+        #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+        #expect(!runner.isMounted(source))
+        #expect(try workspace.store.recordsStrict().isEmpty)
+        #expect(try workspace.store.transfers().isEmpty)
+        #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+        runner.clearFailure()
+        _ = try await migrator.migrateAndComplete(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+            appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        #expect(runner.isMounted(source))
+    }
+
+    @Test("Cancelling normal migration does not cancel its automatic rollback")
+    func cancelledMigrationKeepsAutomaticRollbackAlive() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "CancelledCopy")
+        let runner = FakeDiskCommandRunner()
+        let migrator = workspace.makeMigrator(runner: runner)
+        let task = Task {
+            try await migrator.migrateAndComplete(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+                appName: "Synthetic", bundleIdentifier: nil) { progress in
+                    if progress.copiedBytes > 0 { withUnsafeCurrentTask { $0?.cancel() } }
+                }
+        }
+        await #expect(throws: (any Error).self) { try await task.value }
+        #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+        #expect(!runner.isMounted(source))
+        #expect(try workspace.store.transfers().isEmpty)
+        #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+    }
+
+    @Test("An unmount failure restores the mount record and ordinary restore can be retried")
+    func normalRestoreAutomaticallyRestoresItsMountRecord() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "RestoreRollback")
+        let uuid = try #require(try DataPathIdentity.capture(source).volumeUUID)
+        let runner = FakeDiskCommandRunner(createdVolumeUUID: uuid)
+        let migrator = workspace.makeMigrator(runner: runner)
+        let migration = try await migrator.migrateAndComplete(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+            appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        runner.failWhen(prefix: ["unmount", source.path])
+        await #expect(throws: ContainerVolumeMigrator.AutomaticRecoveryError.self) {
+            try await migrator.restoreAndComplete(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil)
+        }
+        #expect(runner.mountedUUID(at: source) == uuid)
+        #expect(try workspace.store.recordsStrict() == [migration.record])
+        #expect(try workspace.store.transfers().isEmpty)
+        #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+        runner.clearFailure()
+        #expect(try await migrator.restoreAndComplete(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil) == nil)
+        #expect(!runner.isMounted(source))
+        #expect(try workspace.store.recordsStrict().isEmpty)
+    }
+
+    @Test("An unavailable first transaction does not starve independent automatic recovery")
+    func automaticMaintenanceContinuesAfterUnavailableData() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let first = try workspace.makeContainerDirectory(named: "Unavailable")
+        let second = try workspace.makeContainerDirectory(named: "Recoverable")
+        var attempts: [DataTransferRecord] = []
+        for source in [first, second] {
+            let attempt = DataTransferRecord(mode: .mount, direction: .migrate, sourceID: source.path,
+                appName: "Synthetic", dataDirType: DataDirType.containers.rawValue,
+                originalPath: source.path, activePath: source.path, destinationPath: source.path,
+                sourceIdentity: try DataPathIdentity.capture(source))
+            try workspace.store.beginTransfer(attempt)
+            attempts.append(attempt)
+        }
+        // Model a disconnected/unavailable original without deleting its data.
+        let saved = first.appendingPathExtension("saved")
+        try FileManager.default.moveItem(at: first, to: saved)
+        await workspace.makeMigrator(runner: FakeDiskCommandRunner()).performAutomaticMaintenance()
+        #expect(try workspace.store.transfer(operationID: attempts[0].operationID) != nil)
+        #expect(try workspace.store.transfer(operationID: attempts[1].operationID) == nil)
+        #expect(try String(contentsOf: saved.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+        #expect(try String(contentsOf: second.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+    }
+
+    @Test("Related legacy cleanup cannot prevent restoring live data or delete separate historical material")
+    func legacyCleanupDoesNotBlockRestoringCurrentData() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "LegacyCleanup")
+        let uuid = try #require(try DataPathIdentity.capture(source).volumeUUID)
+        let runner = FakeDiskCommandRunner(createdVolumeUUID: uuid)
+        let migrator = workspace.makeMigrator(runner: runner)
+        let migration = try await migrator.migrateAndComplete(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+            appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        let extra = source.deletingLastPathComponent().appendingPathComponent("OldRestoreStaging")
+        try FileManager.default.createDirectory(at: extra, withIntermediateDirectories: false)
+        try Data("independent old material".utf8).write(to: extra.appendingPathComponent("keep"))
+        try workspace.store.recordMigration(migration.record, cleanup: ContainerCleanupRecord(kind: .migrationBackup,
+            mountRecord: migration.record, localPath: source.path, restoreStagingPath: extra.path))
+        #expect(try await migrator.restoreAndComplete(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil) == nil)
+        #expect(try workspace.store.pendingCleanups().isEmpty)
+        #expect(try String(contentsOf: extra.appendingPathComponent("keep"), encoding: .utf8) == "independent old material")
+        #expect(try workspace.store.recordsForInspection().preservedMaterials.first?.paths == [extra.path])
+        #expect(!runner.isMounted(source))
+    }
+
+    @Test("A foreground migration reconciles an old completed restore without awaiting background maintenance")
+    func legacyRestoreCleanupAllowsNextMigration() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "LegacyRestored")
+        let legacy = workspace.record(mountPoint: source)
+        let cleanup = ContainerCleanupRecord(kind: .restoredVolume, mountRecord: legacy, localPath: source.path)
+        try workspace.store.beginRestore(cleanup)
+        let uuid = try #require(try DataPathIdentity.capture(source).volumeUUID)
+        let runner = FakeDiskCommandRunner(createdVolumeUUID: uuid)
+        let migrator = workspace.makeMigrator(runner: runner)
+        let result = try await migrator.migrateAndComplete(item: workspace.item(for: source),
+            externalRootURL: workspace.externalRootURL, appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        #expect(result.cleanupWarning == nil)
+        #expect(try workspace.store.pendingCleanups().isEmpty)
+        #expect(try workspace.store.preservedMaterials().first?.volumeUUID == legacy.volumeUUID)
+        #expect(runner.isMounted(source))
+        #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+        #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+    }
+
+    @Test("Reusing manifest parsing still reads changed journal bytes and rejects malformed contracts")
+    func manifestParsingNeverCachesTheLedgerOrFilesystem() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "ManifestCache")
+        let runner = FakeDiskCommandRunner()
+        let result = try await workspace.makeMigrator(runner: runner).migrate(item: workspace.item(for: source),
+            externalRootURL: workspace.externalRootURL, appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        let saved = try #require(try workspace.store.transfer(operationID: result.operationID))
+        _ = try workspace.store.transfers() // warm all summaries for these exact bytes
+        _ = try workspace.store.recordsForInspection()
+        let ledger = workspace.rootURL.appendingPathComponent("container-mounts.plist")
+        var document = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: ledger), format: nil) as? [String: Any])
+        var transfers = try #require(document["transfers"] as? [[String: Any]])
+        let encodedBaseline = try #require(saved.sourceBaseline)
+        var manifest = try #require(PropertyListSerialization.propertyList(from: encodedBaseline, format: nil) as? [String: Any])
+        var entries = try #require(manifest["entries"] as? [[String: Any]])
+        entries[0]["resourceFork"] = ["size": -1, "digest": Data(repeating: 0, count: 32)]
+        manifest["entries"] = entries
+        transfers[0]["sourceBaseline"] = try PropertyListSerialization.data(fromPropertyList: manifest, format: .binary, options: 0)
+        document["transfers"] = transfers
+        let changed = try PropertyListSerialization.data(fromPropertyList: document, format: .binary, options: 0)
+        try changed.write(to: ledger)
+        #expect(throws: ContainerMountStore.StoreError.self) { try workspace.store.transfers() }
+        #expect(try workspace.store.recordsForInspection().validationError != nil)
+        await #expect(throws: (any Error).self) {
+            try await workspace.makeMigrator(runner: runner).cleanupRetainedTransfer(operationID: result.operationID)
+        }
+        #expect(try Data(contentsOf: ledger) == changed)
+        let backup = URL(fileURLWithPath: try #require(saved.backupPath))
+        #expect(try String(contentsOf: backup.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+    }
+
+    @Test("Restore links a prior migration whose UUID differs only in case")
+    func restoresCaseInsensitiveMigrationUUID() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "CaseInsensitiveUUID")
+        let uuid = try #require(try DataPathIdentity.capture(source).volumeUUID)
+        let runner = FakeDiskCommandRunner(createdVolumeUUID: uuid)
+        let migrator = workspace.makeMigrator(runner: runner)
+        let migration = try await migrator.migrate(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+            appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        var pending = try #require(try workspace.store.transfer(operationID: migration.operationID))
+        pending.createdVolumeUUID = uuid.lowercased()
+        try workspace.store.updateTransfer(pending)
+        _ = try await migrator.restoreAndComplete(record: migration.record, estimatedTotalBytes: 0, progressHandler: nil)
+        #expect(!runner.isMounted(source))
+        #expect(try String(contentsOf: source.appendingPathComponent("payload.txt"), encoding: .utf8) == "payload")
+    }
+
     private final class VolumeDeletionRunner: ShellCommandRunning, @unchecked Sendable {
         static let volumeUUID = "ABCDEF01-2345-6789-ABCD-0123456789AB"
         private let lock = NSLock()
@@ -2452,6 +3009,7 @@ struct ContainerVolumeMigratorTests {
             availableCapacity: @escaping @Sendable (URL) -> Int64? = { _ in nil },
             mountFlags: @escaping @Sendable (URL) -> UInt32? = { _ in UInt32(MNT_DONTBROWSE) },
             safetyRunner: any ShellCommandRunning = SyntheticNoWritersRunner(),
+            makeMountPointLease: (@Sendable (URL) throws -> any MountPointLeasing)? = nil,
             removeMigrationBackup: @escaping @Sendable (URL) throws -> Void = { try FileCopier.removeCopy(at: $0) },
             synchronizeCleanupParent: @escaping @Sendable (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) }
         ) -> ContainerVolumeMigrator {
@@ -2471,7 +3029,7 @@ struct ContainerVolumeMigratorTests {
                 mountFlags: mountFlags,
                 homeDirectory: rootURL.appendingPathComponent("Home"),
                 safetyRunner: safetyRunner,
-                makeMountPointLease: { try runner.makeMountPointLease(at: $0) },
+                makeMountPointLease: makeMountPointLease ?? { try runner.makeMountPointLease(at: $0) },
                 removeMigrationBackup: removeMigrationBackup,
                 synchronizeCleanupParent: synchronizeCleanupParent
             )

@@ -19,7 +19,7 @@ enum DataMigrationWorkflow {
         }
 
         var confirmationMessage: String {
-            var message = String(format: "将手动重签「%@」。操作只使用一份同卷临时工作包，成功后自动清理旧包，不保存长期原版备份。以后恢复官方状态需要同版本官方原件或重新安装。".localized,
+            var message = String(format: "将重签「%@」。AppPorts 会自动保留仍有恢复价值的官方原包，并在确认恢复官方状态后清理。你可以在应用上使用“恢复原始签名”。".localized,
                 url.lastPathComponent)
             message += "\n\n" + String(format: "临时位置：%@\n预计额外空间：%@（按完整复制预留）。".localized,
                 temporarySpaceRequirement.parentURL.path,
