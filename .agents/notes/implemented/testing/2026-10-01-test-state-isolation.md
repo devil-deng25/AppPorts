@@ -35,7 +35,7 @@ XCTest 下默认/共享记录库落在稳定的进程专属临时目录，测试
 
 ## Related decisions
 
-- 独立宿主、真实卷和性能对照的待入库策略见[隔离 APFS 验证与可比较的性能证据](../../proposed/testing/2026-10-12-apfs-validation-evidence.md)。
+- 独立宿主、真实卷和性能对照的策略见[隔离 APFS 验证与可比较的性能证据](../../implemented/testing/2026-10-12-apfs-validation-evidence.md)。
 
 ## Alternatives considered
 

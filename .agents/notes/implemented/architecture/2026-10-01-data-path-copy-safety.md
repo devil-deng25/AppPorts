@@ -37,11 +37,11 @@ Status: implemented
 
 - 精确结构保护的事故依据见[企业微信复盘：保护容器骨架并保留历史还原](../bug-fix/2026-10-01-wecom-container-integrity.md)。
 - 普通 tmp 后代的结构资格不等于迁移推荐，见[临时目录的结构资格与迁移推荐分开](../../proposed/feature/2026-10-01-temporary-directory-migration-policy.md)。
-- 普通专用卷后续默认见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../proposed/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
+- 普通专用卷的建卷默认见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../implemented/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
 
-- 减少重复核验的后续提案不改变本篇安全目标，见[复用复制验证结果，不用时间戳替代内容证明](../../proposed/simplification/2026-10-12-apfs-verification-reuse.md)。
-- provenance 已提交例外与 MACL 的待入库扩展见[区分系统管理的标签与可移植应用元数据](../../proposed/bug-fix/2026-10-13-system-managed-metadata.md)。
-- FIFO 的待入库支持单独记录，见[复制持久 FIFO 节点，不读取瞬时管道消息](../../proposed/bug-fix/2026-10-14-fifo-copy.md)。
+- 减少重复核验的决定不改变本篇安全目标，见[复用复制验证结果，不用时间戳替代内容证明](../../implemented/simplification/2026-10-12-apfs-verification-reuse.md)。
+- provenance 例外与 MACL 的扩展见[区分系统管理的标签与可移植应用元数据](../../implemented/bug-fix/2026-10-13-system-managed-metadata.md)。
+- FIFO 支持单独记录，见[复制持久 FIFO 节点，不读取瞬时管道消息](../../implemented/bug-fix/2026-10-14-fifo-copy.md)。
 - 源/目标所有权分别解释的已提交兼容见[普通数据复制分别遵守源与目标所有权语义](2026-10-09-data-ownership-compatibility.md)。
 - 显示层不提供执行授权，呈现规则见[容器归属、个人目录链接与大小显示](../feature/2026-10-01-container-ownership-presentation.md)。
 - 专用卷真实所有权的已提交建卷理由见[专用 APFS 卷通过真实所有权保留源元数据](2026-10-01-apfs-owners-volume-creation.md)。

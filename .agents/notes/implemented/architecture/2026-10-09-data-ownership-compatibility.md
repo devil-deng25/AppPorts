@@ -26,7 +26,7 @@ Status: implemented
 
 - 历史主动还原的源/目标根分离见[历史严格还原只映射目标根所有权](../bug-fix/2026-10-02-legacy-volume-restore-ownership.md)。
 
-- 专用 APFS 卷默认的后续选择另记，见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../proposed/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
+- 专用 APFS 卷的建卷默认另记，见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../implemented/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
 - 这是严格复制的所有权兼容维度，其他证明仍由[目录显示、执行权限与严格数据复制分开约束](2026-10-01-data-path-copy-safety.md)。
 
 ## Alternatives considered

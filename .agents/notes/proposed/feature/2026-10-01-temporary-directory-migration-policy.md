@@ -29,7 +29,7 @@ SQLite WAL 的正对照与合成沙盒路径策略各有独立范围；外部软
 - 精确结构与微信例外见[企业微信复盘：保护容器骨架并保留历史还原](../../implemented/bug-fix/2026-10-01-wecom-container-integrity.md)。
 - 通用执行资格见[目录显示、执行权限与严格数据复制分开约束](../../implemented/architecture/2026-10-01-data-path-copy-safety.md)。
 - 统计口径见[容器归属、个人目录链接与大小显示](../../implemented/feature/2026-10-01-container-ownership-presentation.md)。
-- 证据层次见[隔离 APFS 验证与可比较的性能证据](../testing/2026-10-12-apfs-validation-evidence.md)。
+- 证据层次见[隔离 APFS 验证与可比较的性能证据](../../implemented/testing/2026-10-12-apfs-validation-evidence.md)。
 
 ## Alternatives considered
 

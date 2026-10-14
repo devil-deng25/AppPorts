@@ -34,10 +34,10 @@ schema 4 是该根映射字段首次落盘的门槛：归档用真实旧 writer 
 ## Related decisions
 
 - 普通复制两侧语义见[普通数据复制分别遵守源与目标所有权语义](../architecture/2026-10-09-data-ownership-compatibility.md)。
-- 当前本机扩展见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../proposed/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
+- 当前建卷扩展见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../implemented/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
 - 普通旧卷重连与主动还原分开，见[旧容器重连保持原有所有权语义](2026-10-07-legacy-container-remount.md)。
 - 保留链与自动清理见[迁移以持久化切换和可重试清理为完成依据](../architecture/2026-10-10-verified-transfer-lifecycle.md)。
-- provenance 已提交窄例外与后续 MACL 扩展见[区分系统管理的标签与可移植应用元数据](../../proposed/bug-fix/2026-10-13-system-managed-metadata.md)。
+- provenance 已提交窄例外与后续 MACL 扩展见[区分系统管理的标签与可移植应用元数据](../../implemented/bug-fix/2026-10-13-system-managed-metadata.md)。
 
 ## Alternatives considered
 

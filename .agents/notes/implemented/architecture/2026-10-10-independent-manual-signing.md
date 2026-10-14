@@ -23,7 +23,7 @@ Status: implemented
 ## Related decisions
 
 - 诊断及官方恢复引导继续遵守[签名恢复引导必须区分异常与无法检查](../bug-fix/2026-09-26-signature-repair-guidance.md)。
-- 重新保留可恢复原包属于另一个待入库决定，见[保留仍有恢复价值的签名原包](../../proposed/architecture/2026-10-12-recoverable-signature-backups.md)。
+- 重新保留可恢复原包由另一篇决定记录，见[保留仍有恢复价值的签名原包](../../implemented/architecture/2026-10-12-recoverable-signature-backups.md)。
 - 位置迁移的提交、恢复和更新保护锁的归属见[迁移以持久化切换和可重试清理为完成依据](2026-10-10-verified-transfer-lifecycle.md)；签名不得重放旧快照锁或递归清除来源未知的锁。
 
 ## Alternatives considered

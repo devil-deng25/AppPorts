@@ -24,7 +24,7 @@ Foundation 的高优先级 terminationHandler 若通过 DispatchGroup.wait 等�
 
 - 另一个已退出进程被误判超时的机制见[签名探测在启动线程等待并独立计时](2026-10-01-signature-probe-process-wait.md)，不能把两个 Process 修复混为同一根因。
 
-- 命令期限不能被扩大为整个数据恢复的固定总预算，见[由持久化事务自动完成 APFS 恢复与清理](../../proposed/architecture/2026-10-12-apfs-automatic-recovery.md)。
+- 命令期限不能被扩大为整个数据恢复的固定总预算，见[由持久化事务自动完成 APFS 恢复与清理](../../implemented/architecture/2026-10-12-apfs-automatic-recovery.md)。
 
 ## Alternatives considered
 

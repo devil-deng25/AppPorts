@@ -34,7 +34,7 @@ macOS 27.0 / 26A428 的 AppContainer 原函数先比较 Data 与容器父目录�
 - 执行拓扑与复制保全见[目录显示、执行权限与严格数据复制分开约束](../architecture/2026-10-01-data-path-copy-safety.md)。
 - 子目录通过结构检查后的运行时取舍见[临时目录的结构资格与迁移推荐分开](../../proposed/feature/2026-10-01-temporary-directory-migration-policy.md)。
 - 迁移执行者和目标应用权限分开，见[按当前任务进行 APFS 迁移预检](../feature/2026-09-24-apfs-migration-preflight.md)。
-- 各层验证不互相替代，见[隔离 APFS 验证与可比较的性能证据](../../proposed/testing/2026-10-12-apfs-validation-evidence.md)。
+- 各层验证不互相替代，见[隔离 APFS 验证与可比较的性能证据](../../implemented/testing/2026-10-12-apfs-validation-evidence.md)。
 
 ## Alternatives considered
 

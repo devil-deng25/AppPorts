@@ -22,7 +22,7 @@ Status: implemented
 ## Related decisions
 
 - 旧卷的挂载所有权选择见[旧容器重连保持原有所有权语义](2026-10-07-legacy-container-remount.md)。
-- 180 秒等待与已移除的整项恢复总期限分开，见[由持久化事务自动完成 APFS 恢复与清理](../../proposed/architecture/2026-10-12-apfs-automatic-recovery.md)。
+- 180 秒等待与已移除的整项恢复总期限分开，见[由持久化事务自动完成 APFS 恢复与清理](../../implemented/architecture/2026-10-12-apfs-automatic-recovery.md)。
 - 执行者权限与目标应用权限见[按当前任务进行 APFS 迁移预检](../feature/2026-09-24-apfs-migration-preflight.md)。
 
 ## Alternatives considered

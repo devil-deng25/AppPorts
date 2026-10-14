@@ -23,8 +23,8 @@ Status: implemented
 - 主动严格还原的独立条件见[历史严格还原只映射目标根所有权](2026-10-02-legacy-volume-restore-ownership.md)。
 - 重挂触发和实际卷位置证明见[按卷事件重试并核实实际挂载位置](2026-09-23-event-driven-container-remount.md)。
 
-- 本篇仅覆盖窄的旧卷重挂；新默认及更多恢复状态待入库，见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../proposed/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
-- 部分复制与目标权限暴露的后续缺口见[微信事故：检查卸载后的本地入口必须先于卸载](../../proposed/bug-fix/2026-10-12-wechat-mount-recovery.md)。
+- 本篇仅覆盖窄的旧卷重挂；新默认及更多恢复状态另记，见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../implemented/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
+- 部分复制与目标权限暴露的后续缺口见[微信事故：检查卸载后的本地入口必须先于卸载](../../implemented/bug-fix/2026-10-12-wechat-mount-recovery.md)。
 
 ## Alternatives considered
 

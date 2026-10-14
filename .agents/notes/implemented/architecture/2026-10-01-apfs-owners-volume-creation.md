@@ -19,11 +19,11 @@ Status: implemented
 
 这只作用于新专用卷，不启用整个外盘的全局所有权数据库，也不在观察时自动重挂正在使用的旧卷。失败或超时不盲目再次建卷或提升权限。严格历史基线保持其解释，不因复制目标允许所有权投影就抹去源记录的真实身份。
 
-本篇记录 Git 中仍存在的路线；当前主工作区使用系统 diskutil/noowners 的后续变化另记为 proposed，不能把两种建卷决定合成一个现行机制。
+本篇记录专用卷启用所有权时的路线；应用数据后来改用系统 diskutil/noowners 建卷（见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../implemented/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)）。两种建卷决定不合并成一个现行机制。
 
 ## Related decisions
 
-- 系统建卷与 noowners 的相反路线尚待源码入库，见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../proposed/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。
+- 系统建卷与 noowners 的另一条路线见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../implemented/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)；两篇分别记录各自范围。
 - 卷所有权是严格数据复制的一部分，见[目录显示、执行权限与严格数据复制分开约束](2026-10-01-data-path-copy-safety.md)。
 
 ## Alternatives considered

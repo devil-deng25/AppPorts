@@ -35,13 +35,14 @@ Status: implemented
 
 ## Related decisions
 
+- 复制结束后校验与清理的界面反馈见[按真实工作阶段显示进度](../feature/2026-10-14-data-transfer-progress.md)，界面百分比不替代持久化完成事实。
 - 严格旧还原的根映射、同 ID 重试与私有恢复点见[历史严格还原只映射目标根所有权](../bug-fix/2026-10-02-legacy-volume-restore-ownership.md)。
 
 - 位置切换后的列表反馈由[应用列表即时发布与手动大小重测](../bug-fix/2026-09-30-app-list-refresh.md)。
-- 进一步统一自动恢复与内部维护的待入库扩展见[由持久化事务自动完成 APFS 恢复与清理](../../proposed/architecture/2026-10-12-apfs-automatic-recovery.md)。
-- 签名备份的待入库选择不纳入迁移父工作流，见[保留仍有恢复价值的签名原包](../../proposed/architecture/2026-10-12-recoverable-signature-backups.md)。
-- 后台 writer 的身份和登记竞态扩展见[后台写入者准入绑定实际进程与代理签名](../../proposed/bug-fix/2026-10-13-background-writer-identity.md)。
-- 应用本体的原基线一次清理重试扩展见[清理观察失败只按原基线立即重试一次](../../proposed/bug-fix/2026-10-14-cleanup-baseline-retry.md)。
+- 进一步统一自动恢复与内部维护的扩展见[由持久化事务自动完成 APFS 恢复与清理](../../implemented/architecture/2026-10-12-apfs-automatic-recovery.md)。
+- 签名备份的选择不纳入迁移父工作流，见[保留仍有恢复价值的签名原包](../../implemented/architecture/2026-10-12-recoverable-signature-backups.md)。
+- 后台 writer 的身份和登记竞态扩展见[后台写入者准入绑定实际进程与代理签名](../../implemented/bug-fix/2026-10-13-background-writer-identity.md)。
+- 应用本体的原基线一次清理重试扩展见[清理观察失败只按原基线立即重试一次](../../implemented/bug-fix/2026-10-14-cleanup-baseline-retry.md)。
 - 迁移不拥有独立签名副作用，见[迁移与手动签名分离，手动签名只保留临时候选](2026-10-10-independent-manual-signing.md)。
 
 ## Alternatives considered

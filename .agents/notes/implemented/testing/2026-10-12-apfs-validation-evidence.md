@@ -1,6 +1,6 @@
 # Agent Note: 隔离 APFS 验证与可比较的性能证据
 
-Status: proposed
+Status: implemented
 
 > 迁移自 docs/superpowers/reports/2026-10-12-apfs-automatic-recovery-validation.md
 > 迁移自 docs/wechat-incident-2026-10-12.md
@@ -8,13 +8,11 @@ Status: proposed
 > 迁移自 docs/apfs-wechat-validation-2026-10-13.md
 > 迁移自 docs/apfs-cross-app-validation-2026-10-14.md
 
-> 入库状态：本机已有实现与来源报告所述验证，相关源码尚未提交；按已确认的迁移约定暂记 proposed，随对应代码提交再转换。
-
 ## Problem
 
 普通临时目录或镜像成功没有覆盖真实物理盘权限和受 TCC 保护的底层路径。把旧构建测速、单卷卸载、文件散列或测试宿主启动分别当成新构建性能、断电恢复、完整元数据与生产启动证明，会给出错误的交付结论。
 
-## Proposal
+## Decision
 
 测试分为模拟命令故障注入、持久化冷启动回归、独立身份宿主的私有 APFS 镜像，以及获得明确授权的真实应用流程。镜像与卷操作必须核对创建凭据、容器及 UUID，禁用生产记录和代理维护；失败保留现场，清理只针对可证明归属的产物。
 
@@ -30,12 +28,12 @@ Status: proposed
 
 来源的固定镜像对照为 20,000 × 4 KiB 与 4 × 128 MiB，按旧、新、新、旧执行，每版每数据两轮中位数。build 27 已测速，build 28–30 未重测。真实微信 build 27 往返比对使用 38,674 文件的各自正确时间点；10 月 14 日另有多应用验证。
 
-来源保留了容量观测、夹具、签名计时和 build 28 组合运行失败；有些独立重跑通过，有些范围仍未测。`script/isolate_test_host.py`、`script/prepare_apfs_baseline.py`、`script/benchmark_apfs_lifecycle.py`、`script/validate_private_apfs.py` 在当前工作区尚未提交，因此策略实现先记为 proposed。
+来源保留了容量观测、夹具、签名计时和 build 28 组合运行失败；有些独立重跑通过，有些范围仍未测。`script/isolate_test_host.py`、`script/prepare_apfs_baseline.py`、`script/benchmark_apfs_lifecycle.py`、`script/validate_private_apfs.py` 是隔离宿主、基线准备、生命周期测速与私有 APFS 校验的实现入口。
 
 ## Related decisions
 
 - 实际崩溃与系统探针区别见[企业微信复盘：保护容器骨架并保留历史还原](../../implemented/bug-fix/2026-10-01-wecom-container-integrity.md)。
-- 结构资格不代表临时工作流可用，见[临时目录的结构资格与迁移推荐分开](../feature/2026-10-01-temporary-directory-migration-policy.md)。
+- 结构资格不代表临时工作流可用，见[临时目录的结构资格与迁移推荐分开](../../proposed/feature/2026-10-01-temporary-directory-migration-policy.md)。
 
 - 真实权限事故不能由普通镜像成功掩盖，见[微信事故：检查卸载后的本地入口必须先于卸载](../bug-fix/2026-10-12-wechat-mount-recovery.md)。
 - 私有 APFS 宿主隔离叠加在既有记录库与日志防线上，见[测试注入目录还必须隔离记录库和共享日志](../../implemented/testing/2026-10-01-test-state-isolation.md)。
@@ -47,10 +45,8 @@ Status: proposed
 - **混合不同构建、Debug/Release 或只取最快轮次**：报告更简短，但数据不可比较，无法归因于产品改动。
 - **用基础卷 statfs 证明容器回收**：调用简单，来源却观察到卷已删除而统计滞后，应按真实容器身份观测。
 
-## Acceptance criteria
+## Consequences
 
-脚本与隔离入口随代码提交；相同基线可复跑且命令、fixture 身份和失败事实可追溯。模拟、镜像、实际应用、构建与平台分别报告，未执行项不算通过。没有物理断电、Intel、旧系统或真实登录竞态证据时明确留白，之后才转 implemented。
+脚本与隔离入口随代码提交，相同基线可复跑且命令、fixture 身份和失败事实可追溯；模拟、镜像、实际应用、构建与平台分别报告，未执行项不算通过。没有物理断电、Intel、旧系统或真实登录竞态证据时明确留白。
 
-## Risks
-
-镜像位于内部 SSD，吞吐不能外推 USB 外盘。真实业务验证需要独立授权，本篇不是操作用户应用或制造故障的许可。IINA 扩展属性来源、三个应用还原后的原入口 UI、真实魔镜修图与微信官方更新/重装退休等仍有来源已列明的缺口。
+代价与边界：镜像位于内部 SSD，吞吐不能外推 USB 外盘；真实业务验证需要独立授权，本篇不是操作用户应用或制造故障的许可。IINA 扩展属性来源、三个应用还原后的原入口 UI、真实魔镜修图与微信官方更新/重装退休等仍有来源已列明的缺口。
