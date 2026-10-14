@@ -22,7 +22,6 @@ struct DataDirRowView: View {
     var onMount: ((DataDirItem) -> Void)? = nil
     var onUnmount: ((DataDirItem) -> Void)? = nil
     var onMountRestore: ((DataDirItem) -> Void)? = nil
-    var onReviewCopies: ((DataDirItem) -> Void)? = nil
     /// 经典模式：容器目录同时提供符号链接「迁移」
     var classicModeActive: Bool = false
 
@@ -145,7 +144,6 @@ struct DataDirRowView: View {
             onMount: onMount,
             onUnmount: onUnmount,
             onMountRestore: onMountRestore,
-            onReviewCopies: onReviewCopies,
             classicModeActive: classicModeActive
         )
     }
@@ -172,7 +170,6 @@ struct DataDirOperationButtons: View {
     var onMount: ((DataDirItem) -> Void)? = nil
     var onUnmount: ((DataDirItem) -> Void)? = nil
     var onMountRestore: ((DataDirItem) -> Void)? = nil
-    var onReviewCopies: ((DataDirItem) -> Void)? = nil
     /// 经典模式：容器目录同时提供符号链接「迁移」
     var classicModeActive: Bool = false
     /// 行内保留全部直接操作，次要操作使用图标以节省名称空间。
@@ -182,14 +179,10 @@ struct DataDirOperationButtons: View {
     var body: some View {
         if DataDirStatus.mountStatuses.contains(item.status) {
             mountOperationButtons
+        } else if !item.isMigratable, item.hasMountTransferRecord, let onMountRestore {
+            mountRestoreButton(action: onMountRestore)
         } else if item.canRestore && (!item.isMigratable || item.status != DataDirStatus.needsNormalization) {
             restoreButton()
-        } else if !item.isMigratable, item.pathPolicy?.reason == .retainedOriginal, let onReviewCopies {
-            Button { onReviewCopies(item) } label: {
-                Label("副本管理".localized, systemImage: "doc.on.doc")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.borderless)
         } else if !item.isMigratable {
             // 不可迁移的目录：显示禁用按钮 + tooltip
             Image(systemName: "lock.fill")
@@ -335,7 +328,20 @@ struct DataDirOperationButtons: View {
         .help("将数据目录还原到本地".localized)
     }
 
-    /// 挂载迁移项：已挂载可卸载/还原，待挂载可挂载/还原，外置盘未连接时只提示。
+    private func mountRestoreButton(action: @escaping (DataDirItem) -> Void) -> some View {
+        Button(action: { action(item) }) {
+            Label("还原".localized, systemImage: "arrow.uturn.backward.circle.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, inline ? 8 : 10)
+                .padding(.vertical, inline ? 7 : 5)
+                .background(Capsule().fill(Color.orange))
+        }
+        .buttonStyle(.plain)
+        .help("将数据目录还原到本地".localized)
+    }
+
+    /// Keep restore/retrieval reachable even when the source is currently offline.
     @ViewBuilder
     private var mountOperationButtons: some View {
         HStack(spacing: 6) {
@@ -378,20 +384,9 @@ struct DataDirOperationButtons: View {
                     .font(.system(size: 13))
                     .foregroundColor(.red.opacity(0.8))
                     .help("外置盘未连接。连接这块外部存储后会自动接回；如果已经连接仍显示此状态，数据卷可能被改名或删除，请查看挂载迁移文档里的排查步骤".localized)
-            } else if let onMountRestore {
-                Button(action: { onMountRestore(item) }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.uturn.backward.circle.fill")
-                        Text("还原".localized)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, inline ? 8 : 10)
-                    .padding(.vertical, inline ? 7 : 5)
-                    .background(Capsule().fill(Color.orange))
-                }
-                .buttonStyle(.plain)
-                .help("将数据目录还原到本地".localized)
+            }
+            if let onMountRestore {
+                mountRestoreButton(action: onMountRestore)
             }
         }
     }

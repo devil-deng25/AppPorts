@@ -913,6 +913,7 @@ actor DataDirScanner {
                 applyInspectionResult(to: &item, inspection: inspectItem(at: source, type: type), externalRootURL: externalRootURL)
             }
             item.recoveryOperationID = completedRestores[source.path]?.operationID ?? transfer.operationID
+            item.hasMountTransferRecord = item.hasMountTransferRecord || transfer.mode == .mount
             // Retention is a separate housekeeping task after a completed
             // restore. The execution workflow verifies and finishes its lineage
             // before reusing an old destination.

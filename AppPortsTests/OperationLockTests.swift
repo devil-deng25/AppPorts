@@ -136,8 +136,9 @@ final class OperationLockTests: XCTestCase {
 
     // MARK: - 调用点审计
 
-    /// 代理和主应用都必须在操作挂载点之前拿锁，否则两边会抢同一个挂载点。
-    func testEveryContainerMountCallSiteTakesTheCrossProcessLock() throws {
+    /// 调用点静态接线检查；互斥行为由上面的真实锁测试覆盖。
+    /// 这不证明任意控制流下都不能绕过锁。
+    func testContainerMountCallSitesRetainLockAdmissionSourceWiring() throws {
         let root = try repositoryRootURL()
 
         let agentSource = try String(
@@ -212,9 +213,27 @@ final class OperationLockTests: XCTestCase {
             contentsOf: root.appendingPathComponent("AppPorts/ContentView.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(contentViewSource.contains("await operationLock.acquire("))
-        XCTAssertTrue(contentViewSource.contains("let operationLock = OperationLock()"))
+        XCTAssertNotNil(contentViewSource.range(of: #"await\s+OperationMaintenance\.shared\.run\s*\("#, options: .regularExpression))
         XCTAssertFalse(contentViewSource.contains("OperationLock.shared"))
+        let maintenanceSource = try String(
+            contentsOf: root.appendingPathComponent("AppPorts/Services/OperationMaintenance.swift"),
+            encoding: .utf8
+        )
+        let maintenanceStart = try XCTUnwrap(maintenanceSource.range(
+            of: #"private\s+static\s+func\s+finishDataOperations\s*\("#, options: .regularExpression))
+        let maintenance = String(maintenanceSource[maintenanceStart.upperBound...])
+        XCTAssertTrue(maintenance.contains("let lock = OperationLock()"))
+        XCTAssertTrue(maintenance.contains("guard await lock.acquire(timeout: OperationLock.appWaitTimeout) else"))
+        XCTAssertTrue(maintenance.contains("defer { lock.release() }"))
+        XCTAssertFalse(maintenance.contains("OperationLock.shared"))
+        let lockGuard = try XCTUnwrap(maintenance.range(of: "guard await lock.acquire("))
+        for mutation in ["await migrator.performAutomaticMaintenance()", "await migrator.remountAvailableRecords()",
+                         "await DataDirMover().resumeVerifiedTransfer("] {
+            let operation = try XCTUnwrap(maintenance.range(of: mutation))
+            XCTAssertLessThan(lockGuard.lowerBound, operation.lowerBound)
+            XCTAssertTrue(maintenance[lockGuard.upperBound..<operation.lowerBound].contains("return ["),
+                          "Maintenance must stop when another process owns the operation lock")
+        }
     }
 
     private func repositoryRootURL() throws -> URL {

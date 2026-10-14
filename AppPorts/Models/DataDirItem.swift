@@ -255,6 +255,7 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
     var pathPolicy: DataPathPolicy.Decision? = nil
     var hasManagedLinkRecord = false
     var recoveryOperationID: UUID? = nil
+    var hasMountTransferRecord = false
 
     var canRestore: Bool {
         hasManagedLinkRecord || DataDirStatus.mountStatuses.contains(status)

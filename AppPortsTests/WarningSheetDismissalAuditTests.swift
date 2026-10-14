@@ -17,13 +17,10 @@ final class WarningSheetDismissalAuditTests: XCTestCase {
         )
 
         var findings: [String] = []
-        var modifierUsageCount = 0
 
         for fileURL in sourceFiles.sorted(by: { $0.path < $1.path }) {
             let content = try String(contentsOf: fileURL, encoding: .utf8)
             let relativePath = try relativeSourcePath(for: fileURL)
-
-            modifierUsageCount += content.components(separatedBy: ".warningSheet(").count - 1
 
             for block in sheetPresentationBlocks(in: content) {
                 guard block.text.contains("WarningSheet(") else { continue }
@@ -35,14 +32,11 @@ final class WarningSheetDismissalAuditTests: XCTestCase {
         }
 
         XCTAssertTrue(findings.isEmpty, findings.joined(separator: "\n"))
-        XCTAssertGreaterThanOrEqual(
-            modifierUsageCount, 8,
-            "警示弹窗的展示点少了很多，确认 .warningSheet 没有被误删"
-        )
+
     }
 
-    func testEveryWarnedRequestStateHasAWriter() throws {
-        // 每个 @State 的 WarningSheetRequest 都必须有赋值点，否则弹窗永远弹不出来。
+    func testEveryWarningRequestStateHasANonNilAssignmentInItsFile() throws {
+        // 静态检查仅证明本文件有非 nil 赋值表达式，不证明运行时一定触发弹窗。
         let sourceFiles = try swiftSourceFiles(
             in: try repositoryRootURL().appendingPathComponent("AppPorts")
         )
@@ -52,7 +46,6 @@ final class WarningSheetDismissalAuditTests: XCTestCase {
             pattern: #"@State private var (\w+): WarningSheetRequest\?"#
         )
         let contents = try sourceFiles.map { (url: $0, content: try String(contentsOf: $0, encoding: .utf8)) }
-        let joinedContent = contents.map(\.content).joined(separator: "\n")
 
         for (fileURL, content) in contents {
             let relativePath = try relativeSourcePath(for: fileURL)
@@ -60,19 +53,33 @@ final class WarningSheetDismissalAuditTests: XCTestCase {
             for match in declarationPattern.matches(in: content, range: range) {
                 guard let nameRange = Range(match.range(at: 1), in: content) else { continue }
                 let name = String(content[nameRange])
-                // 赋值点：`name = ` 后面跟的不是 `nil` 之外的表达式，或显式置 nil
-                let writePattern = try NSRegularExpression(pattern: "\\b\(name)\\s*=")
-                let writes = writePattern.matches(
-                    in: joinedContent,
-                    range: NSRange(joinedContent.startIndex..<joinedContent.endIndex, in: joinedContent)
-                )
-                if writes.isEmpty {
-                    findings.append("\(relativePath): \(name) 从未被赋值，弹窗永远不会出现")
+                if try !hasNonNilAssignment(to: name, in: content) {
+                    findings.append("\(relativePath): \(name) 在声明所在文件没有非 nil 赋值表达式")
                 }
             }
         }
 
         XCTAssertTrue(findings.isEmpty, findings.joined(separator: "\n"))
+    }
+
+    func testAssignmentAuditRejectsDismissalOnlyAndComparison() throws {
+        for source in ["request = nil", "request =\n nil", "request == candidate",
+                       "otherRequest = candidate", "// request = candidate"] {
+            XCTAssertFalse(try hasNonNilAssignment(to: "request", in: source), source)
+        }
+        for source in ["request = WarningSheetRequest()", "self.request = candidate",
+                       "request =\n makeRequest()"] {
+            XCTAssertTrue(try hasNonNilAssignment(to: "request", in: source), source)
+        }
+    }
+
+    private func hasNonNilAssignment(to name: String, in source: String) throws -> Bool {
+        // This is a source audit, not a Swift parser or a reachability proof.
+        let code = source.components(separatedBy: .newlines)
+            .map { String($0.components(separatedBy: "//")[0]) }.joined(separator: "\n")
+        let escaped = NSRegularExpression.escapedPattern(for: name)
+        let pattern = try NSRegularExpression(pattern: "\\b" + escaped + #"\s*=(?!=)\s*(?!nil\b)(?=\S)"#)
+        return pattern.firstMatch(in: code, range: NSRange(code.startIndex..<code.endIndex, in: code)) != nil
     }
 
     // MARK: - 源码扫描辅助

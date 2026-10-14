@@ -1329,7 +1329,7 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
     }
 
-    func testRetainedMigrationWithoutCompletedRestoreStillRequiresCopyManagement() async throws {
+    func testUnresolvedRetainedMigrationBlocksRemigrationAndRemainsVisible() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }
         let appURL = try createAppBundle(named: "Synthetic.app", bundleID: "com.example.synthetic", in: workspace.appsURL)
