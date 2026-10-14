@@ -15,10 +15,10 @@ private actor VolumeCreationRunner: ShellCommandRunning {
     }
     func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
         calls.append(Invocation(executable: executable, arguments: arguments))
-        if executable == "/sbin/newfs_apfs" {
-            return ShellCommandResult(status: createStatus, standardOutput: Data(), standardError: Data("kDAReturnNotPrivileged: not allowed by the invoking user".utf8), timedOut: timedOut)
+        if executable == DiskUtility.diskutilPath, Array(arguments.prefix(2)) == ["apfs", "addVolume"] {
+            return ShellCommandResult(status: createStatus, standardOutput: Data(), standardError: Data("creation failed".utf8), timedOut: timedOut)
         }
-        let queries = calls.filter { $0.executable == DiskUtility.diskutilPath }.count
+        let queries = calls.filter { Array($0.arguments.prefix(3)) == ["apfs", "list", "-plist"] }.count
         let plist = queries == 1 ? before : after
         return ShellCommandResult(status: 0, standardOutput: try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0), standardError: Data(), timedOut: false)
     }
@@ -43,14 +43,14 @@ struct DiskUtilityCreationTests {
     private func plist(_ volumes: [[String: String]], uuid: String? = nil, reference: String = "disk7") -> [String: any Sendable] {
         ["Containers": [["ContainerReference": reference, "APFSContainerUUID": uuid ?? containerUUID, "Volumes": volumes] as [String: any Sendable]]]
     }
-    @Test func createsOwnedRootUsingOnlyAddModeAndFreshUUID() async throws {
+    @Test func createsVolumeThroughDiskArbitrationAndFreshUUID() async throws {
         let existing = volume(oldUUID, "disk7s1", "NewName") // Name equality never proves creation.
         let runner = VolumeCreationRunner(before: plist([existing]), after: plist([existing, volume(newUUID, "disk7s2", "NewName")]))
         let disk = DiskUtility(runner: runner, administratorRunner: { _, _ in Issue.record("Creation must not invoke administrator fallback"); throw CocoaError(.userCancelled) })
         #expect(try await disk.createAPFSVolume(inContainer: "disk7", name: "NewName") == "disk7s2")
         let calls = await runner.calls
-        #expect(calls.map(\.executable) == [DiskUtility.diskutilPath, "/sbin/newfs_apfs", DiskUtility.diskutilPath])
-        #expect(calls.map(\.arguments) == [["apfs", "list", "-plist", "disk7"], ["-A", "-w", "-U", String(getuid()), "-G", String(getgid()), "-v", "NewName", "disk7"], ["apfs", "list", "-plist", "disk7"]])
+        #expect(calls.map(\.executable) == [DiskUtility.diskutilPath, DiskUtility.diskutilPath, DiskUtility.diskutilPath])
+        #expect(calls.map(\.arguments) == [["apfs", "list", "-plist", "disk7"], ["apfs", "addVolume", "disk7", "APFS", "NewName", "-nomount"], ["apfs", "list", "-plist", "disk7"]])
     }
     @Test(arguments: ["same-name-only", "two-new", "changed-container", "wrong-name", "reused-device", "missing-old"])
     func refusesAmbiguousOrReboundCreation(_ scenario: String) async throws {
@@ -63,7 +63,7 @@ struct DiskUtilityCreationTests {
         if scenario == "missing-old" { after.removeFirst() }
         let runner = VolumeCreationRunner(before: plist([old]), after: plist(after, uuid: scenario == "changed-container" ? UUID().uuidString : nil))
         await #expect(throws: (any Error).self) { try await DiskUtility(runner: runner, administratorRunner: nil).createAPFSVolume(inContainer: "disk7", name: "NewName") }
-        #expect(await runner.calls.filter { $0.executable == "/sbin/newfs_apfs" }.count == 1)
+        #expect(await runner.calls.filter { Array($0.arguments.prefix(2)) == ["apfs", "addVolume"] }.count == 1)
     }
     @Test func rejectsWrongContainerBeforeCreation() async throws {
         let runner = VolumeCreationRunner(before: plist([], reference: "disk8"), after: plist([]))
@@ -81,7 +81,7 @@ struct DiskUtilityCreationTests {
         let disk = DiskUtility(runner: runner, administratorRunner: { _, _ in Issue.record("Failed creation must not retry as administrator"); throw CocoaError(.userCancelled) })
         await #expect(throws: (any Error).self) { try await disk.createAPFSVolume(inContainer: "disk7", name: "NewName") }
         let calls = await runner.calls
-        #expect(calls.filter { $0.executable == "/sbin/newfs_apfs" }.count == 1)
+        #expect(calls.filter { Array($0.arguments.prefix(2)) == ["apfs", "addVolume"] }.count == 1)
         #expect(calls.count == 2)
     }
 }

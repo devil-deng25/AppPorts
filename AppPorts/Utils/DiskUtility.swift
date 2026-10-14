@@ -33,8 +33,8 @@ struct ShellCommandProcessReference: Codable, Equatable, Sendable {
 struct ShellCommandUnconfirmedTermination: LocalizedError, Sendable {
     let process: ShellCommandProcessReference
     var errorDescription: String? {
-        "命令已请求停止，但尚未确认进程退出。临时副本已保留，请稍后从副本页继续清理（进程：".localized
-            + String(process.processIdentifier) + "）。"
+        "后台命令尚未确认退出，AppPorts 会在其结束后自动继续处理。进程：".localized
+            + String(process.processIdentifier)
     }
 }
 
@@ -234,8 +234,8 @@ struct DiskUtility: Sendable {
     private let commandTimeout: TimeInterval
     private let administratorRunner: AdministratorRunner?
 
-    /// - Parameter administratorRunner: 旧系统（macOS 12 等）的 DiskArbitration 不允许普通用户把卷挂到
-    ///   自定义路径（`kDAReturnNotPrivileged`）。遇到这类失败时用它重试；传 nil 表示不能提权（后台代理）。
+    /// - Parameter administratorRunner: diskutil 或还原时的 mount -u 被权限检查拒绝后，用它重试一次。
+    ///   传 nil 表示不能弹出管理员授权框（后台代理）。
     init(
         runner: ShellCommandRunning = ProcessCommandRunner(),
         commandTimeout: TimeInterval = 180,
@@ -296,20 +296,18 @@ struct DiskUtility: Sendable {
 
     // MARK: 卷操作
 
-    /// Add a volume with an actual user-owned root so an owners-enabled mount
-    /// can preserve source uid/gid. diskutil addVolume creates a root-owned root.
-    /// A timed-out or failed creation is never retried: it may already have run.
+    /// Use DiskArbitration's normal add-volume operation, as in 1.9.0.
+    /// Direct newfs_apfs access works on user-attached images but requires raw
+    /// device privileges on physical disks. Application data uses noowners.
     func createAPFSVolume(inContainer container: String, name: String) async throws -> String {
         guard container.range(of: #"^disk[0-9]+$"#, options: .regularExpression) != nil,
               !name.isEmpty else {
-            throw Failure.unexpectedOutput(command: "newfs_apfs add volume", output: "Invalid container or volume name")
+            throw Failure.unexpectedOutput(command: "diskutil apfs addVolume", output: "Invalid container or volume name")
         }
         let before = try await creationContainer(container)
-        let arguments = ["-A", "-w", "-U", String(getuid()), "-G", String(getgid()), "-v", name, container]
-        let command = "newfs_apfs " + arguments.joined(separator: " ")
-        let result = try await runner.run(executable: "/sbin/newfs_apfs", arguments: arguments, timeout: commandTimeout)
-        if result.timedOut { throw Failure.timedOut(command: command) }
-        guard result.status == 0 else { throw Failure.commandFailed(command: command, output: result.combinedText) }
+        let arguments = ["apfs", "addVolume", container, "APFS", name, "-nomount"]
+        let command = "diskutil " + arguments.joined(separator: " ")
+        _ = try await run(arguments)
         let after = try await creationContainer(container)
         let previousUUIDs = Set(before.volumes.map(\.uuid))
         let currentUUIDs = Set(after.volumes.map(\.uuid))
@@ -392,6 +390,23 @@ struct DiskUtility: Sendable {
         return container.volumes.contains(volumeUUID.uppercased())
     }
 
+    /// An unsuccessful creator may leave no volume at all. Proving absence in
+    /// the original, online container ends that intent; a name never authorizes
+    /// deleting or adopting an existing volume.
+    func hasAPFSVolume(named name: String, inContainerUUID containerUUID: String) async throws -> Bool {
+        let plist = try await runPlist(["apfs", "list", "-plist"])
+        guard let containers = plist["Containers"] as? [[String: Any]] else {
+            throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Missing APFS containers")
+        }
+        let matches = containers.filter { ($0["APFSContainerUUID"] as? String)?.caseInsensitiveCompare(containerUUID) == .orderedSame }
+        guard matches.count == 1, let container = matches.first,
+              let volumes = container["Volumes"] as? [[String: Any]],
+              volumes.allSatisfy({ $0["Name"] is String && $0["APFSVolumeUUID"] is String }) else {
+            throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Creation container is offline or unreadable")
+        }
+        return volumes.contains { $0["Name"] as? String == name }
+    }
+
     private func apfsCleanupInventory() async throws -> [(uuid: String, volumes: Set<String>)] {
         let plist = try await runPlist(["apfs", "list", "-plist"])
         guard let values = plist["Containers"] as? [[String: Any]] else {
@@ -416,9 +431,10 @@ struct DiskUtility: Sendable {
         }
     }
 
-    func mount(volume: String, at mountPoint: URL, requireOwnership: Bool = false) async throws {
+    func mount(volume: String, at mountPoint: URL, requireOwnership: Bool = false, readOnly: Bool = false) async throws {
         let options = ["-mountOptions", requireOwnership ? "owners" : "noowners"]
-        _ = try await run(["mount", "nobrowse", "-mountPoint", mountPoint.path] + options + [volume])
+        _ = try await run(["mount"] + (readOnly ? ["readOnly"] : [])
+            + ["nobrowse", "-mountPoint", mountPoint.path] + options + [volume])
     }
 
     /// Explicit restore only. Keep Finder/safety flags while enabling real ownership.
@@ -426,11 +442,7 @@ struct DiskUtility: Sendable {
         let flags = enabled ? originalFlags & ~UInt32(MNT_IGNORE_OWNERSHIP) : originalFlags
         var options = Self.updateOptions(addingNobrowseTo: flags)
         if enabled { options += ",owners" }
-        let result = try await runner.run(executable: Self.mountPath,
-            arguments: ["-u", "-o", options, mountPoint.path], timeout: commandTimeout)
-        guard result.status == 0, !result.timedOut else {
-            throw Failure.commandFailed(command: "mount ownership update", output: result.combinedText)
-        }
+        _ = try await run(["-u", "-o", options, mountPoint.path], executable: Self.mountPath)
     }
 
     /// 给早期版本挂上、没带 `nobrowse` 的卷补上这个选项，不用卸载。
@@ -605,11 +617,11 @@ struct DiskUtility: Sendable {
     // MARK: 私有辅助
 
     @discardableResult
-    private func run(_ arguments: [String]) async throws -> ShellCommandResult {
-        let command = "diskutil " + arguments.joined(separator: " ")
-        var result = try await runner.run(executable: Self.diskutilPath, arguments: arguments, timeout: commandTimeout)
+    private func run(_ arguments: [String], executable: String = Self.diskutilPath) async throws -> ShellCommandResult {
+        let command = URL(fileURLWithPath: executable).lastPathComponent + " " + arguments.joined(separator: " ")
+        var result = try await runner.run(executable: executable, arguments: arguments, timeout: commandTimeout)
         AppLogger.shared.logContext(
-            "diskutil 执行完成",
+            "磁盘命令执行完成",
             details: [
                 ("command", command),
                 ("status", String(result.status)),
@@ -621,28 +633,34 @@ struct DiskUtility: Sendable {
         if result.timedOut {
             throw Failure.timedOut(command: command)
         }
-        if result.status != 0, Self.indicatesPrivilegeFailure(result.combinedText) {
-            // 旧系统的 DiskArbitration 只允许 root 使用自定义挂载点；请求管理员权限后重试一次。
+        // mount_apfs reports EX_NOPERM (77), rather than DiskArbitration's
+        // kDAReturnNotPrivileged. Only mount accepts these POSIX diagnostics.
+        let mountPermissionDenied = executable == Self.mountPath
+            && (result.status == 77 || result.combinedText.localizedCaseInsensitiveContains("Operation not permitted")
+                || result.combinedText.localizedCaseInsensitiveContains("Permission denied"))
+        if result.status != 0, Self.indicatesPrivilegeFailure(result.combinedText) || mountPermissionDenied {
+            try Task.checkCancellation()
             guard let administratorRunner else {
                 AppLogger.shared.logContext(
-                    "diskutil 需要管理员权限，但当前环境无法提权",
+                    "磁盘命令需要管理员权限，但当前环境无法提权",
                     details: [("command", command)],
                     level: "WARN"
                 )
                 throw Failure.privilegeRequired(command: command)
             }
             AppLogger.shared.logContext(
-                "diskutil 被 DiskArbitration 拒绝，改用管理员权限重试",
+                "磁盘命令被权限检查拒绝，改用管理员权限重试",
                 details: [("command", command)],
                 level: "WARN"
             )
-            result = try administratorRunner(Self.diskutilPath, arguments)
+            result = try administratorRunner(executable, arguments)
             AppLogger.shared.logContext(
-                "diskutil（管理员权限）执行完成",
+                "磁盘命令（管理员权限）执行完成",
                 details: [("command", command), ("status", String(result.status)), ("output", String(result.combinedText.prefix(2000)))],
                 level: "TRACE"
             )
         }
+        if result.timedOut { throw Failure.timedOut(command: command) }
         guard result.status == 0 else {
             throw Failure.commandFailed(command: command, output: result.combinedText)
         }
