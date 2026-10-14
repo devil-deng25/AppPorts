@@ -43,7 +43,7 @@ enum WriterAdmissionError: LocalizedError {
 /// for live writers, not a schema/version gate or an operation journal. A stale
 /// registration cannot authorize a reused PID or another data directory.
 final class WriterAdmission {
-    static let requiredCapability = "appports-verified-writer-v3"
+    static let requiredCapability = "appports-verified-writer-v4"
     static var defaultDataDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AppPorts", isDirectory: true)
@@ -53,13 +53,19 @@ final class WriterAdmission {
     private let dataDirectory: URL
     private let currentProcess: () throws -> WriterProcessIdentity
     private let processSnapshot: () throws -> [WriterProcessIdentity]
+    private let clock: () -> TimeInterval
+    private let waitForRegistration: (TimeInterval) -> Void
 
     init(dataDirectory: URL,
          currentProcess: @escaping () throws -> WriterProcessIdentity = { try currentProcessIdentity() },
-         processSnapshot: @escaping () throws -> [WriterProcessIdentity] = { try runningAppPortsProcesses() }) {
+         processSnapshot: @escaping () throws -> [WriterProcessIdentity] = { try runningAppPortsProcesses() },
+         clock: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
+         waitForRegistration: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
         self.dataDirectory = Self.canonical(dataDirectory)
         self.currentProcess = currentProcess
         self.processSnapshot = processSnapshot
+        self.clock = clock
+        self.waitForRegistration = waitForRegistration
     }
 
     /// Called before main/--mount-agent startup. XCTest uses injected datasets
@@ -96,26 +102,49 @@ final class WriterAdmission {
     }
 
     func checkCurrentWriters() throws {
-        let processes = try processSnapshot()
-        let current = try currentProcess()
-        guard processes.contains(current) else {
-            throw WriterAdmissionError.inspectionFailed(current.processID, "进程列表中缺少当前写入实例".localized)
-        }
-        for process in processes {
-            let presence: WriterPresence
-            do { presence = try readPresence(processID: process.processID) }
-            catch {
-                throw WriterAdmissionError.incompatibleWriter(process, "该运行实例没有可验证的写入能力登记".localized)
+        var registrationRetries = 0
+        while true {
+            let processes = try processSnapshot()
+            let current = try currentProcess()
+            guard processes.contains(current) else {
+                throw WriterAdmissionError.inspectionFailed(current.processID, "进程列表中缺少当前写入实例".localized)
             }
-            guard presence.process == process else {
-                throw WriterAdmissionError.incompatibleWriter(process, "登记与当前进程身份或启动时间不符".localized)
+            var pending: (process: WriterProcessIdentity, reason: String)?
+            for process in processes {
+                let presence: WriterPresence
+                do { presence = try readPresence(processID: process.processID) }
+                catch {
+                    pending = (process, "该运行实例没有可验证的写入能力登记".localized)
+                    break
+                }
+                guard presence.process == process else {
+                    pending = (process, "登记与当前进程身份或启动时间不符".localized)
+                    break
+                }
+                guard presence.dataDirectoryPath == dataDirectory.path else {
+                    throw WriterAdmissionError.incompatibleWriter(process, "登记属于另一个数据目录".localized)
+                }
+                guard presence.capabilities.contains(Self.requiredCapability) else {
+                    throw WriterAdmissionError.incompatibleWriter(process, "该运行实例不支持当前安全写入约定".localized)
+                }
             }
-            guard presence.dataDirectoryPath == dataDirectory.path else {
-                throw WriterAdmissionError.incompatibleWriter(process, "登记属于另一个数据目录".localized)
-            }
-            guard presence.capabilities.contains(Self.requiredCapability) else {
-                throw WriterAdmissionError.incompatibleWriter(process, "该运行实例不支持当前安全写入约定".localized)
-            }
+            guard let pending else { return }
+            let failure = WriterAdmissionError.incompatibleWriter(pending.process, pending.reason)
+            guard registrationRetries < 40 else { throw failure }
+            registrationRetries += 1
+
+            // A launchd agent is visible to libproc before its Swift entry point
+            // publishes its presence. Recheck the live identity and allow that
+            // registration to settle; never infer capability from its file path.
+            // An agent that exited during inspection is no longer a writer.
+            guard try processSnapshot().contains(pending.process) else { continue }
+            let started = Double(pending.process.startSeconds)
+                + Double(pending.process.startMicroseconds) / 1_000_000
+            let age = clock() - started
+            guard age >= 0, age < 1 else { throw failure }
+            waitForRegistration(min(0.025, 1 - age))
+            // No write has been admitted. The next pass validates every live
+            // instance again, including any PID reuse or newly started writer.
         }
     }
 
@@ -172,23 +201,33 @@ final class WriterAdmission {
     /// libproc also sees an executable launched directly as --mount-agent; a
     /// list of GUI applications alone would miss that writer. Bundle identity
     /// is used only to recognize candidates, never to infer their capability.
-    static func runningAppPortsProcesses() throws -> [WriterProcessIdentity] {
-        let pids = try currentUserProcessIDs()
+    static func runningAppPortsProcesses(processIDs: [Int32]? = nil,
+        inspect: ((Int32) -> (proc_bsdinfo?, String?))? = nil) throws -> [WriterProcessIdentity] {
+        let pids = try processIDs ?? currentUserProcessIDs()
         var result: [WriterProcessIdentity] = []
         for pid in pids {
             var info = proc_bsdinfo()
             let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-            let infoResult = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size)
+            let infoResult: Int32
+            let path: String?
+            if let inspect {
+                let observed = inspect(pid)
+                if let value = observed.0 { info = value; infoResult = size } else { infoResult = 0 }
+                path = observed.1
+            } else {
+                infoResult = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size)
+                path = executablePath(processID: pid)
+            }
             if infoResult != size, processHasExited(pid) { continue }
-            let path = executablePath(processID: pid)
             let name = withUnsafeBytes(of: info.pbi_name) { bytes in
                 String(decoding: bytes.prefix(while: { $0 != 0 }), as: UTF8.self)
             }
             let namedAppPorts = name.caseInsensitiveCompare("AppPorts") == .orderedSame
             let relevant = pid == getpid() || namedAppPorts || path.map(isAppPortsExecutable) == true
-            if path == nil, infoResult != size {
-                throw WriterAdmissionError.inspectionFailed(pid, "内核进程信息暂不可读".localized)
-            }
+            // Unrelated processes can exit or become unreadable between the
+            // UID list and libproc calls. Only identified AppPorts candidates
+            // participate in writer admission; unknown system activity must
+            // not abort a transfer or prevent its journal from being saved.
             guard relevant else { continue }
             guard infoResult == size, let path else {
                 if processHasExited(pid) { continue }

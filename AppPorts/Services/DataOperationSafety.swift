@@ -7,6 +7,8 @@ import Foundation
 struct DataOperationSafety: Sendable {
     enum Failure: LocalizedError {
         case protectedPath(String), conflict(String), occupied(String), inspection(String)
+        case writers(String, [String])
+        case accessDenied(String)
         var errorDescription: String? {
             switch self {
             case .protectedPath(let path):
@@ -17,6 +19,11 @@ struct DataOperationSafety: Sendable {
                 return String(format: "相关应用或进程仍在使用数据，请退出后重试：%@".localized, path)
             case .inspection(let path):
                 return String(format: "无法完成数据安全检查，已停止操作并保留数据：%@".localized, path)
+            case .writers(let path, let processes):
+                return String(format: "以下进程正在写入数据，请退出后继续：%@\n%@".localized,
+                    processes.joined(separator: "、"), path)
+            case .accessDenied(let path):
+                return "AppPorts 暂时无法访问这个位置，请在系统设置中检查访问权限，然后继续：".localized + path
             }
         }
     }
@@ -98,26 +105,94 @@ struct DataOperationSafety: Sendable {
     /// Read-only observation, not a lock against future writers. Checks run again
     /// before switching/cleanup; verified originals remain retained afterwards.
     func requireNoKnownWriters(at url: URL, bundleIdentifier: String? = nil) async throws {
-        if let bundleIdentifier, !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty {
-            throw Failure.occupied(url.path)
-        }
+        try requireApplicationStopped(at: url, bundleIdentifier: bundleIdentifier)
         var info = stat()
         guard lstat(url.path, &info) == 0 else {
             if errno == ENOENT { return }
+            if errno == EACCES || errno == EPERM { throw Failure.accessDenied(url.path) }
             throw Failure.inspection(url.path)
         }
         let directory = info.st_mode & S_IFMT == S_IFDIR
         let result = try await runner.run(executable: "/usr/sbin/lsof",
-            arguments: ["-nP", "-F", "p"] + (directory ? ["+D", url.path] : ["--", url.path]), timeout: 30)
+            arguments: ["-nP", "-F", "pcfa"] + (directory ? ["+D", url.path] : ["--", url.path]), timeout: 30)
+        let diagnostic = result.stderrText.lowercased()
+        if diagnostic.contains("permission denied") || diagnostic.contains("operation not permitted") {
+            throw Failure.accessDenied(url.path)
+        }
         guard !result.timedOut, [0, 1].contains(result.status), result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw Failure.inspection(url.path)
         }
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let processes = result.stdoutText.split(separator: "\n").compactMap { line -> Int32? in
-            guard line.first == "p" else { return nil }
-            return Int32(line.dropFirst())
+        let writers = Self.writingProcesses(in: result.stdoutText, ownPID: ProcessInfo.processInfo.processIdentifier)
+        guard writers.isEmpty else { throw Failure.writers(url.path, writers) }
+    }
+
+    /// A leased empty, locked mount point has no data tree to enumerate. Its
+    /// lease guards the directory while this check guards the associated app.
+    func requireApplicationStopped(at url: URL, bundleIdentifier: String?) throws {
+        if let bundleIdentifier, !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty {
+            throw Failure.occupied(url.path)
         }
-        guard processes.allSatisfy({ $0 == ownPID }) else { throw Failure.occupied(url.path) }
+    }
+
+    /// A mounted external root can be readable even when TCC denies its local
+    /// container parent. Prove that the parent can be opened before removing
+    /// the overlay; statfs/lstat of the mounted root cannot prove this access.
+    func requireMountPointParentAccess(at url: URL) throws {
+        let parent = url.deletingLastPathComponent()
+        func failure() -> Failure {
+            errno == EACCES || errno == EPERM ? .accessDenied(parent.path) : .inspection(parent.path)
+        }
+        let descriptor = open(parent.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw failure() }
+        guard let directory = fdopendir(descriptor) else {
+            let error = failure()
+            close(descriptor)
+            throw error
+        }
+        defer { closedir(directory) }
+        // One entry is enough to exercise directory access. Do not rescan the
+        // application's data or enumerate the entire parent for this preflight.
+        errno = 0
+        _ = readdir(directory)
+        guard errno == 0 else { throw failure() }
+    }
+
+    /// Access fields belong to individual descriptors, not to the process.
+    /// Unknown file access remains conservative; executable/cwd handles and
+    /// explicit read-only descriptors do not imply that data is being written.
+    static func writingProcesses(in output: String, ownPID: Int32) -> [String] {
+        var pid: Int32?, name: String?, descriptor: String?, access: String?
+        var sawDescriptor = false, writes = false
+        var result: [String] = []
+        func finishDescriptor() {
+            guard let descriptor else { return }
+            if access == "r" { return }
+            if access == "w" || access == "u" { writes = true; return }
+            if !["cwd", "rtd", "txt"].contains(descriptor) { writes = true }
+        }
+        func finishProcess() {
+            finishDescriptor()
+            if let pid, pid != ownPID, writes || !sawDescriptor {
+                result.append(name.map { "\($0) (\(pid))" } ?? String(pid))
+            }
+        }
+        for line in output.split(separator: "\n") {
+            let value = String(line.dropFirst())
+            switch line.first {
+            case "p":
+                finishProcess()
+                pid = Int32(value); name = nil; descriptor = nil; access = nil
+                sawDescriptor = false; writes = false
+            case "c": name = value
+            case "f":
+                finishDescriptor()
+                descriptor = value; access = nil; sawDescriptor = true
+            case "a": access = value
+            default: break
+            }
+        }
+        finishProcess()
+        return result
     }
 
     /// Legacy symlinks predate the index. A managed ancestor still blocks child
@@ -159,6 +234,7 @@ struct DataOperationSafety: Sendable {
         var root = stat()
         guard lstat(url.path, &root) == 0 else {
             if errno == ENOENT { return }
+            if errno == EACCES || errno == EPERM { throw Failure.accessDenied(url.path) }
             throw Failure.inspection(url.path)
         }
         guard root.st_mode & S_IFMT == S_IFDIR else { return }
@@ -167,7 +243,10 @@ struct DataOperationSafety: Sendable {
             errorHandler: { _, error in enumerationError = error; return false }) else { throw Failure.inspection(url.path) }
         for case let child as URL in enumerator {
             var info = stat()
-            guard lstat(child.path, &info) == 0 else { throw Failure.inspection(child.path) }
+            guard lstat(child.path, &info) == 0 else {
+                if errno == EACCES || errno == EPERM { throw Failure.accessDenied(child.path) }
+                throw Failure.inspection(child.path)
+            }
             guard info.st_dev == root.st_dev else { throw Failure.conflict(child.path) }
             if info.st_mode & S_IFMT == S_IFLNK {
                 enumerator.skipDescendants()
@@ -179,6 +258,6 @@ struct DataOperationSafety: Sendable {
                 }
             }
         }
-        if enumerationError != nil { throw Failure.inspection(url.path) }
+        if let enumerationError { throw enumerationError }
     }
 }

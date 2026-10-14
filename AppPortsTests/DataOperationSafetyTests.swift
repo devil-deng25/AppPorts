@@ -4,6 +4,19 @@ import Testing
 
 @Suite("Data operation execution safety")
 struct DataOperationSafetyTests {
+    @Test("Read-only descriptors do not count as writers; writable and unknown descriptors do", arguments: [
+        ("p987\ncIndexer\nf3\nar\n", false),
+        ("p987\ncReader\nfcwd\na \nf3\nar\n", false),
+        ("p987\ncWriter\nf3\nar\nf4\nau\n", true),
+        ("p987\ncWriter\nf3\naw\n", true),
+        ("p987\ncUnknown\nf3\n", true),
+        ("p987\n", true)
+    ])
+    func descriptorAccess(value: (String, Bool)) {
+        #expect(!DataOperationSafety.writingProcesses(in: value.0, ownPID: 123).isEmpty == value.1)
+        #expect(DataOperationSafety.writingProcesses(in: value.0, ownPID: 987).isEmpty)
+    }
+
     private static let locked = ["", "Data", "Data/Documents", "Data/Library", "Data/Library/Application Scripts",
         "Data/Library/Application Support", "Data/Library/Caches", "Data/Library/Images", "Data/Library/Logs",
         "Data/Library/Preferences", "Data/Library/Saved Application State", "Data/SystemData", "Data/tmp"]

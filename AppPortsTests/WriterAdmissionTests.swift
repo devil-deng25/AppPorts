@@ -3,6 +3,21 @@ import XCTest
 @testable import AppPorts
 
 final class WriterAdmissionTests: XCTestCase {
+    func testUnreadableUnrelatedProcessDoesNotAbortAValidWriter() throws {
+        let current = try WriterAdmission.currentProcessIdentity()
+        let other = getppid()
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        XCTAssertEqual(proc_pidinfo(getpid(), PROC_PIDTBSDINFO, 0, &info, size), size)
+        let snapshot = try WriterAdmission.runningAppPortsProcesses(processIDs: [getpid(), other]) { pid in
+            pid == getpid() ? (info, current.executablePath) : (nil, nil)
+        }
+        XCTAssertEqual(snapshot, [current])
+        XCTAssertThrowsError(try WriterAdmission.runningAppPortsProcesses(processIDs: [getpid(), other]) { pid in
+            pid == getpid() ? (info, current.executablePath) : (nil, "/synthetic/AppPorts.app/Contents/MacOS/AppPorts")
+        }, "An identified AppPorts writer still requires a readable identity")
+    }
+
     private final class Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("WriterAdmissionTests-" + UUID().uuidString)
         let current = WriterProcessIdentity(processID: 101, userID: getuid(), startSeconds: 1,
@@ -33,6 +48,75 @@ final class WriterAdmissionTests: XCTestCase {
         XCTAssertThrowsError(try main.checkCurrentWriters())
         try fixture.admission(as: fixture.other).registerCurrentProcess()
         XCTAssertNoThrow(try main.checkCurrentWriters())
+    }
+
+    func testStartingAgentCanPublishItsPresenceBeforeAdmission() throws {
+        let fixture = Fixture()
+        fixture.processes.append(fixture.other)
+        var now = 2.020020
+        var waits = 0
+        let admission = WriterAdmission(dataDirectory: fixture.directory,
+            currentProcess: { fixture.current }, processSnapshot: { fixture.processes },
+            clock: { now }, waitForRegistration: { interval in
+                now += interval
+                waits += 1
+                if waits == 2 {
+                    do { try fixture.admission(as: fixture.other).registerCurrentProcess() }
+                    catch { XCTFail("Agent registration failed: \(error)") }
+                }
+            })
+        try admission.registerCurrentProcess()
+        XCTAssertNoThrow(try admission.checkCurrentWriters())
+        XCTAssertEqual(waits, 2)
+    }
+
+    func testAgentExitingBetweenSnapshotAndPresenceReadDoesNotBlock() throws {
+        let fixture = Fixture()
+        var snapshots = 0
+        let admission = WriterAdmission(dataDirectory: fixture.directory,
+            currentProcess: { fixture.current }, processSnapshot: {
+                snapshots += 1
+                return snapshots == 1 ? [fixture.current, fixture.other] : [fixture.current]
+            }, waitForRegistration: { _ in XCTFail("An exited agent needs no startup wait") })
+        try admission.registerCurrentProcess()
+        XCTAssertNoThrow(try admission.checkCurrentWriters())
+        XCTAssertGreaterThanOrEqual(snapshots, 3)
+    }
+
+    func testStartingUnregisteredWriterRemainsRejectedAfterBoundedWait() throws {
+        let fixture = Fixture()
+        fixture.processes.append(fixture.other)
+        var now = 2.020020
+        var waits = 0
+        let admission = WriterAdmission(dataDirectory: fixture.directory,
+            currentProcess: { fixture.current }, processSnapshot: { fixture.processes },
+            clock: { now }, waitForRegistration: { interval in now += interval; waits += 1 })
+        try admission.registerCurrentProcess()
+        XCTAssertThrowsError(try admission.checkCurrentWriters())
+        XCTAssertGreaterThan(waits, 0)
+        XCTAssertLessThanOrEqual(waits, 40)
+        XCTAssertLessThanOrEqual(now, 3.020020)
+    }
+
+    func testReusedPIDMustPublishTheNewIdentityBeforeAdmission() throws {
+        let fixture = Fixture()
+        let stale = WriterProcessIdentity(processID: fixture.other.processID, userID: getuid(),
+            startSeconds: 1, startMicroseconds: 10, executablePath: fixture.other.executablePath)
+        try fixture.admission(as: stale).registerCurrentProcess()
+        fixture.processes.append(fixture.other)
+        var now = 2.020020
+        var waits = 0
+        let admission = WriterAdmission(dataDirectory: fixture.directory,
+            currentProcess: { fixture.current }, processSnapshot: { fixture.processes },
+            clock: { now }, waitForRegistration: { interval in
+                now += interval
+                waits += 1
+                do { try fixture.admission(as: fixture.other).registerCurrentProcess() }
+                catch { XCTFail("New process registration failed: \(error)") }
+            })
+        try admission.registerCurrentProcess()
+        XCTAssertNoThrow(try admission.checkCurrentWriters())
+        XCTAssertEqual(waits, 1)
     }
 
     func testInstalledNewVersionDoesNotAuthorizeAnAlreadyRunningOldInstance() throws {
