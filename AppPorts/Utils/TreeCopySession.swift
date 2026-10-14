@@ -897,11 +897,18 @@ actor TreeCopySession {
         defer { posix_spawn_file_actions_destroy(&actions) }
         result = posix_spawn_file_actions_addfchdir_np(&actions, parent)
         guard result == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(result)) }
-        var arguments = ["/usr/bin/mkfifo", "-m", "600", "--", name].map { strdup($0) } + [nil]
-        defer { arguments.forEach { free($0) } }
+        // Build argv with an explicit element type: inferring it from a trailing
+        // `[nil]` makes Xcode 26 reject the String literals.
+        var pointers: [UnsafeMutablePointer<CChar>?] = []
+        for argument in ["/usr/bin/mkfifo", "-m", "600", "--", name] {
+            guard let copy = strdup(argument) else { throw posix(name) }
+            pointers.append(copy)
+        }
+        pointers.append(nil)
+        defer { pointers.forEach { free($0) } }
         var environment: [UnsafeMutablePointer<CChar>?] = [nil]
         var pid: pid_t = 0
-        result = posix_spawn(&pid, "/usr/bin/mkfifo", &actions, nil, &arguments, &environment)
+        result = posix_spawn(&pid, "/usr/bin/mkfifo", &actions, nil, &pointers, &environment)
         guard result == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(result)) }
         var status: Int32 = 0
         while waitpid(pid, &status, 0) < 0 {
