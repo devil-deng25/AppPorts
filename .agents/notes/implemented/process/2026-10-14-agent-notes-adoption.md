@@ -12,6 +12,8 @@ Status: implemented
 
 本项目的决策笔记集中在 `.agents/notes/`，`write-notes-like-deepseek` 完整入库到 `.claude/skills/`，上游提交记录在 `.vendored-from.txt`。笔记规范只引用该 skill，不在 CLAUDE.md 复制另一套状态、格式或归档规则。CLAUDE.md 的项目约定使用英文。
 
+根目录 `AGENTS.md` 为 Codex 提供项目指令入口，要求先读 CLAUDE.md，并在非平凡改动、技术取舍或笔记工作前加载 skill。`.agents/skills/write-notes-like-deepseek` 以相对软链接指向 `../../.claude/skills/write-notes-like-deepseek`，让 Codex 的技能发现与 Claude 的目录共用同一份入库内容。声明“需要安装”不能代替本地可用文件；项目不依赖每个人另装全局副本。
+
 主仓库旧 docs 通过移动保存到 `~/Documents/AppPorts-docs-archive/`，不删除无 Git 兜底的原文。首次迁移不移动四个 worktree 的 docs；其独有决定提炼到主仓库，纯计划和原始证据不变成笔记，工作树自身后续清理由所属任务负责。User_docs 继续承载文档站，不承担决策笔记存储。
 
 此次经确认的迁移区分已提交实现、尚未实施的向导和本机已实现但未提交的后续改动。最后一类暂放 proposed 并注明入库状态，待代码提交同批转换；这是本次历史迁移的明确处理，不把本机实测否认成没有实现。原文缺少备选或日期时说明来源缺口，不编造。
@@ -41,11 +43,17 @@ Status: implemented
 - **原样搬文件或把计划日志全部入库**：能保存文字，却把施工步骤、过时状态和原始证据混成现行决策；因此提炼语义并外部保留原文。
 - **删除 docs 消除双源头**：目录消失最直接，却不可依赖 Git 恢复；采用移出并核对完整性。
 - **在 CLAUDE.md 复写笔记规范**：读取方便，但会形成与 vendored skill 漂移的第二份规范，项目入口只保留指向与特有路径。
+- **只在 Markdown 中要求自行安装 skill**：仓库内容更少，但缺失安装或版本差异会影响笔记与门禁，无法保证新工作区有相同脚本；保留仓库内版本。
+- **给 Codex 复制第二份 skill**：能放进默认发现目录，但两份正文、模板和脚本可能漂移；采用官方支持的目录软链接。
 
 ## Consequences
 
 决定与理由可随仓库审查，完整原文仍有外部副本。代价是外部归档不随 clone 分发，历史原始证据需从归档另行取得；笔记必须明确哪些验证只是原报告记录。源码未提交的 proposed 需要在对应代码入库时同步，不能永久以双重当前状态放置。
 
+Codex 的发现入口与项目使用要求分别明确，减少仅写在 CLAUDE.md 中而被遗漏的情况。代价是必须保留 Git 软链接及其目标；改动路径时同步更新入口。技能能被发现不保证每次自动选中，因此 AGENTS.md 仍明确要求适用任务加载它。已运行的会话不视为自动重新读取了新增项目指令。
+
 ## Verification
 
 首次迁移来源指纹覆盖 87 个文件，形成 26 篇笔记；补充后共 32 篇，20 implemented、12 proposed，后者含 10 篇源码待提交记录及 2 篇尚未实施的向导/临时目录提案。合订本 79 份冻结来源逐份核对哈希，重复正文不重复建笔记。逐文件溯源使用纯文本，跨笔记引用使用相对链接。tree 与 format 校验、原资料完整性与提交范围检查构成文档验证；Swift 功能测试和真实磁盘实验没有在此次迁移中重新执行。
+
+发现入口依据官方 [Skills](https://developers.openai.com/codex/skills/) 与 [AGENTS.md](https://developers.openai.com/codex/guides/agents-md/) 文档：项目技能扫描 `.agents/skills/` 并支持目录软链接，项目指令在新运行开始时读取。入口验证核对软链接解析、目标内容一致性和 Git 的 symlink 类型；后续新会话应确认项目指令与技能实际可见。
