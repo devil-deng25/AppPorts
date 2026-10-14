@@ -119,6 +119,7 @@ struct DataTransferGroup: Equatable, Identifiable, Sendable {
     /// A common name/path alone never merges independent or conflicting work.
     /// Missing cleaned ancestors are allowed; each remaining chain still shows.
     static func groups(from transfers: [DataTransferRecord]) -> [DataTransferGroup] {
+        let transfers = transfers.filter { $0.rollbackCompletedAt == nil }
         let records = Dictionary(uniqueKeysWithValues: transfers.map { ($0.operationID, $0) })
         var neighbors: [UUID: Set<UUID>] = [:]
         for transfer in transfers {

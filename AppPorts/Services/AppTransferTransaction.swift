@@ -101,7 +101,7 @@ final class AppTransferTransaction {
                 Self.contains(URL(fileURLWithPath: $0), source) || Self.contains(source, URL(fileURLWithPath: $0))
                     || Self.contains(URL(fileURLWithPath: $0), destination) || Self.contains(destination, URL(fileURLWithPath: $0))
             }) {
-                throw Self.failure("此位置已有未完成的应用转移，请先继续或取消该记录。".localized, at: source)
+                throw Self.failure("此位置的上次操作尚未完成。AppPorts 已保留数据并会继续尝试，请根据下面的原因处理后重试。".localized, at: source)
             }
         }
         // A preceding committed transfer may have stopped between its two
@@ -207,7 +207,7 @@ final class AppTransferTransaction {
             return Self.contains(known, source) || Self.contains(source, known)
                 || Self.contains(known, destination) || Self.contains(destination, known)
         }) {
-            throw Self.failure("这条损坏的应用转移记录仍指向本次位置，请先检查该记录及其材料。".localized, at: issue.url)
+            throw Self.failure("历史应用转移记录损坏，AppPorts 暂时无法确认此位置的数据归属。数据已保留，本次操作尚未开始。".localized, at: issue.url)
         }
     }
 
@@ -230,7 +230,7 @@ final class AppTransferTransaction {
                 } catch {
                     journal.record.cleanupItems[index].lastError = error.localizedDescription
                     try? journal.save()
-                    throw Self.failure("此目标仍有旧副本清理待办，请在副本管理中重试原转移记录后再选择此目标。".localized
+                    throw Self.failure("此位置的上次操作尚未完成。AppPorts 已保留数据并会继续尝试，请根据下面的原因处理后重试。".localized
                         + "\n" + destination.path + "\n" + error.localizedDescription, at: recordURL)
                 }
             }
@@ -646,7 +646,7 @@ final class AppTransferTransaction {
         // deleted, otherwise a failed fact write could lose developer identity.
         if journal.record.signatureFactsCommitted {
             for index in journal.record.cleanupItems.indices where !journal.record.cleanupItems[index].completed {
-                do { try cleanup(index, journal: journal) }
+                do { try cleanupWithVerificationRetry(index, journal: journal) }
                 catch { journal.record.cleanupItems[index].lastError = error.localizedDescription; warnings.append(error.localizedDescription) }
             }
         }
@@ -694,6 +694,23 @@ final class AppTransferTransaction {
             journal.record.cleanupItems.append(.init(id: UUID(), role: record.direction == .restore ? .originalPortal : .replacedDestination,
                 path: record.candidateURL.path, originalPath: record.destinationPath, identity: existing,
                 parentIdentity: try DataPathIdentity.capture(record.candidateURL.deletingLastPathComponent()), baselineName: "existing"))
+        }
+    }
+
+    private func cleanupWithVerificationRetry(_ index: Int, journal: Journal) throws {
+        do {
+            try cleanup(index, journal: journal)
+        } catch let error as TreeCopyError {
+            switch error {
+            case .sourceChanged, .verificationFailed:
+                // A concurrent metadata update can invalidate one observation.
+                // Retry the same durable baseline before reporting a pending
+                // operation; never adopt the changed tree as a new baseline.
+                try Task.checkCancellation()
+                try cleanup(index, journal: journal)
+            default:
+                throw error
+            }
         }
     }
 

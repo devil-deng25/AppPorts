@@ -123,6 +123,9 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     /// Preserve the exact proposed mount across a verified switch interruption.
     /// It is never reconstructed from a volume name or a current mount path.
     var recoveryMountRecord: ContainerMountRecord? = nil
+    /// The original usable entry has been restored. The full record remains
+    /// until automatic cleanup of this attempt's candidate has also finished.
+    var rollbackCompletedAt: Date? = nil
     var recoverableReason: String?
 
     init(operationID: UUID = UUID(), mode: Mode, direction: Direction, sourceID: String? = nil,
@@ -170,7 +173,7 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     /// Display candidate only; services prove the source is still authoritative
     /// before restarting or cancelling any claimed/unknown preparation.
     var isPreparationRecoverable: Bool {
-        !isDataSwitchComplete && baseline == nil
+        !isDataSwitchComplete && rollbackCompletedAt == nil && baseline == nil
             && [.preparing, .copying, .needsRecovery].contains(phase)
     }
 
@@ -207,6 +210,7 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     /// actual entry before continuing the existing operation.
     var isVerifiedSwitchRecoverable: Bool {
         [.verified, .switching, .needsRecovery].contains(phase)
+            && rollbackCompletedAt == nil && preparationRemovalBaseline == nil
             && baseline != nil && destinationIdentity != nil && cleanupParentIdentity == nil
             && backupPath != nil && sourceIdentity.isResolved
             && (mode == .symlink || direction == .restore || recoveryMountRecord != nil)
@@ -248,6 +252,13 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
 
     var topologyEntries: [DataPathTopology.Entry] {
         let origin: DataPathTopology.Origin = isDataSwitchComplete ? .retained : .transfer
+        if rollbackCompletedAt != nil {
+            // The source is usable again. Only this attempt's private candidate
+            // remains reserved; it must not block a later operation at the source.
+            return Array(Set([stagingPath, preparationPath].compactMap { $0 })).map {
+                .init(path: $0, origin: .retained, operationID: operationID, volumeUUID: createdVolumeUUID)
+            }
+        }
         if retainedCopyRemovedAt != nil {
             // Historical destinations are no longer reserved by an identity
             // link. Their surviving physical copies or live index own those
@@ -272,10 +283,9 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-/// A deliberately preserved, unclaimed artifact has no path reservation and
-/// grants no deletion authority. It remains visible after an attempt is ended.
-/// This summary has no anchored absence proof. Removing its record requires
-/// an explicit decision to keep all files and volumes outside the ledger.
+/// Internal material retained after an interrupted operation. Keep the original
+/// journal so maintenance can distinguish an owned, never-activated staging
+/// directory from unclaimed material; a summary alone cannot authorize deletion.
 struct DataTransferMaterial: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let appName: String
@@ -288,18 +298,39 @@ struct DataTransferMaterial: Codable, Equatable, Identifiable, Sendable {
     let containerUUID: String?
     let reason: String
     let createdAt: Date
+    var recoveryRecord: DataTransferRecord? = nil
 
-    init(transfer: DataTransferRecord, reason: String) {
+    init(transfer: DataTransferRecord, reason: String, additionalPaths: [String] = []) {
         id = transfer.operationID
         appName = transfer.appName
         mode = transfer.mode
         direction = transfer.direction
         originalPath = transfer.originalPath
-        paths = transfer.materialPaths
+        paths = Array(Set(transfer.materialPaths + additionalPaths)).sorted()
         volumeUUID = transfer.createdVolumeUUID
         volumeName = transfer.volumeCreationName ?? transfer.recoveryMountRecord?.volumeName
         containerUUID = transfer.volumeCreationContainerUUID
         self.reason = reason
         createdAt = transfer.createdAt
+        recoveryRecord = transfer
+    }
+
+    /// The live mount continues to own its volume. Only separate paths from an
+    /// old cleanup become historical material when that cleanup is superseded.
+    init(legacyCleanup: ContainerCleanupRecord, retainingDetachedVolume: Bool = false) {
+        id = legacyCleanup.id
+        appName = legacyCleanup.mountRecord.appName
+        mode = .mount
+        direction = legacyCleanup.kind == .migrationBackup ? .migrate : .restore
+        originalPath = legacyCleanup.mountRecord.mountPointPath
+        paths = [legacyCleanup.localPath, legacyCleanup.restoreStagingPath].compactMap { $0 }
+            .filter { DataPathTopology.relationship($0, legacyCleanup.mountRecord.mountPointPath) != .same }
+        volumeUUID = retainingDetachedVolume ? legacyCleanup.mountRecord.volumeUUID : nil
+        volumeName = retainingDetachedVolume ? legacyCleanup.mountRecord.volumeName : nil
+        containerUUID = nil
+        reason = retainingDetachedVolume
+            ? "数据已还原。旧版记录缺少可验证的清理凭据，AppPorts 暂时保留旧卷，不影响继续使用或迁移。".localized
+            : "旧清理记录已接续到当前还原；这些额外位置仍保留，未删除其中的文件。".localized
+        createdAt = legacyCleanup.mountRecord.createdAt
     }
 }

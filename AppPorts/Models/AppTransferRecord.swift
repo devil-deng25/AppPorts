@@ -191,3 +191,12 @@ struct AppTransferBaseline: Codable, Sendable {
     let linkIdentity: DataPathIdentity?
     var volumeUUID: String? = nil
 }
+
+extension AppTransferResult {
+    var pendingMessage: String? {
+        let messages = warnings + pendingTasks.map(\.message)
+        var seen = Set<String>()
+        let unique = messages.filter { !$0.isEmpty && seen.insert($0).inserted }
+        return unique.isEmpty ? nil : unique.joined(separator: "\n")
+    }
+}

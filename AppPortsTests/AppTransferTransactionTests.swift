@@ -68,6 +68,76 @@ final class AppTransferTransactionTests: XCTestCase {
         try assertNoStages(w)
     }
 
+    func testCommittedCleanupRetriesTransientVerificationBeforeReturningResult() async throws {
+        for direction in [AppTransferRecord.Direction.migrate, .restore] {
+            for failure in [TreeCopyError.sourceChanged(""), .verificationFailed("")] {
+                let w = try Workspace(); defer { w.cleanup() }
+                let source = (direction == .migrate ? w.local : w.external).appendingPathComponent("App.app")
+                let destination = (direction == .migrate ? w.external : w.local).appendingPathComponent("App.app")
+                try makeApp(source, payload: "original")
+                var cleanupAttempts = 0
+                var copies = 0
+                var switches = 0
+                let service = w.service(hook: { point, _ in
+                    if point == .copied { copies += 1 }
+                    if point == .entrySwitched { switches += 1 }
+                    if point == .beforeCleanup {
+                        cleanupAttempts += 1
+                        if cleanupAttempts == 1 {
+                            try Data("latest active data".utf8).write(to: destination.appendingPathComponent("Contents/Resources/payload"))
+                            throw failure
+                        }
+                    }
+                })
+                let result: AppTransferResult
+                if direction == .migrate {
+                    result = try await service.moveAndLink(appToMove: item(source), destinationURL: destination,
+                                                          isRunning: false, progressHandler: nil)
+                } else {
+                    result = try await service.moveBack(app: item(source), localDestinationURL: destination,
+                                                        progressHandler: nil).transferResult
+                }
+                XCTAssertTrue(result.isComplete, result.pendingMessage ?? "")
+                XCTAssertTrue(result.warnings.isEmpty)
+                XCTAssertEqual(cleanupAttempts, 2)
+                XCTAssertEqual(copies, 1)
+                XCTAssertEqual(switches, 1)
+                XCTAssertEqual(try payload(destination), "latest active data")
+                XCTAssertTrue(try w.store.records().isEmpty)
+                try assertNoStages(w)
+            }
+        }
+    }
+
+    func testCleanupVerificationRetryPreservesActualChangesToRetiredCopy() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source, payload: "original")
+        var retiredPath: URL?
+        var injected = false
+        let result = try await w.service(hook: { point, record in
+            if point == .beforeCleanup && !injected {
+                injected = true
+                let retired = try XCTUnwrap(record.cleanupItems.first).path
+                retiredPath = URL(fileURLWithPath: retired)
+                try Data("new data in retired copy".utf8).write(to: retiredPath!.appendingPathComponent("Contents/Resources/payload"))
+                try Data("latest active data".utf8).write(to: destination.appendingPathComponent("Contents/Resources/payload"))
+                throw TreeCopyError.sourceChanged("Contents/Resources/payload")
+            }
+        }).moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false, progressHandler: nil)
+        XCTAssertTrue(result.isSwitchComplete)
+        XCTAssertFalse(result.isComplete)
+        XCTAssertEqual(try payload(XCTUnwrap(retiredPath)), "new data in retired copy")
+        XCTAssertEqual(try payload(destination), "latest active data")
+        let cold = try await w.service(storeOverride: AppTransferStore(directoryURL: w.store.directoryURL))
+            .retryTransfer(operationID: result.operationID)
+        XCTAssertFalse(cold.isComplete)
+        XCTAssertEqual(try payload(XCTUnwrap(retiredPath)), "new data in retired copy")
+        XCTAssertEqual(try payload(destination), "latest active data")
+        XCTAssertFalse(try w.store.records().isEmpty)
+    }
+
     func testCancellationRetriesRemovedStageParentSynchronizationAfterColdRestart() async throws {
         for (direction, portal) in [(AppTransferRecord.Direction.migrate, false), (.migrate, true), (.restore, false)] {
             let w = try Workspace(); defer { w.cleanup() }
@@ -1619,10 +1689,7 @@ final class AppTransferTransactionTests: XCTestCase {
         let inspection = try w.service().pendingTransferInspection()
         XCTAssertEqual(inspection.issues.map(\.url), [damaged.url])
         XCTAssertEqual(inspection.issues.first?.knownPaths, [damagedApp.path])
-        await MainActor.run {
-            let snapshot = CopyManagementModel.Snapshot(appTransfers: inspection.records, appTransferIssues: inspection.issues)
-            XCTAssertFalse(snapshot.isEmpty, "The live copy page must expose the surviving diagnostic without any pending transfer")
-        }
+        XCTAssertFalse(inspection.issues.isEmpty, "Keep incomplete-operation diagnostics for automatic maintenance")
         try assertNoStages(w)
     }
 
