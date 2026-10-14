@@ -12,7 +12,11 @@ case "$check" in
     arguments=(build-for-testing -configuration Debug)
     ;;
   regression)
+    # Run the suites serially. Hundreds of migration tests spawn child processes
+    # and touch real disks; on a 3-vCPU runner that contention starves fixture
+    # commands until their deadlines expire. Every case and assertion stays.
     arguments=(test-without-building -configuration Debug
+      -parallel-testing-enabled NO
       -skip-testing:AppPortsTests/LocalizationAuditTests
       -skip-testing:AppPortsTests/ProcessCommandRunnerTests)
     ;;
@@ -20,6 +24,7 @@ case "$check" in
     # Timing assertions should not compete with hundreds of migration tests
     # that launch child processes. Keep the assertions and run every case.
     arguments=(test-without-building -configuration Debug
+      -parallel-testing-enabled NO
       -only-testing:AppPortsTests/ProcessCommandRunnerTests)
     ;;
   localization)

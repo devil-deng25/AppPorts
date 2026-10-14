@@ -86,7 +86,10 @@ struct AutoResignInstallerTests {
         #expect(!fixture.defaults.bool(forKey: AutoResignInstaller.enabledDefaultsKey))
         #expect(fixture.defaults.string(forKey: AutoResignInstaller.policyErrorDefaultsKey)?.isEmpty == false)
         #expect(FileManager.default.fileExists(atPath: fixture.agent.path))
-        let result = try await ProcessCommandRunner().run(executable: "/bin/bash", arguments: [fixture.script.path], timeout: 5)
+        // Running the retained script only proves it stays harmless; the deadline
+        // is fixture headroom, not a behaviour assertion, so it survives a loaded
+        // CI runner.
+        let result = try await ProcessCommandRunner().run(executable: "/bin/bash", arguments: [fixture.script.path], timeout: 20)
         #expect(result.status == 0)
         #expect(!result.timedOut)
 
@@ -135,7 +138,9 @@ struct AutoResignInstallerTests {
         #expect(!script.contains("defaults read"))
         let isolatedScript = fixture.root.appendingPathComponent("login-script.sh")
         try ("CLASSIC_MODE=1\n" + script).write(to: isolatedScript, atomically: true, encoding: .utf8)
-        let result = try await ProcessCommandRunner().run(executable: "/bin/bash", arguments: [isolatedScript.path], timeout: 5)
+        // Same fixture headroom as above: the script must not touch anything, and
+        // a slow runner must not turn that into a failure.
+        let result = try await ProcessCommandRunner().run(executable: "/bin/bash", arguments: [isolatedScript.path], timeout: 20)
         #expect(result.status == 0)
         #expect(!result.timedOut)
         #expect(try String(contentsOf: fixture.backup, encoding: .utf8) == "keep signature backup")

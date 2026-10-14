@@ -413,8 +413,10 @@ struct TreeCopyOwnershipTests {
         try #require(link(file.path, source.appendingPathComponent("second").path) == 0)
         try FileManager.default.createSymbolicLink(atPath: source.appendingPathComponent("link").path, withDestinationPath: "nested/payload")
         try setXattr(Data([0, 255, 1, 128]), at: source)
+        // The ACL is fixture setup; the deadline is only a guard against a hung
+        // command, so a loaded CI runner does not fail the ownership assertions.
         let result = try await ProcessCommandRunner().run(executable: "/bin/chmod",
-            arguments: ["+a", "everyone allow readattr,readextattr,readsecurity", source.path], timeout: 10)
+            arguments: ["+a", "everyone allow readattr,readextattr,readsecurity", source.path], timeout: 60)
         try #require(result.status == 0 && !result.timedOut, "\(result.combinedText)")
         try #require(chmod(source.path, 0o700) == 0)
         try #require(chmod(nested.path, 0o550) == 0)
