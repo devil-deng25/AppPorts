@@ -1,119 +1,44 @@
----
-outline: deep
----
+# Application migration
 
-# Migration Strategies
+After moving an app externally, AppPorts retains a suitable local entry. The real app that occupies space and the entry you click may be in different locations.
 
-## App Container Classification
+## The real app and its local entry {#portal}
 
-AppPorts classifies apps before migration to determine migration granularity:
-
-| Classification | Definition | Example |
-|----------------|------------|---------|
-| `standaloneApp` | Single `.app` package in the top-level directory | Safari, Finder |
-| `singleAppContainer` | Directory containing only 1 `.app` package | Some third-party app install directories |
-| `appSuiteFolder` | Directory containing 2 or more `.app` packages | Microsoft Office, Adobe Creative Cloud |
-
-Classification results affect migration strategy selection — `singleAppContainer` and `appSuiteFolder` migrate the entire directory as a unit, rather than processing individual `.app` files within.
-
-## Three Migration Strategies
-
-AppPorts defines three local entry (Portal) strategies for keeping apps launchable locally after migration:
-
-### Whole App Symlink
-
-Creates the entire `.app` directory (or directory) as a symbolic link pointing to external storage.
-
-```text
-/Applications/SomeApp.app → /Volumes/External/SomeApp.app
-```
-
-**Use Cases:**
-
-- App container classification is `singleAppContainer` or `appSuiteFolder` (directory operation)
-- Non-standard apps with path extensions other than `.app`
-
-**Characteristics:** Finder displays arrow shortcut markers on icons.
-
-### Deep Contents Wrapper (Contents Directory Migration)
-
-Creates a real `.app` directory locally, with only the `Contents/` subdirectory symbolically linked to external storage.
-
-```text
-/Applications/SomeApp.app/
-└── Contents → /Volumes/External/SomeApp.app/Contents  (symlink)
-```
-
-**Current Status:** Deprecated. New migrations no longer use this strategy; it is only recognized and handled when restoring apps migrated with older versions.
-
-**Deprecation Reason:** Self-updaters follow the `Contents/` symbolic link and directly operate on external storage files, potentially corrupting the application.
-
-### Stub Portal
-
-Creates a minimal `.app` shell locally, calling `open` to launch the real app on external storage via a launch script.
-
-```text
-/Applications/SomeApp.app/
-├── Contents/
-│   ├── MacOS/launcher                    # native binary launcher (or bash script)
-│   ├── Resources/real_app_path.txt       # external real app path
-│   ├── Resources/AppIcon.icns            # icon copied from real app
-│   ├── Info.plist              # simplified config file
-│   └── PkgInfo                 # standard identifier file
-```
-
-**Use Cases:** All apps with `.app` extension (default strategy).
-
-**Characteristics:** No symbolic links locally; Finder does not display arrow markers; auto-updaters cannot penetrate through.
-
-#### macOS Stub Portal
-
-For native macOS apps:
-
-1. Create native binary launcher and write external app path to `real_app_path.txt`
-2. Copy `PkgInfo` and icon files from the external app
-3. Generate simplified `Info.plist` from the external app's `Info.plist`:
-   - Set `CFBundleExecutable` to `launcher`
-   - Set `LSUIElement` to `true` (not shown in Dock)
-   - Remove Sparkle/Electron related config keys
-   - Append `.appports.stub` suffix to Bundle ID
-4. Execute Ad-hoc code signing
-
-#### iOS Stub Portal
-
-For iOS apps (iOS apps running on Mac), differences from macOS version:
-
-- Icons extracted from `.app` packages in `Wrapper/` or `WrappedBundle/` directories
-- Uses `sips` to scale PNG to 256×256 and convert to `.icns` format
-- `Info.plist` generated from `iTunesMetadata.plist` (iOS apps don't include standard `Info.plist`)
-- No code signing; only cleans extended attributes (`xattr -cr`)
-
-## Strategy Selection Decision Tree
+Ordinary apps use a lightweight **Stub Portal** by default. Clicking the local entry launches the real app on the external drive. It is neither another complete app nor a backup. Without the drive, the entry cannot substitute for the real app.
 
 ```mermaid
-flowchart TD
-    A[Start migration] --> B{Is it a directory operation?}
-    B -->|Yes: singleAppContainer or appSuiteFolder| C[Whole App Symlink]
-    B -->|No| D{Does path extension end with .app?}
-    D -->|No| C
-    D -->|Yes| E{Is it an iOS app?}
-    E -->|Yes| F[iOS Stub Portal]
-    E -->|No| G[macOS Stub Portal]
+flowchart LR
+  A[Click the local app entry] --> B[Locate the real app on external storage]
+  B --> C[Launch the app]
+  C --> D[Access app data at its existing location]
 ```
 
-::: tip About Deep Contents Wrapper
-This strategy is no longer selected for new migrations in the current version. The `preferredPortalKind()` method returns `stubPortal` for all `.app` apps. Deep Contents Wrapper is only recognized as a legacy scheme when restoring historically migrated apps.
-:::
+The last step explains why app and data migration are separate: messages and other data may stay local after the app moves.
 
-## Destination Conflicts and Replacement
+## Entries for different kinds of content {#types}
 
-When the external destination already contains a same-name item, AppPorts checks whether it can be safely replaced:
+| Content | How AppPorts handles it |
+| --- | --- |
+| Ordinary macOS app | A Stub Portal points to the real external app. |
+| Eligible iPhone or iPad app | A launch entry suited to its wrapper structure; system and app restrictions still apply. |
+| Folder or suite containing multiple apps | A Folder Mirror provides app entries and links to other managed content. |
+| Manually selected traditional link migration | Use “Migrate Using Traditional Link” in the context menu. The whole app is external and a symbolic link remains locally. This manual option remains available; compatibility depends on the app. |
+| Historical migration | The old entry is recognized and appropriate restoration or unlink actions are provided. |
 
-| Case | Behavior |
-|------|----------|
-| Current app is "Pending Move Out" | Clean the old external copy and replace it with the newer local app |
-| Target is an AppPorts Stub Portal | Clean it and continue migration |
-| Target is an old Deep Contents Wrapper or whole-app symlink entry | Treat it as a legacy AppPorts entry and clean it |
-| Target is an unrelated real app or directory | Stop migration and report a conflict |
+Whole-app links and Contents-based entries can still appear in existing migrations. Recognizing them does not mean they are the default for new moves. Dependencies on particular directory structures or internal paths may also affect compatibility.
 
-Legacy hybrid entries may keep symbolic links only at `Contents/Info.plist`, `Contents/MacOS`, `Contents/Resources`, or `Contents/Frameworks`. Current versions recognize those old structures for safe cleanup and restore, but do not delete real apps that cannot be identified as AppPorts-managed entries.
+## Why update protection exists {#updates}
+
+Some self-updaters replace or delete the app they are updating. AppPorts provides locked migration where protection is needed to reduce unintended changes to the external copy during updates.
+
+A lock can also prevent self-updating. If an update fails, follow AppPorts' instructions, or move the app back locally, update it and move it out again. Do not repeatedly delete unfamiliar files by hand.
+
+Sparkle and Electron identify frameworks or updater clues. Neither label alone means an app must be locked or cannot update. See [updates after migration](/docs/core#updates).
+
+## What this means in practice {#limits}
+
+A local entry preserves familiar launching where possible, but does not remove the external-drive dependency or guarantee that plugins, system permissions and self-updates are unaffected. Launch the app the way you normally do and verify its everyday features after migration.
+
+Related: [local entries and real apps](/docs/glossary#local-portal), [badges](/docs/badges), and [data migration](/docs/datamigrae/baseinfo).
+
+Earlier Contents, whole-app link and launcher implementations are preserved in [historical application migration methods](/docs/archive/app-strategies).

@@ -1,5 +1,7 @@
 'use client';
 import Link from 'next/link';
+import { useLocale, useText } from './provider';
+import { localePrefix, homeUrl } from '@/lib/i18n';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { Heart, Menu } from 'lucide-react';
@@ -16,7 +18,9 @@ const links = [
   { label: '下载 AppPorts', href: 'https://file.shimoko.com/AppPorts' },
 ];
 export function SiteHeader() {
-  const pathname = usePathname();
+  const locale = useLocale(); const t = useText();
+  const pathname = usePathname().slice(localePrefix(locale).length);
+  const localized = (href: string) => href.startsWith('/docs/') ? localePrefix(locale) + href : href;
   const [open, setOpen] = useState(false);
   const active = (href: string) => {
     if (href === '/docs/blog/overview') return pathname.startsWith('/docs/blog/');
@@ -24,10 +28,10 @@ export function SiteHeader() {
     return pathname === href;
   };
   return <header className="site-header"><div className="site-header-inner">
-    <Link href="/" className="site-brand"><img src="/logo.png" width="28" height="28" alt="" /><span>AppPorts</span><span className="brand-divider">文档</span></Link>
-    <nav className="desktop-nav" aria-label="顶部导航">{links.map(({ label, href }) => <Link key={href} href={href} aria-current={active(href) ? 'page' : undefined}>{label}</Link>)}</nav>
-    <div className="header-actions"><Link href="/docs/sponsor" className="header-sponsor" aria-label="赞助"><Heart size={15} /><span>赞助</span></Link><SearchTrigger /><LanguageSwitch /><ThemeSwitch /><a href="https://github.com/wzh4869/AppPorts" aria-label="GitHub 仓库" className="header-github"><GitHubIcon size={20} /></a>
-      <div className="mobile-site-menu"><Popover open={open} onOpenChange={setOpen}><PopoverTrigger className="header-menu-trigger" aria-label="打开全站菜单"><Menu size={20} /></PopoverTrigger><PopoverContent className="site-menu-content" aria-label="顶部导航">{links.map(({ label, href }) => <Link key={href} href={href} onClick={() => setOpen(false)}>{label}</Link>)}</PopoverContent></Popover></div>
+    <Link href={homeUrl(locale)} className="site-brand"><img src="/logo.png" width="28" height="28" alt="" /><span>AppPorts</span><span className="brand-divider">{t('文档')}</span></Link>
+    <nav className="desktop-nav" aria-label={t('顶部导航')}>{links.map(({ label, href }) => <Link key={href} href={localized(href)} aria-current={active(href) ? 'page' : undefined}>{t(label)}</Link>)}</nav>
+    <div className="header-actions"><Link href={localized('/docs/sponsor')} className="header-sponsor" aria-label={t('赞助')}><Heart size={15} /><span>{t('赞助')}</span></Link><SearchTrigger /><LanguageSwitch /><ThemeSwitch /><a href="https://github.com/wzh4869/AppPorts" aria-label={t('GitHub 仓库')} className="header-github"><GitHubIcon size={20} /></a>
+      <div className="mobile-site-menu"><Popover open={open} onOpenChange={setOpen}><PopoverTrigger className="header-menu-trigger" aria-label={t('打开全站菜单')}><Menu size={20} /></PopoverTrigger><PopoverContent className="site-menu-content" aria-label={t('顶部导航')}>{links.map(({ label, href }) => <Link key={href} href={localized(href)} onClick={() => setOpen(false)}>{t(label)}</Link>)}</PopoverContent></Popover></div>
     </div>
   </div></header>;
 }

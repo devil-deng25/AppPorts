@@ -1,7 +1,9 @@
 'use client';
+import { useText } from './provider';
 import { useEffect, useId, useState } from 'react';
 import { useTheme } from 'next-themes';
 export function Mermaid({ chart }: { chart: string }) {
+  const t = useText();
   const id = useId().replace(/:/g, '');
   const { resolvedTheme } = useTheme();
   const [svg, setSvg] = useState('');
@@ -16,6 +18,6 @@ export function Mermaid({ chart }: { chart: string }) {
     }).catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
   }, [chart, id, resolvedTheme]);
-  if (!svg) return <pre aria-label={failed ? '图表源代码' : '正在加载图表'}>{chart}</pre>;
-  return <div className="mermaid-diagram" role="img" aria-label="迁移流程图" dangerouslySetInnerHTML={{ __html: svg }} />;
+  if (!svg) return <pre aria-label={failed ? t('图表源代码') : t('正在加载图表')}>{chart}</pre>;
+  return <div className="mermaid-diagram" role="img" aria-label={t('迁移流程图')} dangerouslySetInnerHTML={{ __html: svg }} />;
 }

@@ -1,106 +1,44 @@
----
-outline: deep
----
+# 應用遷移方式
 
-# 遷移策略
+應用搬到外接磁碟後，AppPorts 會為它保留合適的本地入口。真正佔空間的應用與點選時使用的入口，可能不在同一個位置。
 
-## 應用容器分類
+## 真實應用與本地入口 {#portal}
 
-AppPorts 在遷移前會對應用進行分類，以確定遷移粒度：
-
-| 分類 | 定義 | 示例 |
-|------|------|------|
-| `standaloneApp` | 頂層目錄中的單個 `.app` 包 | Safari、Finder |
-| `singleAppContainer` | 目錄中僅包含 1 個 `.app` 包 | 部分第三方應用的安裝目錄 |
-| `appSuiteFolder` | 目錄中包含 2 個及以上 `.app` 包 | Microsoft Office、Adobe Creative Cloud |
-
-分類結果影響遷移策略的選擇——`singleAppContainer` 和 `appSuiteFolder` 以整個目錄爲單位遷移，而非單獨處理其中的 `.app` 文件。
-
-## 三種遷移策略
-
-AppPorts 定義了三種本地入口（Portal）策略，用於在遷移後保持應用可從本地啓動：
-
-### Whole App Symlink（整體符號鏈接）
-
-將整個 `.app` 目錄（或目錄）創建爲指向外部存儲的符號鏈接。
-
-```text
-/Applications/SomeApp.app → /Volumes/External/SomeApp.app
-```
-
-**適用場景：**
-
-- 應用容器分類爲 `singleAppContainer` 或 `appSuiteFolder`（目錄操作）
-- 路徑擴展名不爲 `.app` 的非標準應用
-
-**特徵：** Finder 圖標會顯示箭頭快捷方式標記。
-
-### Deep Contents Wrapper（Contents 目錄遷移）
-
-在本地創建真實的 `.app` 目錄，僅將 `Contents/` 子目錄符號鏈接到外部存儲。
-
-```text
-/Applications/SomeApp.app/
-└── Contents → /Volumes/External/SomeApp.app/Contents  （符號鏈接）
-```
-
-**當前狀態：** 已棄用。新遷移不再使用此策略，僅在還原舊版遷移的應用時進行識別和處理。
-
-**棄用原因：** 自更新程序運行時會沿 `Contents/` 符號鏈接直接操作外部存儲上的文件，可能導致應用本體被破壞。
-
-### Stub Portal（殼門方案）
-
-在本地創建最小化的 `.app` 殼，通過啓動器調用 `open` 命令打開外部存儲上的真實應用。
-
-```text
-/Applications/SomeApp.app/
-├── Contents/
-│   ├── MacOS/launcher                    # 原生二進制啓動器（或 bash 腳本）
-│   ├── Resources/real_app_path.txt       # 外部真實應用路徑
-│   ├── Resources/AppIcon.icns            # 從真實應用複製的圖標
-│   ├── Info.plist                        # 精簡生成的配置文件
-│   └── PkgInfo                           # 標準標識文件
-```
-
-**適用場景：** 所有 `.app` 擴展名的應用（默認策略）。
-
-**特徵：** 本地不包含任何符號鏈接，Finder 不顯示箭頭標記，自更新程序無法穿透。
-
-#### macOS Stub Portal
-
-適用於原生 macOS 應用，流程如下：
-
-1. 創建 `Contents/MacOS/launcher` 原生二進制啓動器，並在 `Contents/Resources/real_app_path.txt` 中寫入外部應用路徑
-2. 從外部應用複製 `PkgInfo` 和圖標文件
-3. 基於外部應用的 `Info.plist` 生成精簡版本：
-   - `CFBundleExecutable` 設爲 `launcher`
-   - `LSUIElement` 設爲 `true`（不在 Dock 顯示）
-   - 移除 Sparkle/Electron 相關配置鍵
-   - Bundle ID 追加 `.appports.stub` 後綴
-4. 執行 Ad-hoc 代碼簽名
-
-#### iOS Stub Portal
-
-適用於 iOS 應用（在 Mac 上運行的 iOS 應用），與 macOS 版本的差異：
-
-- 圖標從 `Wrapper/` 或 `WrappedBundle/` 目錄內的 `.app` 包中提取
-- 使用 `sips` 將 PNG 縮放至 256×256 並轉換爲 `.icns` 格式
-- `Info.plist` 從 `iTunesMetadata.plist` 生成（iOS 應用不包含標準 `Info.plist`）
-- 不執行代碼簽名，僅清理擴展屬性（`xattr -cr`）
-
-## 策略選擇決策樹
+普通應用預設使用輕量的**啟動殼**，也叫 Stub Portal。你點選本地入口，入口再啟動外接磁碟上的真實應用。它不是第二份完整應用，也不是備份；外接磁碟不線上時，入口本身不能代替真實應用執行。
 
 ```mermaid
-flowchart TD
-    A[開始遷移] --> B{是否爲目錄操作?}
-    B -->|是: singleAppContainer 或 appSuiteFolder| C[Whole App Symlink]
-    B -->|否| D{路徑擴展名是否爲 .app?}
-    D -->|否| C
-    D -->|是| E{是否爲 iOS 應用?}
-    E -->|是| F[iOS Stub Portal]
-    E -->|否| G[macOS Stub Portal]
+flowchart LR
+  A[點選本地應用入口] --> B[找到外接磁碟上的真實應用]
+  B --> C[啟動應用]
+  C --> D[按原有位置訪問應用資料]
 ```
 
-::: tip 關於 Deep Contents Wrapper
-該策略在當前版本中已不再被選爲新遷移方案。`preferredPortalKind()` 方法對所有 `.app` 應用統一返回 `stubPortal`。Deep Contents Wrapper 僅在還原歷史遷移時作爲遺留方案被識別。
-:::
+最後一步解釋了為什麼“遷移應用”和“遷移資料”分開：應用本體移走後，聊天記錄和其他資料可能仍在本機。
+
+## 不同內容怎樣保留入口 {#types}
+
+| 內容 | AppPorts 的處理方式 |
+| --- | --- |
+| 普通 macOS 應用 | 使用啟動殼指向外部真實應用。 |
+| 支援遷移的 iPhone／iPad 應用 | 使用適合其包裝結構的啟動入口；能否遷移仍受系統和應用條件限制。 |
+| 包含多個應用的資料夾或套件 | 使用資料夾鏡像，為其中應用建立入口，其餘受管內容透過連結關聯。 |
+| 手動選擇傳統連結遷移 | 右鍵“使用傳統連結遷移”，將整個應用放在外部，本地保留符號連結。它仍是可用的手動選項，相容性取決於應用。 |
+| 歷史遷移專案 | 識別舊入口，提供相應的還原或解除操作。 |
+
+舊版的整體符號連結、Contents 目錄入口可能仍出現在已有遷移中。“仍能識別”不代表當前新遷移預設使用它們。目錄結構或應用內部路徑的特殊依賴，也可能影響相容性。
+
+## 為什麼有更新保護 {#updates}
+
+有些自更新程式會替換或刪除正在更新的應用。對需要保護的應用，AppPorts 會提供鎖定遷移，降低外部副本被更新流程意外改動的風險。
+
+鎖定也可能阻止應用自行更新。遇到更新失敗時，應按 AppPorts 的提示處理，或遷回本地更新後再遷出；不要反覆手工刪除不認識的檔案。
+
+“Sparkle”“Electron”說明應用使用的框架或更新線索，不單獨等於“必須鎖定”或“一定無法更新”。具體操作見[遷移應用後的更新](/docs/core#updates)。
+
+## 這對你意味著什麼 {#limits}
+
+本地入口儘量保留熟悉的開啟方式，但它不能消除外接磁碟依賴，也不能保證所有外掛、系統權限和應用自身更新都不受影響。遷移完成後，應從平時使用的入口啟動，並檢查常用功能。
+
+相關內容：[本地入口與真實應用](/docs/glossary#local-portal) · [徽章與狀態](/docs/badges) · [資料遷移方式](/docs/datamigrae/baseinfo)
+
+早期 Contents、整體符號連結及啟動殼實現變化見[歷史應用遷移方式](/docs/archive/app-strategies)。

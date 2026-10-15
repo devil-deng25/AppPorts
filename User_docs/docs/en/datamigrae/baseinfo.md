@@ -1,98 +1,38 @@
----
-outline: deep
----
+# Data migration
 
-# How Data Migration Works
+Apps usually look for data at a fixed location. AppPorts must do more than copy files elsewhere: the app still needs to find them after the move.
 
-![](https://pic.cdn.shimoko.com/appports/%E6%88%AA%E5%B1%8F2026-05-08%2008.38.05.png)
+## Ordinary directories: link migration {#symlink}
 
-AppPorts moves an app's associated data directories to an external drive to free up local space. It uses two strategies, depending on the directory's location:
+For eligible ordinary directories, AppPorts moves data to external storage and leaves a symbolic link at the original location. Access through that location follows the link to the external data.
 
-| Directory | Strategy | Reason |
-|-----------|----------|--------|
-| `~/Library/Containers/`, `~/Library/Group Containers/` | Mount migration | The sandbox checks the resolved path and rejects symbolic links that lead outside the container |
-| Other `~/Library/` subdirectories, tool directories, and custom folders | Symbolic links | These are not restricted by the sandbox, so symbolic links are the simplest approach |
+Tool caches, some application-support files and custom folders can use this method, subject to checks. The target must remain where the link points; moving external data manually can break the link.
 
-This page covers symbolic links. For the other strategy, see [Mount Migration](/en/datamigrae/mount-migration).
+## Container data: mount migration {#mount}
 
-## Symbolic-Link Strategy
+Some apps store data in system-managed containers. Containers have access restrictions; leaving a link at the original path does not necessarily let the app access any target that link names.
 
-1. Copy the entire local directory to the external drive.
-2. Write the management marker `.appports-link-metadata.plist` to the external directory.
-3. Rename the original local directory to a hidden safety backup on the same volume.
-4. Create a symbolic link at the original path, pointing to the external copy.
-5. Remove the safety backup after the link is created successfully.
+For eligible container data directories, AppPorts creates a dedicated APFS volume on the external drive, copies the data into it and attaches that volume at the original directory. The app continues to use the same path. This is **mount migration**.
 
-```
-~/Library/Application Support/SomeApp
-    → /Volumes/External/AppPortsData/SomeApp  （符号链接）
-```
+| Comparison | Link migration | Mount migration |
+| --- | --- | --- |
+| What remains at the original location | A link to an external location | A directory where the external volume is attached |
+| Typical use | Tool directories, custom folders and eligible ordinary data | Container data that passes the checks |
+| External storage requirements | Depend on content and filesystem capabilities | Currently requires unencrypted APFS |
+| Does it automatically re-sign the app? | Current migration does not automatically re-sign | Replacing the app signature is unnecessary |
 
-```mermaid
-flowchart TD
-    A[Select data directory] --> B{Check permissions and protection}
-    B -->|Failed| Z[Stop]
-    B -->|Passed| C{Check destination conflicts}
-    C -->|Management marker matches fully| D[Automatic recovery mode]
-    C -->|Real directory conflict| Y[Stop and report conflict]
-    C -->|No conflict| E[Copy to external drive]
-    D --> E
-    E --> F[Write management marker]
-    F --> G[Rename to local safety backup]
-    G -->|Failed| H[Keep external copy and stop]
-    G -->|Succeeded| I[Create symbolic link]
-    I -->|Failed| J[Restore local safety backup and keep external copy]
-    I -->|Succeeded| K[Remove local safety backup]
-    K -->|Succeeded| L[Migration complete]
-    K -->|Failed| M[Migration complete with safety backup retained]
-```
+## Why the whole container cannot simply move {#structure}
 
-## Management Marker
+Containers hold both application data and structures macOS requires to remain intact. Changing protected structure can prevent launch even when copying and mounting succeed.
 
-The `.appports-link-metadata.plist` file in the external directory identifies it as managed by AppPorts:
+AppPorts may therefore display a directory without offering migration. Visibility does not establish eligibility. Do not bypass protection through a custom-folder selection. See [why some container directories cannot move](/docs/blog/data-migration-boundaries#starting-point).
 
-| Field | Description |
-|-------|-------------|
-| `schemaVersion` | Format version, currently 1 |
-| `managedBy` | `com.shimoko.AppPorts` |
-| `sourcePath` | Original local path |
-| `destinationPath` | External destination path |
-| `dataDirType` | Data directory type |
+## What else is needed for success {#access}
 
-The scanner uses this marker to distinguish AppPorts links from user-created links, and to resume interrupted migrations automatically. Matching is strict: all five fields must agree before a managed directory can be reused. Otherwise it is treated as a conflict. Similar directory sizes are never sufficient reason to take over or overwrite data.
+Access also depends on the drive being online, system authorization and the app's own behavior. AppPorts having permission to move data does not grant the app permission to read external storage.
 
-Relinking and normalization work only with directories. AppPorts will not relink a regular external file as if it were a directory.
+After migration, check the state, open the app, and verify existing content and saving. Keep a separate backup of important data. Copy verification cannot guarantee that every background program has stopped changing the source.
 
-## Supported Data Directory Types
+Related: [migration steps](/docs/datamigrae/operation), [mount and authorization experiments](/docs/blog/why-mount-and-apfs#mount-experiment), [classic mode](/docs/classic-mode), and the [glossary](/docs/glossary).
 
-| Type | Path | Strategy |
-|------|------|----------|
-| `applicationSupport` | `~/Library/Application Support/` | Symbolic link |
-| `preferences` | `~/Library/Preferences/` | Symbolic link |
-| `containers` | `~/Library/Containers/` | Mount |
-| `groupContainers` | `~/Library/Group Containers/` | Mount |
-| `caches` | `~/Library/Caches/` | Symbolic link |
-| `webKit` | `~/Library/WebKit/` | Symbolic link |
-| `httpStorages` | `~/Library/HTTPStorages/` | Symbolic link |
-| `applicationScripts` | `~/Library/Application Scripts/` | Symbolic link |
-| `logs` | `~/Library/Logs/` | Symbolic link |
-| `savedState` | `~/Library/Saved Application State/` | Symbolic link |
-| `dotFolder` | `~/.npm`, `~/.vscode`, etc. | Symbolic link |
-| `custom` | User-selected path | Symbolic link |
-
-## Restore Process
-
-1. Confirm that the local path is a symbolic link pointing to a valid external directory.
-2. Copy the external directory to a local staging directory.
-3. Delete the symbolic link and rename the staging directory to the original path.
-4. Delete the external directory on a best-effort basis.
-
-If copying fails, the symbolic link is left unchanged. If renaming fails, the link is recreated and the staging directory is kept for manual recovery.
-
-## Error Handling and Rollback
-
-- **Copy fails**: Remove the external files copied so far and perform no further steps.
-- **Destination conflict**: If a real external directory already exists and its marker does not match, stop and preserve both copies.
-- **Renaming to the safety backup fails**: Stop and keep the external copy; leave the local source unchanged.
-- **Creating the symbolic link fails**: Restore the safety backup to its original path and keep the external copy.
-- **Removing the safety backup fails**: Migration is complete, but a local `.appports-migration-backup-*` remains. You can remove it manually after verifying the result.
+Further reading: [why AppPorts uses mounts and APFS](/docs/blog/why-mount-and-apfs), and [data-directory boundaries](/docs/blog/data-migration-boundaries).

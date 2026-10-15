@@ -1,46 +1,36 @@
 # 快速開始
-## 安裝AppPorts
-安裝 AppPorts 需要以下兩個前置需求   
-1. 擁有一個穩定的外部存儲媒介（如硬盤）
-2. 操作系統不低於 macOS 12.0 (Monterey) 或更高版本
 
-### 下載
-前往 [Github releases](https://github.com/wzh4869/AppPorts/releases)頁下載最新版本 dmg 安裝包
+準備一塊連線穩定、空間足夠的外接磁碟，以及執行 macOS 12 或更高版本的 Mac。本頁帶你完成安裝和第一次應用遷移；如果你只想移動聊天記錄、快取或模型等資料，可以在準備完成後轉到[遷移資料](/docs/datamigrae/operation)。
 
-::: tip
-如此鏈接無法打開，請訪問此鏈接來獲取安裝包[直鏈網盤](https://file.shimoko.com/AppPorts)
-:::   
+## 下載並安裝 {#install}
 
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/download.gif?sign=Xb9FOEqPxR8Q7WLixKzg5NCYcjVzmzq2eh0634xGdG0=:0)
+1. 從[AppPorts 下載頁](https://file.shimoko.com/AppPorts)獲取安裝包，也可以使用 [GitHub Releases](https://github.com/wzh4869/AppPorts/releases)。
+2. 開啟安裝包，把 AppPorts 拖入 Mac 的“應用程式”資料夾。
+3. 從“應用程式”開啟 AppPorts，按首次使用引導繼續。不要長期從安裝映象中執行。
 
+## 準備權限與外接磁碟 {#permissions}
 
-### 安裝並啓動
-1. 打開 .dmg 安裝包  
-2. 將應用拖動到 Application 文件夾中
-3. 啓動應用
+1. 連線外接磁碟，在 AppPorts 中選擇外部儲存位置。
+2. 按提示到系統的“隱私與安全性”設定中，為 AppPorts 開啟“完全磁碟訪問權限”；系統要求時再授予 App 管理權限。
+3. 按提示重新開啟 AppPorts。之後可在“設定 → 準備狀況”中點選“檢查”。
 
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/install.gif?sign=dg-gU67tz19m6DGdI3NywEAcuqKnyTpWGas0YhZeGfM=:0)
+**只有容器資料的掛載遷移要求未加密的 APFS 儲存。** 普通應用和普通資料夾按各自條件檢查，不必為了第一次應用遷移就抹掉現有磁碟。格式不符合要求時，先閱讀[外接磁碟準備方法](/docs/storage-guide#apfs)。
 
+## 完成第一次遷移 {#first-move}
 
-### 必要授權
-首次運行時，AppPorts 需要完全磁盤訪問權限來讀取和修改 /Applications 目錄。
-1. 打開系統設置 → 隱私與安全性。
-選擇完全磁盤訪問權限。  
-2. 點擊 + 按鈕，添加 AppPorts，然後打開開關。   
-3. 重新啓動 AppPorts。   
+1. 選擇一個你熟悉的應用，儲存工作並完全退出它。
+2. 在“Mac 本地應用程式”中選中應用，點選“遷移到外部”。
+3. 閱讀目標位置和衝突提示，確認是你要移動的內容後繼續。
+4. 等待複製、檢查和收尾全部完成。過程中保持外接磁碟連線，不要重新開啟該應用。
+5. 從 Finder 或 Dock 開啟遷移後的應用，檢查主要功能是否正常。
 
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/outh.gif?sign=fTXqbKCR_tZBKDb6p1DziuJYjD9NZAJk-Zsw7c4oOJM=:0)
-   
-#### AppStore 應用自更新授權
-macOS 15.1（Sequoia） 及以上操作系統的用戶，需在 AppStore 中開啓 “下載並安裝大型 App 到獨立存儲盤“ 來確保 AppPorts 創建外部存儲的/application 文件夾以支持對 AppStore 應用自動更新 
-::: warning ⚠️ macOS 15.1（Sequoia） 的之前版本系統因操作系統限制暫不支持該功能
-需在 AppPorts 右上角設置-勾選開啓來自 AppStore 應用的遷移功能。後續應用更新需手動二次遷移以覆蓋。
-:::    
-   
-1. 打開 AppStore
-2. 在狀態欄中點擊設置-勾選“下載並安裝大型 App 到獨立存儲盤“並選擇與 AppPorts 中外部存儲庫相同的外置存儲媒介
- 
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/appstore.gif?sign=JwDPVgjgPb3AulPjZq6Y2KgubkHxmGNqaUawCBRhCEM=:0)
+完成後，真實應用存放在外接磁碟，本地保留啟動入口；列表會顯示相應的[狀態徽章](/docs/badges)。遇到同名目標、權限不足或中斷時，先按提示處理，不要自行刪除兩邊的資料。
 
+## 下一步 {#next}
 
-   
+- 應用能正常開啟：繼續瞭解[遷移後的更新方式](/docs/core#updates)。
+- 想移動應用產生的資料：閱讀[遷移資料](/docs/datamigrae/operation)。
+- 想恢復本地存放：閱讀[還原與接回](/docs/restore)。
+- 操作沒完成或應用打不開：從[常見問題與排查](/docs/faq)查詢對應現象。
+
+遷移會改變資料的存放位置，不會替代備份。日常使用前先連線外接磁碟，斷開前退出使用它的應用並正常彈出磁碟。

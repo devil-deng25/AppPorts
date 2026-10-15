@@ -6,37 +6,33 @@ outline: deep
 
 AppPorts 完全免費、開源、無廣告，也沒有接入任何商業推廣。專案由個人在業餘時間維護，沒有任何商業收入。
 
-如果 AppPorts 幫你省下了數十 GB 的本機空間，歡迎掃碼請作者喝杯咖啡 —— **金額不限，一分也是心意**。你的支持，是專案持續更新的動力。
+如果 AppPorts 幫你省下了幾十 GB 的本地空間，歡迎掃碼請作者喝杯咖啡 —— **金額不限，一分也是心意**。你的支援，是專案持續更新的動力。
 
-## 贊助者
+## 贊助者 {#section-1}
 
-<script setup>
-import SponsorList from "../.vitepress/theme/components/SponsorList.vue";
-</script>
-
-<SponsorList locale="zh-Hant" />
+<SponsorList />
 
 本頁與 AppPorts 的「關於 AppPorts」頁面同步展示贊助者，順序為金額從高到低、金額相同時按贊助時間從早到晚；**贊助金額僅在本頁展示**。
 
-## 掃碼贊助
+## 掃碼贊助 {#section-2}
 
-<div align="center">
-  <img src="https://pic.cdn.shimoko.com/thanks.png" alt="贊助 QR Code" width="320" />
-</div>
+![贊助二維碼](https://pic.cdn.shimoko.com/thanks.png)
 
-使用 WeChat 掃碼即可贊助。**沒有最低金額要求**，多少隨意，量力而為就好。
+使用微信掃碼即可贊助。**沒有最低金額要求**，多少隨意，量力而行就好。
 
-## 留言說明
+## 留言說明 {#section-3}
 
-贊助時，請在留言（備註）中寫下你的**暱稱**；**個人連結為選填**，GitHub 主頁、個人部落格、社群帳號等都可以。
+贊助時，請在留言（備註）中寫下你的**暱稱**；**個人連結可選**，GitHub 主頁、個人部落格、社交帳號等都可以。
 
-收到贊助後，我們會把「暱稱 + 連結」收錄，並展示在上面的名單以及 AppPorts 的「關於 AppPorts」頁面中，感謝每一份支持。
+收到贊助後，我們會把「暱稱 + 連結」收錄，並展示在上面的名單以及 AppPorts 的「關於 AppPorts」頁面中，感謝每一份支援。
 
 ::: tip 不想公開也沒關係
 未提供暱稱時，我們不會展示贊助資訊；提供暱稱但沒有連結時，僅展示暱稱，不附帶跳轉連結。
 :::
 
-## 展示順序
+如需修改贊助名單中的暱稱、個人連結或其他展示資訊，請聯絡 [a@shimoko.com](mailto:a@shimoko.com)，並註明原暱稱和需要修改的內容。
+
+## 展示順序 {#section-4}
 
 贊助者按以下規則排序：
 
@@ -49,4 +45,4 @@ import SponsorList from "../.vitepress/theme/components/SponsorList.vue";
 贊助金額沒有下限，也不影響你使用 AppPorts 的任何功能——它始終對所有使用者完全免費。
 :::
 
-感謝每一位支持 AppPorts 的朋友 ❤️
+感謝每一位支援 AppPorts 的朋友 ❤️

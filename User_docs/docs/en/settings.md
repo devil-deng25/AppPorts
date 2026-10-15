@@ -1,69 +1,72 @@
----
-outline: deep
----
+# Settings and permissions
 
-# Settings
+Open settings with the gear at the top right of the main window. Before moving anything, check Readiness and follow the permission and storage prompts. Available checks can differ between macOS versions.
 
-AppPorts' settings page is accessible via the gear icon in the upper right corner of the main window.
+## Readiness and system permissions {#permissions}
 
-## App Store & iOS Settings
+| Item | Purpose | What to do |
+| --- | --- | --- |
+| Full Disk Access | Let AppPorts read and manage protected data locations. | Open System Settings from Readiness, grant access and reopen AppPorts when prompted. |
+| App Management | Allow managing other apps when macOS requires it. | Follow the system prompt or the Readiness link. |
+| Removable Volumes | Let the moved app access external data. | The original app may ask separately on first access; this is distinct from AppPorts' permissions. |
+| External storage | Check connection, format and encryption. | Choose a suitable destination using the [storage guide](/docs/storage-guide). |
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| App Store App Migration | Allows migration of App Store apps. Must be manually enabled on macOS versions below 15.1 | Off |
-| iOS App Migration | Allows migration of iOS/iPadOS apps (Mac version) | Off |
+Installation location and space needed for the current operation are checked when you select a directory and start migration. Run AppPorts from Applications, not directly from its installer image.
 
-::: tip 💡 macOS 15.1+ Users
-macOS 15.1 and later support native App Store app installation to external drives. It is recommended to enable "Download and install large apps to an external drive" in App Store settings instead of using AppPorts' migration toggle.
-:::
+Granting access to AppPorts does not authorize other apps. For missing data, first check [mount state and the original app's permissions](/docs/faq#missing-data).
 
-## Signing Settings
+## App Store and non-native apps {#app-store}
 
-| Setting | Location | Description | Default |
-|---------|----------|-------------|---------|
-| Re-sign after migration | Top toolbar of Data Directories, **visible only in classic mode** | Applies an Ad-hoc signature to the associated app after symbolic-link migration | Off |
-| Auto Re-sign at Login | Settings | Re-signs apps recorded as originally Ad-hoc in their signature backups to handle signatures becoming invalid after a restart; skips sandboxed apps except in classic mode | Off for new installations; remains on for existing users who already installed the login agent |
+On macOS 15.1 and later, App Store can manage external installations. AppPorts no longer requires manually enabling these two migration switches. Check App Store settings for the external download option for large apps.
 
-Outside classic mode, sandboxed apps cannot be re-signed through any entry point: re-signing may prevent them from opening on macOS 27. Container data uses [mount migration](/en/datamigrae/mount-migration), which needs no signature changes.
+Earlier systems show Allow Migration of Mac App Store Apps and Allow Migration of Non-Native Apps. Read the prompts before enabling them: system support, updates and device requirements still apply. See [application migration](/docs/core#updates).
 
-The login script does not re-sign apps with new records containing a complete original app backup. AppPorts verifies signing operations and safely replaces the app. The installed script is synchronized when AppPorts starts.
+## Classic data migration mode {#classic-data-migration-mode}
 
-"Auto Re-sign at Login" installs the LaunchAgent `com.shimoko.AppPorts.re-sign` and writes to the default AppPorts log. Re-signing and backups target the real app on the external drive, rather than the local launcher. See [Re-signing and Crash Prevention](/en/datamigrae/resign).
+Classic data migration mode (not recommended) is off by default and retained for users who still need to handle legacy container links. Enabling it requires risk confirmation. Disabling it does not restore data or changed signatures.
 
-## Classic Data Migration Mode (Not Recommended) {#classic-data-migration-mode}
+Migration and re-signing are separate. This switch does not reinstate automatic re-signing. See [classic mode](/docs/classic-mode) for scope and transition steps, and the [historical archive](/docs/archive/data-signing) for old behavior.
 
-This switch is at the bottom of Settings and is off by default. It is retained for users who already rely on the 1.8.1 workflow and cannot switch yet. If the external drive is not APFS, keep container data on this Mac instead of enabling this mode to bypass the APFS requirement. See [Why External Drives Must Use APFS](/en/why-apfs#what-to-do). Before enabling it, select "I understand these risks" in the confirmation dialog. On macOS 27, a message beside the switch explains that re-signed sandboxed apps may not open. Enabling it changes the following:
+## Manual signing and repair {#manual-signing}
 
-| Item | Off (default) | On |
-|------|---------------|----|
-| Container directory buttons | "Mount migration" only | "Migrate" (symbolic link) alongside "Mount migration" |
-| Re-signing dialog before container migration | Hidden | Shown, with migration only selected by default |
-| Re-signing sandboxed apps | Refused at every entry point | Allowed, with a second confirmation explaining the consequences each time |
-| "Re-sign after migration" switch | Hidden | Shown in the Data Directories toolbar |
-| "Normalize", "Relink", and "Link Details" for containers | Disabled, with instructions to restore before using mount migration | Available |
+Signing changes application identity; it does not move files to another location. Use manual re-signing only when you understand its purpose. Sandboxed apps are restricted by default; classic mode still requires confirmation for the current operation.
 
-Classic mode restores the complete old workflow, including its risks. Re-signed sandboxed apps may not open on macOS 27, requiring data restoration and reinstallation. AppPorts marks these apps "Signature replaced" and reminds you at startup; see [Upgrading to macOS 27](/en/macos-27). Turning classic mode off does not change existing symbolic-link migrations, and "Restore" remains available.
+Once the app list confirms that an app is re-signed, its context menu keeps Restore Original Signature and hides Resign This App. Eligible apps show the re-sign action again after returning to an official state. If inspection is inconclusive, use Check Signature first rather than treating menu visibility as a health check.
 
-## Mount Migration
+Restore Original Signature requires a suitable, verified original app. Do not force a different version into place. For Signature replaced, start with the repair panel. Without a usable backup, follow the instructions for an official original. Full steps are in [upgrades and repair](/docs/macos-27#repair).
 
-Mount migration has no separate setting. "Readiness" in Settings checks Full Disk Access, the AppPorts installation location, and the external storage format, and explains what needs attention. After the first successful mount migration, AppPorts installs the login agent `com.shimoko.AppPorts.container-mount` to remount online volumes at their container directories after login. It is uninstalled automatically when the last mount record is restored. On older systems such as macOS 12, the agent cannot display an administrator password prompt; open AppPorts after login to finish remounting.
+### Where originals are saved {#signature-backups}
 
-## Logging Settings
+Starting with 1.9.1 build 31, when you manually re-sign an officially signed app, AppPorts retains its verified complete original in a **visible `AppPorts Backups` folder at an external volume's root**, with a bilingual `README.txt`. No additional location picker or backup-management page is needed; inspect it directly in Finder.
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Enable Logging | Writes runtime logs to file | On |
-| Max Log Size | Automatically truncates older half when log file exceeds this size | 2 MB |
-| Log Location | Log file save path | `~/Library/Application Support/AppPorts/AppPorts_Log.txt` |
+AppPorts tries the app's own external volume first, then the current external library's volume, then other suitable external volumes, preferring more free space. A destination must be a connected, writable, local physical external drive with enough capacity. Internal drives, network volumes and disk images are excluded. Without a suitable drive, the operation stops before changing the installed app.
 
-### Log Operations
+**Even an app installed internally needs an external drive for its original.** Only small indexes and operation records remain internally long-term; re-signing still needs temporary workspace. On the same volume, the original can move directly into the backup folder. Across volumes, AppPorts copies and verifies durable external storage before removing the internal temporary original.
 
-| Operation | Description |
-|-----------|-------------|
-| View in Finder | Opens the directory containing the log file |
-| Export Diagnostic Package | Generates a ZIP file containing logs, operation records, and system info |
-| Clear Log | Clears current log file contents |
+These originals restore app contents and the official signature. **They do not contain messages, documents or other application data.** They are not an independent disaster-recovery backup: a drive failure can affect both the app and its original if they share that drive.
 
-For detailed log descriptions, see [Logging & Diagnostics](/en/logging).
+### Restore and clean up originals {#signature-backup-cleanup}
 
-Before a manual backup, re-sign, or restoration, AppPorts stops the background re-signing task for the current login and waits for its child processes to exit, so it cannot overwrite a freshly restored signature. The login agent configuration remains, and the setting applies again at the next login. If AppPorts cannot confirm that the background task has stopped, the manual operation is aborted.
+Connect the drive holding the original, then choose Restore Original Signature for the installed app in AppPorts. It checks version, content, developer identity and related data dependencies. Re-signing the same version again retains the first official original rather than replacing it with a re-signed copy.
+
+AppPorts keeps originals that still have recovery value. It automatically removes redundant originals only after verifying an official restored state or an authenticated newer official version from the same developer, and excluding pending operations and data dependencies. Useful complete originals saved internally by older versions move externally when conditions permit; the internal copy is removed after successful verification.
+
+If you no longer need an original, you can delete that package in Finder. This does not remove the installed app or personal data, but loses the offline recovery capability provided by that copy. An official reinstall may then be needed. Trash still occupies space, and shared APFS blocks mean displayed size is not the amount you will necessarily recover.
+
+Keep the folder in place, do not modify originals, and do not launch them as everyday apps. An offline drive does not mean an original has become invalid. Resolve pending operations through AppPorts before cleanup. For identity-only records, see [historical signature backups](/docs/archive/data-signing#backups).
+
+### Old login tasks {#login-signing}
+
+Automatic re-signing at login is disabled on every macOS version; build 31 also removes its settings card. Open AppPorts once after updating so it can handle old login tasks. Only failed cleanup displays “The old login re-signing task has not been fully disabled. Please retry.” Use Retry and keep the error details.
+
+## Background reconnection {#mount-agent}
+
+Mount migration configures a login task to attach online data volumes at their original directories. It does not re-sign apps and cannot guarantee completion before every login app starts.
+
+Open AppPorts once after moving or updating it so the background program's location can be checked. If administrator authorization is required, open AppPorts to complete it. [Restore managed container data](/docs/restore#data) before removing AppPorts.
+
+## Log settings {#logs}
+
+Enable or disable logging, adjust maximum log size, reveal logs in Finder, or clear them. To report a problem, use Logs → Export Diagnostic Package in the menu bar. Export does not send the package automatically.
+
+Inspect the contents before sharing, and include macOS and AppPorts versions, the action you took and the displayed message. See [reporting a problem](/docs/faq#feedback) and the [privacy policy](/docs/privacy).

@@ -1,46 +1,40 @@
----
-outline: deep
----
+# Contributor guide
 
-# Contributing
+Thank you for your interest in AppPorts. Contributions are welcome, whether fixing bugs, improving documentation, or adding features.
 
-Thank you for your interest in AppPorts! We welcome community members to contribute, whether it's fixing bugs, improving documentation, or adding new features.
+## Before you start {#section-1}
 
-## Before You Start
+1. Search existing [Issues](https://github.com/wzh4869/AppPorts/issues) for duplicates.
+2. Fork and clone the project.
+3. Create a feature (`feat/your-feature`) or fix (`fix/your-fix`) branch from `develop`.
 
-1. Search existing [Issues](https://github.com/wzh4869/AppPorts/issues) to confirm no related duplicates
-2. Fork the project and clone locally
-3. Create a feature branch (`feat/your-feature`) or fix branch (`fix/your-fix`) based on the `develop` branch
+## Development approach {#section-2}
 
-## Development Approach
+### Vibe coding {#section-3}
 
-### About Vibe Coding
+AppPorts accepts AI-assisted development with tools such as Cursor, GitHub Copilot, and Claude. These tools can improve productivity, but **the contributor remains responsible for code quality and correctness**.
 
-The AppPorts project accepts Vibe Coding development using AI-assisted tools (e.g., Cursor, GitHub Copilot, Claude). We understand AI tools can significantly improve development efficiency, **but the quality and correctness of submitted code is the contributor's responsibility**.
+- **AI assistants must follow the root `CLAUDE.md`**, which defines coding, architecture, build commands, and workflow. Explicitly ask the assistant to read it first if it does not do so automatically.
+- Cross-check generated code with multiple models where possible to reduce blind spots.
+- Review generated code yourself for consistency with the project style.
+- AI does not replace understanding macOS behavior. Manually validate filesystem, signing, and permission logic.
+- **Core-feature changes**, including migration strategies, data migration, and signing, require an Issue discussion and confirmation before development.
 
-When using Vibe Coding:
+### Code style {#section-4}
 
-- **AI assistants must follow the project root's `CLAUDE.md`**, which defines coding guidelines, architecture conventions, build commands, and development workflow. If the AI assistant doesn't automatically read this file, explicitly ask it to read `CLAUDE.md` first in your prompts
-- Consider cross-validating generated code quality and security with multiple AI models to avoid blind spots of a single model
-- AI-generated code may not match the project's existing style; please review manually before submission
-- AI cannot replace understanding of macOS system behavior; please manually verify logic involving file system operations, code signing, and permission management
-- **Core functionality** changes (e.g., migration strategies, data directory migration, code signing) must first be discussed via Issue before development
+- Follow Swift conventions and the existing project style.
+- Write clear Swift documentation comments for complex logic.
+- Use `LocalizedStringKey` APIs for SwiftUI literals and `.localized` for AppKit/API strings.
 
-### Code Conventions
+## Testing requirements {#section-5}
 
-- Follow Swift code conventions and the project's existing style
-- Write clear Swift documentation comments for complex logic
-- SwiftUI string literals use `LocalizedStringKey` API; AppKit/API strings use `.localized`
-
-## Testing Requirements
-
-::: warning ⚠️ All PRs Must Pass Tests
-Regardless of development method, the following tests must be completed before submitting a PR. CI automatically runs compile smoke checks; unpassed PRs will be blocked from merging.
+::: warning All PRs must pass testing
+Complete the required checks before submitting a PR, regardless of development method. CI runs a compilation smoke check and blocks merging when it fails.
 :::
 
-### Required: Compile Smoke Check
+### Required: compilation smoke check {#section-6}
 
-All PRs must pass Xcode Release compilation — this is a hard requirement for merging:
+Every PR must pass a Release build in Xcode. This is a hard merge requirement:
 
 ```bash
 xcodebuild clean build \
@@ -54,13 +48,13 @@ xcodebuild clean build \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-### On-Demand: Specialized Tests
+### As applicable: focused tests {#section-7}
 
-When a PR involves corresponding modules, it is recommended to proactively run the following specialized tests. CI also runs these in Advisory mode in PRs; results do not block merging but provide feedback.
+Run the relevant focused tests when a PR changes these modules. CI also runs them in advisory mode: they provide feedback without blocking merges.
 
-#### Data Directory Tests
+#### Data-directory tests {#section-8}
 
-Run when PR involves `DataDirMover`, `DataDirScanner`, or data directory migration logic:
+For `DataDirMover`, `DataDirScanner`, or related migration logic:
 
 ```bash
 xcodebuild test \
@@ -76,9 +70,9 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-#### App Migration Tests
+#### App-migration tests {#section-9}
 
-Run when PR involves `AppMigrationService`, `AppScanner`, or app migration logic:
+For `AppMigrationService`, `AppScanner`, or app-migration logic:
 
 ```bash
 xcodebuild test \
@@ -94,9 +88,9 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-#### Logging Tests
+#### Logging tests {#section-10}
 
-Run when PR involves `AppLogger` or diagnostic functionality:
+For `AppLogger` or diagnostics:
 
 ```bash
 xcodebuild test \
@@ -111,9 +105,9 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-#### Localization Audit
+#### Localization audit {#section-11}
 
-Run when PR involves user-visible text, menus, popups, settings, or error messages:
+For user-visible text, menus, dialogs, settings, and errors:
 
 ```bash
 xcodebuild test \
@@ -128,57 +122,52 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-### Test Overview
+### Test overview {#section-12}
 
-| Test Suite | Modules | When to Run |
-|------------|---------|-------------|
-| Compile Smoke Check | Entire project | **Required** (CI enforced) |
-| `DataDirMoverTests` | Data directory migration | When involving `DataDirMover` |
-| `DataDirScannerTests` | Data directory scanning | When involving `DataDirScanner` |
-| `AppMigrationServiceTests` | App migration | When involving `AppMigrationService` |
-| `AppScannerTests` | App scanning | When involving `AppScanner` |
-| `AppLoggerTests` | Logging & diagnostics | When involving `AppLogger` |
-| `LocalizationAuditTests` | Localization | When involving user-visible text |
+| Suite | Area | When to run |
+| --- | --- | --- |
+| Compilation smoke check | Entire project | **Required** by CI |
+| `DataDirMoverTests` | Data migration | Changes to `DataDirMover` |
+| `DataDirScannerTests` | Data scanning | Changes to `DataDirScanner` |
+| `AppMigrationServiceTests` | App migration | Changes to `AppMigrationService` |
+| `AppScannerTests` | App scanning | Changes to `AppScanner` |
+| `AppLoggerTests` | Logs and diagnostics | Changes to `AppLogger` |
+| `LocalizationAuditTests` | Localization | User-visible text changes |
 
-## Localization
+## Localization {#section-13}
 
-- Localization adaptation is recommended but not mandatory for external contributor PRs
-- If a PR adds, modifies, or deletes user-visible text, you're welcome to update `Localizable.xcstrings` in the same PR
-- If not handling it this time, please briefly explain the reason or future plan in the PR description
-- SwiftUI string literals use `LocalizedStringKey` API; AppKit/API strings use `.localized`
-- Dynamic text should use formatted keys, e.g., `String(format: "Sort: %@".localized, value)`
-- Language list is maintained in `AppLanguageCatalog`; do not duplicate in multiple pages
-- If a PR changes menus, popups, settings, log exports, error messages, status text, or onboarding text, it is recommended to check at least the `zh-Hans` and `en` display results
+- Localization is recommended, but not a mandatory entry requirement for external contributors' PRs.
+- When adding, changing, or deleting user-visible text, update `Localizable.xcstrings` in the same PR where possible.
+- If deferred, briefly state the reason or follow-up plan in the PR.
+- Use `LocalizedStringKey` APIs for SwiftUI literals and `.localized` for AppKit/API strings.
+- Prefer format keys for dynamic text, such as `String(format: "排序：%@".localized, value)`.
+- Keep the language list in `AppLanguageCatalog`; do not hardcode duplicate lists across views.
+- For menu, dialog, settings, log-export, error, status, or onboarding changes, inspect actual `zh-Hans` and `en` display at least once.
 
-More rules see: [LOCALIZATION.md](https://github.com/wzh4869/AppPorts/blob/main/LOCALIZATION.md)
+See [LOCALIZATION.md](https://github.com/wzh4869/AppPorts/blob/main/LOCALIZATION.md).
 
-## Commit Conventions
+## Commit conventions {#section-14}
 
-- **Issue First**: Important feature changes should first be discussed via Issue
-- **Keep Atomic**: Each PR should ideally address only one issue or add one feature
-- **Commit Message Suggestions**:
-  - `feat: ...` — New feature
-  - `fix: ...` — Bug fix
-  - `docs: ...` — Documentation update
-  - `refactor: ...` — Refactoring
-  - `test: ...` — Test related
+- Discuss significant feature changes in an Issue first.
+- Keep each PR focused on one problem or feature.
+- Recommended commit prefixes: `feat:` for features, `fix:` for bugs, `docs:` for documentation, `refactor:` for restructuring, and `test:` for testing.
 
-## Submitting a PR
+## Submit a PR {#section-15}
 
-1. Ensure your branch is based on the latest `develop` branch
-2. Push to your Fork repository
-3. Submit a Pull Request to AppPorts' `develop` branch
-4. Fill in required items in the PR template
-5. Wait for CI checks to pass and Code Review
+1. Base your branch on the latest `develop`.
+2. Push to your fork.
+3. Open a Pull Request targeting AppPorts' `develop` branch.
+4. Complete required fields in the PR template.
+5. Wait for CI and code review.
 
-::: tip 💡 Improve Merge Efficiency
-- Keep each PR focused on a single issue or feature
-- Honestly fill in the test situation in the PR template
-- Include screenshots for UI changes
+::: tip Help review move smoothly
+- Keep each PR focused on one issue or feature.
+- Report testing accurately in the template.
+- Include screenshots for UI changes.
 :::
 
-## Welcome Contribution Areas
+## Welcome contribution areas {#section-16}
 
-- Stability and performance improvements for core logic like `AppScanner`
-- UI/UX optimization, especially improvements that feel native to macOS
-- Synchronization and improvement of Chinese and English documentation
+- Stability and performance of core logic such as `AppScanner`.
+- UI/UX improvements, especially native macOS behavior.
+- Keeping Chinese and English documentation complete and synchronized.

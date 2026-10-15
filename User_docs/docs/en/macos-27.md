@@ -1,129 +1,43 @@
----
-outline: deep
----
+# macOS 27 upgrades and repair
 
-# Upgrading to macOS 27
+If you moved container data using an older method or allowed an app's signature to be replaced, update and open AppPorts to inspect existing migrations before upgrading to macOS 27. Newer versions improve checks and recovery, but **updating AppPorts does not automatically repair old signatures or convert old migrations**.
 
-::: tip The key point
-If an app such as WeChat stopped opening from Finder or the Dock after you agreed to re-sign it in an older or test version of AppPorts, follow the repair steps below. Restore old container links first, then restore the original app or reinstall from an official source. **Keep the data directories and do not re-sign again.** A signature error alone does not mean your data is damaged.
-:::
+Old data entries, application identity and system permissions may no longer match. This page does not require everyone to upgrade macOS: it helps when planning an upgrade or handling a problem that has already occurred. For the reasons, see [macOS 27 and migration changes](/docs/principles/macos-27).
 
-## Repair
+## Identify your situation {#check}
 
-Click **Repair** directly in the app’s row, or choose “Show repair steps” from its context menu. Terminal commands are not required. This guide describes the current development version; the manual steps also apply if your version has no repair panel. Connect the original external drive, quit the affected app completely, and keep your data and backups.
+| What you see | Next step |
+| --- | --- |
+| Not yet upgraded; previously used classic container migration or re-signed apps | Connect the drive and inspect affected apps. Complete any required repairs below first. |
+| Already upgraded; an app will not open and shows Signature replaced | Quit it, preserve the original data and open the repair instructions. |
+| Signature check pending | Connect the external drive and retry inspection; do not immediately re-sign. |
+| App and data work normally | Do not migrate again solely because the OS version changed. Maintain backups and use it normally. |
 
-::: tip Automatic re-signing at login
-The current development version disables automatic re-signing at login on macOS 27 or later and stops and removes the old login task. If cleanup is incomplete, retry in Settings.
+No warning badge does not prove every aspect of compatibility. If the signature checks out but the app still fails, continue with [general troubleshooting](/docs/faq#launch).
 
-**Update and open AppPorts once before upgrading macOS** so the installed background task receives the version check. Downloading the new version without opening it does not update the old task.
-:::
+## Repair in order {#repair}
 
-### 1. Restore container data migrated through old links
+Click Signature replaced or Repair in the app list, or use View Repair Steps in its context menu. Connect the original external drive, quit related apps completely and retain existing copies before starting.
 
-If the panel finds container directories linked to the external drive, click “Restore all”. Otherwise skip this step. The manual route is Data Directories → App Data → select the app → restore the linked container directories. Directories already using APFS mount migration do not need restoration just to repair a signature.
+From 1.9.1 build 31, newly retained originals are in `AppPorts Backups` at an external volume's root. Restoration requires that drive even if the installed app remains internal. With several drives, it may differ from the current application library's drive. Connect the original drive and retry; temporary disconnection does not establish a missing backup. See [signature originals](/docs/settings#signature-backups) for location and cleanup rules.
 
-### 2. Restore the original app or reinstall officially
+1. **Handle old container links.** Restore related container data moved through legacy symbolic links to local storage first. APFS-mounted data need not all move back merely to repair a signature; follow the dependencies reported by the repair panel.
+2. **Restore official app identity.** With a usable original, choose Restore Original Signature. Otherwise provide a matching official original as prompted or reinstall from the official source. Before an official overwrite installation, move an externally installed app back locally through AppPorts. A usable backup or matching same-version original can repair it in place. Avoid uninstall methods that also erase personal data.
+3. **Check app and data access.** Open the app from Finder or the Dock and check existing content and normal saving. Successful launch only from a terminal is not a substitute for this check.
+4. **Choose migration again if needed.** Once the app is working, eligible data can use mount migration; unsuitable data can stay local.
 
-- **Full original-app backup available:** use “Restore Original Signature”. This restores the backed-up app version and its signature, including when the real app is on the external drive. Moving it back first is unnecessary. AppPorts checks that the current app matches the backup; an updated or changed app requires a matching official original.
-- **Only a legacy identity record:** supply an official original `.app` of the same version, or reinstall from the App Store or developer’s website. An identity name alone cannot recreate a developer signature.
-- **Installing over an app on the external drive:** first use “Move back” so the installer replaces the real local app rather than just its launcher.
+If any step reports an error, stop and preserve the data and paths shown. Restoring a signature is not another re-sign. Repeated re-signing cannot recover the original developer identity.
 
-**Do not remove the container data directories.** Keep a separate backup of important data. Continued access to chat history and login sessions also depends on app versions, permissions, and the data itself. See [Signature Backups and Restoration](/en/datamigrae/resign#signature-backups-and-restoration).
+## Handle old login tasks {#after}
 
-### 3. Check again and open from Finder or the Dock
+Older versions may have installed a task that re-signs apps at login. Open AppPorts once after updating so it can disable and remove that task. If settings reports unfinished cleanup, use Retry. The 1.9.1 development version disables background automatic re-signing on every macOS version. Build 31 removes the persistent switch, so normally no such settings card appears. [Background reconnection](/docs/settings#mount-agent) for container data remains available.
 
-Click “Check again”, then open the app from Finder or the Dock and confirm that its data is accessible. “Signature check unavailable” is not a confirmed replacement or a successful repair; reconnect the drive and retry. Scanning preserves recovery backups. An app that still opens can be handled later, but opening successfully does not prove its original signature has been restored.
+After restoring the app, some system permissions may need to be granted again. Connect the external drive before use; macOS still handles any applicable first-access prompts.
 
-### 4. Optional: continue migrating the data
+## Are my data damaged? {#data}
 
-After repair, select the data in App Data and click “Migrate”. AppPorts checks the destination and uses [APFS mount migration](/en/datamigrae/mount-migration) for container data, preserving the app’s signature. The current method requires an **unencrypted APFS external drive**. You can choose another drive or leave the data on this Mac. Allow removable-volume access if macOS requests it, and connect the drive before using the app. See [APFS preparation](/en/why-apfs#what-to-do).
+Signature replaced primarily indicates a change of app identity. It does not by itself establish that messages or files are damaged. Keep container directories, external data and backups, then inspect the contents after restoring access.
 
-## Who Is Affected?
+If both locations contain new data or a target conflict is reported, preserve both and use [troubleshooting](/docs/faq#conflict). Do not merge or overwrite them merely to clear the warning.
 
-| Item | Description |
-|------|-------------|
-| Trigger | Upgrading to macOS 27 |
-| Affected apps | Apps whose `~/Library/Containers/` or `~/Library/Group Containers/` data was migrated and which were re-signed Ad-hoc; or sandboxed apps manually re-signed from the right-click menu |
-| Typical symptom | Opening from Finder / Dock does nothing, or the icon appears briefly and disappears without an error dialog. Not all re-signed apps behave this way: QQ Music runs normally on the same Mac with 27 |
-| Data | A signature error alone does not establish data corruption; preserve the original data and backups |
-| Confirmed case | WeChat 4.1.15, macOS 27.0 (26A428) |
-
-Re-signing removes the app's sandbox identity. When macOS 27 checks whether the app is entitled to access its container, existing permission records for its original signature may no longer match. WeChat's logs show `Failed to match existing code requirement`. Apps without an old record, such as QQ Music, are currently allowed through, but lost entitlements such as Keychain login access are not restored. See [Container Data, Sandboxing, and Signing Identity](/en/datamigrae/container-identity).
-
-AppPorts reports a replaced signature only when a backup records an original developer identity and the real app is now confirmed Ad-hoc. A timeout or unreadable external app needs another check. An app that was originally Ad-hoc, a migrated app, or a local launcher does not by itself justify re-signing.
-
-## What Does Not Fix It
-
-| Action | Why It Does Not Help |
-|--------|----------------------|
-| Restoring the data locally and assuming the repair is complete | Restoration fixes access to external data, not the signature. The re-signed app may still quit immediately |
-| Clicking "Resign This App" again | Re-signing caused the problem and simply removes the entitlements again |
-| Adding the app to Full Disk Access | May bypass the container check, but Keychain entitlements are still missing and login sessions may remain broken. This is only a temporary workaround |
-| Treating a successful Terminal launch as a repair | Launching from Terminal borrows Terminal's permissions. Test by opening from Finder / Dock |
-
-## Before Upgrading: Check First
-
-Start with the “Signature replaced” indicators in AppPorts and follow [Repair](#repair). No warning is not a guarantee of macOS 27 compatibility. The optional script only checks accessible paths stored in old backups; moved apps, offline drives, and launcher paths can make it incomplete.
-
-::: details Optional technical checks
-```bash
-BACKUP_DIR="$HOME/Library/Application Support/AppPorts/signature-backups"
-for plist in "$BACKUP_DIR"/*.plist; do
-  [ -f "$plist" ] || continue
-  original=$(/usr/libexec/PlistBuddy -c "Print :signingIdentity" "$plist" 2>/dev/null)
-  app=$(/usr/libexec/PlistBuddy -c "Print :originalPath" "$plist" 2>/dev/null)
-  case "$original" in ""|ad-hoc) continue ;; esac
-  [ -d "$app" ] || continue
-  if codesign -dv "$app" 2>&1 | grep -q "Signature=adhoc"; then
-    printf "%s\n    %s\n" "$app" "$original"
-  fi
-done
-```
-:::
-
-## After Upgrading: Confirm the Symptoms
-
-Open the app from Finder or the Dock first. If it fails and AppPorts confirms a replaced signature, follow [Repair](#repair). Otherwise also check app compatibility, permissions, and the external drive.
-
-::: details Optional technical checks
-Replace the example with the **real app’s path**, not its local launcher. These commands only read information. Ad-hoc must be compared with the original signing record; an access-denied log is a clue, not proof of the cause.
-
-```bash
-codesign -dv --verbose=4 "/Applications/WeChat.app" 2>&1 | grep -E "Authority|TeamIdentifier|Signature"
-log show --last 1m --style compact 2>/dev/null | grep -i "rejected approval request"
-```
-:::
-
-## What AppPorts 1.9.0 Changes
-
-These behaviors describe the current development version:
-
-- Default mode uses APFS mount migration for container data and refuses sandbox-app re-signing.
-- Full backups restore the original application. Legacy records require a matching official app.
-- Confirmed signature replacements and unavailable checks are shown separately; recovery materials are retained.
-- [Classic data migration mode](/en/settings#classic-data-migration-mode) remains off by default. Updating AppPorts does not restore an already replaced signature automatically.
-
-## Common Questions
-
-### Will I Lose Chat History?
-
-A signature error does not itself mean chat history is damaged. Keep the container directories, external data, and backups. Avoid uninstallers that erase app data. Verify access after repair; some login permissions may need to be established again.
-
-### I Restored the Data, but the App Still Will Not Open
-
-Restoring paths does not restore the developer signature. Restore the original app from a full backup or reinstall officially, then check again. If a properly signed app still fails, investigate its version and permissions.
-
-### Does This Affect Only WeChat?
-
-No. Existing tests show different behavior across apps. The warning identifies a risk to check, not a prediction that every app will fail.
-
-### Did AppPorts Corrupt the Data?
-
-The observed launch failures relate to the earlier re-signing method, not evidence of data corruption. Preserve the original data when investigating other problems. Default APFS container migration preserves application signatures.
-
-## Related Documentation
-
-- [Container Data, Sandboxing, and Signing Identity](/en/datamigrae/container-identity): the underlying mechanism
-- [Mount Migration](/en/datamigrae/mount-migration): the new approach
-- [Why External Drives Must Use APFS](/en/why-apfs)
-- [Re-signing and Crash Prevention](/en/datamigrae/resign)
+Related: [signature badges](/docs/badges#signing) · [classic mode](/docs/classic-mode) · [restore and relink](/docs/restore) · [export diagnostics](/docs/faq#feedback)

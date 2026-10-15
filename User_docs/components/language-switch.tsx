@@ -1,33 +1,32 @@
 'use client';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Languages } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from 'fumadocs-ui/components/ui/popover';
-import languages from '@/.content/languages.json';
-import topicLinks from '@/config/language-links.json';
-
+import { locales, languageNames, localePrefix, docUrl, homeUrl, type Locale } from '@/lib/i18n';
+import { useLocale, useText } from './provider';
 export function LanguageSwitch() {
   const pathname = usePathname();
+  const current = useLocale(); const t = useText();
   const [open, setOpen] = useState(false);
-  const slug = pathname.replace(/^\/docs\/?/, '').replace(/\/$/, '');
-  function translatedPath(pages: string[]) {
-    if (!pathname.startsWith('/docs/')) return '';
-    if (pages.includes(slug)) return slug + '.html';
-    const candidates: { slug: string; anchor?: string }[] = topicLinks[slug as keyof typeof topicLinks] ?? [];
-    const related = candidates.find(candidate => pages.includes(candidate.slug));
-    return related ? related.slug + '.html' + (related.anchor ? '#' + related.anchor : '') : '';
-  }
-  return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger className="header-language-trigger" aria-label="切换语言" title="切换语言">
-      <Languages size={18} />
-    </PopoverTrigger>
-    <PopoverContent className="header-language-menu" aria-label="选择文档语言">
-      <button type="button" lang="zh-Hans" aria-current="true" onClick={() => setOpen(false)}>
-        简体中文 <Check size={15} />
-      </button>
-      {languages.map(({ lang, label, pages }) => <a key={lang} lang={lang} hrefLang={lang}
-        href={`https://docs-appports.shimoko.com/${lang}/${translatedPath(pages)}`}
-        onClick={() => setOpen(false)}>{label}</a>)}
+  const [hash, setHash] = useState('');
+  useEffect(() => {
+    const update = () => setHash(window.location.hash);
+    update();
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, [pathname]);
+  const path = pathname.slice(localePrefix(current).length);
+  const slug = path.startsWith('/docs/') ? path.slice(6) : undefined;
+  function href(locale: Locale) { return slug ? docUrl(locale, slug) + hash : homeUrl(locale); }
+  return <Popover open={open} onOpenChange={value => { if (value) setHash(window.location.hash); setOpen(value); }}>
+    <PopoverTrigger className="header-language-trigger" aria-label={t('切换语言')} title={t('切换语言')}><Languages size={18} /></PopoverTrigger>
+    <PopoverContent className="header-language-menu" aria-label={t('选择文档语言')}>
+      {locales.map(locale => <Link key={locale} lang={locale} hrefLang={locale} href={href(locale)} aria-current={locale === current ? 'true' : undefined}
+        onClick={() => setOpen(false)}>
+        {languageNames[locale]}{locale === current && <Check size={15} />}
+      </Link>)}
     </PopoverContent>
   </Popover>;
 }

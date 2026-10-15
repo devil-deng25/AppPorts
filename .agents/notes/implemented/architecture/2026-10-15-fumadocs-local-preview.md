@@ -2,6 +2,8 @@
 
 Status: implemented
 
+> 三语范围与旧站退出由[三语文档站替代方案](2026-10-15-three-language-docs-replacement.md)接管；本篇保留当时的取舍与仍有效的框架或内容约束。
+
 ## Problem
 
 现有文档使用 VitePress，GitBook 导出形成第二份内容与配置。当前需求是先在本机查看参考站同类的 Fumadocs 阅读界面，再单独批准中文目录和内容重写。框架替换不能提前执行尚未批准的七组目录，也不能影响正在修改的 AppPorts 主工作区。

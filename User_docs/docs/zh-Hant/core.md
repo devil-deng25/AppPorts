@@ -1,26 +1,42 @@
-# 核心功能
-此頁面介紹軟件的基本核心功能，即爲應用 App 包遷移，如需對應用內的數據進行遷移，請參閱[數據遷移](/zh-Hant/datamigrae/baseinfo)。
-## 遷移應用至外部存儲 
-  
-1. 選擇單個應用或鼠標左鍵長按拖動多個應用（或 command+鼠標左鍵單擊選擇應用）     
-2. 單擊底部“遷移至外部“按鈕   
-3. 等待遷移完成
- 
-  ![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/gonomoral.gif?sign=tzb_Y7YRR9uTc4uunpWXJWYs8dOXLEa0S0AQH-qcB4I=:0)
-::: tip 注意
-遷移至 100% 時可能會停頓一至兩秒等以創建本地鏈接 
-:::   
+# 遷移應用
 
-## 外置存儲應用遷回本地
-1. 在外部應用庫中選擇應用   
-2. 單擊遷移回本地即可
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/qianhui.gif?sign=VDEq_lQvfhnb1vhUljwh3PVhNFkwjpKcRAeQ-Ht5Mnc=:0)
+應用遷移移動的是應用本體。聊天記錄、專案、模型和快取等資料可能仍在本機，需要另外使用[資料遷移](/docs/datamigrae/operation)。
 
-## 外置存儲應用鏈接回本地
-1. 在外部應用庫中選擇應用 
-2. 單擊鏈接回本地即可
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/linkback.gif?sign=3xdVe7IFYcMfwNt1K9WMk8ZQYIlNMWngjZoTkNwA610=:0)
+## 遷移前 {#prepare}
 
-## 解除鏈接
-單擊已鏈接應用列表的右側解除按鈕即可
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/jiechu.gif?sign=CLDMEQxHts1S2mBEnka9HUYT2XMzcnBwX1Sjfas9Dho=:0)
+連線外接磁碟，選擇外部應用庫，確認剩餘空間。儲存工作並完全退出要遷移的應用；重要內容先做好備份。系統應用和受保護的位置不適合直接移動，具體限制以 AppPorts 的提示為準。
+
+## 遷移到外接磁碟 {#move}
+
+1. 在“Mac 本地應用程式”列表選中應用。需要多選時，按住 Command 再逐個選擇。
+2. 點選“遷移到外部”，檢查目標位置。
+3. 若出現同名目標或版本選擇，先核對兩邊內容。不要把不能確認的副本當成垃圾刪除。
+4. 等待 AppPorts 完成複製、檢查和本地入口建立。
+5. 從 Finder 或 Dock 啟動應用，檢查開啟檔案等常用功能。
+
+完成後，外部應用庫中能看到真實應用，本地保留[啟動入口](/docs/glossary#local-portal)。進度接近完成時仍可能在核驗或清理，請以最終結果為準。
+
+如果應用不在預設掃描位置，可在“Mac 本地應用程式”標題欄點選“+”新增掃描目錄，例如其他工具管理的安裝目錄。
+
+## 遷移後如何更新 {#updates}
+
+不同應用的更新方式並不相同。先看應用是否顯示“鎖定遷移”或相關更新提示。
+
+| 情況 | 建議操作 |
+| --- | --- |
+| 更新被保護鎖阻止 | 先退出應用，按 AppPorts 提供的提示處理；不確定時遷回本地更新，再重新遷出。 |
+| 更新程式把新版重新裝在本機 | 重新整理列表；出現“待遷出”時，核對版本並遷出本地新版。 |
+| App Store 管理的外接應用 | macOS 15.1 及以上可結合 App Store 的外接安裝設定使用，仍需滿足系統和應用條件。 |
+| 較早系統上的 App Store 應用 | 在設定中確認是否允許遷移；更新後可能需要再次將本地新版遷出。 |
+
+macOS 15.1 及以上可在 App Store 設定中選擇“下載並安裝大型 App 到獨立儲存盤”，並選擇同一塊外接磁碟。它是系統提供的安裝方式，具體適用條件以 App Store 為準。
+
+[更新保護的作用](/docs/migration-strategy/portal#updates)只針對需要保護的更新行為，不代表所有更新程式都以同樣方式工作。
+
+## 想遷回或恢復入口 {#restore-links}
+
+- 把真實應用搬回內建盤：使用“遷移回本地”。
+- 應用仍在外接磁碟，只缺本地入口：使用“連結回本地”。
+- 只移除本地入口：點選本地列表中的垃圾桶按鈕，提示為“斷開此連結並刪除檔案”。
+
+三種操作的區別和完整步驟見[還原、接回與解除連結](/docs/restore)。如果應用無法開啟，先檢查外接磁碟和[狀態提示](/docs/badges)，再按[問題排查](/docs/faq#launch)處理。

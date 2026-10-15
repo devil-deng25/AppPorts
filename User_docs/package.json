@@ -5,7 +5,7 @@
   "scripts": {
     "docs:prepare": "node scripts/prepare-fumadocs.mjs",
     "docs:dev": "npm run docs:prepare && next dev --hostname 127.0.0.1 --port 4173",
-    "docs:build": "npm run docs:prepare && next build && node scripts/export-legacy-paths.mjs",
+    "docs:build": "npm run docs:prepare && next build",
     "docs:preview": "serve out --config ../serve.json --listen tcp://127.0.0.1:4173",
     "docs:typecheck": "next typegen && tsc --noEmit",
     "docs:check": "node scripts/check-docs.mjs"

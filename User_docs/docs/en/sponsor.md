@@ -1,52 +1,44 @@
----
-outline: deep
----
-
 # Sponsor AppPorts
 
-AppPorts is completely free, open source and free of ads, with no commercial promotion of any kind. It is maintained by a single developer in his spare time and generates no revenue.
+AppPorts is completely free, open source, and ad-free, with no commercial promotions. It is maintained by one person in their spare time and has no commercial revenue.
 
-If AppPorts has freed up tens of gigabytes on your disk, you are welcome to scan the QR code and buy the author a coffee — **any amount is welcome, and even the smallest one means a lot**. Your support keeps the project going.
+If AppPorts has helped you recover dozens of GB of local storage, you are welcome to buy the author a coffee by scanning the code. **Any amount is appreciated.** Your support helps keep the project moving.
 
-## Sponsors
+## Sponsors {#section-1}
 
-<script setup>
-import SponsorList from "../.vitepress/theme/components/SponsorList.vue";
-</script>
+<SponsorList />
 
-<SponsorList locale="en" />
+This list also appears in “About AppPorts” in the app. Sponsors are sorted by amount, highest first, then by donation time, earliest first when amounts match. **Donation amounts appear only on this web page.**
 
-This page and the **About AppPorts** page in the app show the same sponsors, ordered by amount (highest first) and, for equal amounts, by sponsorship date (earliest first). **The amount is only shown on this page.**
+## Scan to donate {#section-2}
 
-## Scan to sponsor
+![Donation QR code](https://pic.cdn.shimoko.com/thanks.png)
 
-<div align="center">
-  <img src="https://pic.cdn.shimoko.com/thanks.png" alt="Sponsor QR code" width="320" />
-</div>
+Scan with WeChat to donate. **There is no minimum amount.** Give only what is comfortable for you.
 
-Scan the code with WeChat to sponsor. **There is no minimum amount** — give whatever feels right.
+## Leaving a message {#section-3}
 
-## Leave your nickname and link
+Include your **nickname** in the donation note. A **personal link is optional**: a GitHub profile, blog, or social account is welcome.
 
-When sponsoring, please leave your **nickname** in the message. A **link is optional** — a GitHub profile, personal blog, or social account all work.
+After receiving your donation, we will add your nickname and link to the list above and to “About AppPorts” as a thank-you.
 
-We will then list the nickname and link both above and on the **About AppPorts** page. Thank you for every bit of support.
-
-::: tip Prefer to stay anonymous?
-Without a nickname, we do not display sponsorship information. If you provide a nickname without a link, we show the nickname as plain text.
+::: tip You can remain private
+If no nickname is provided, we do not display the donation. If you provide a nickname without a link, we display only the name, without a clickable link.
 :::
 
-## Display order
+To change your nickname, personal link, or other displayed information, contact [a@shimoko.com](mailto:a@shimoko.com) with the original nickname and requested changes.
 
-Sponsors are ordered as follows:
+## Display order {#section-4}
+
+Sponsors are sorted as follows:
 
 | Priority | Rule |
 | --- | --- |
-| 1 | Higher sponsorship amount first |
-| 2 | For equal amounts, earlier sponsorship first |
+| 1 | Donation amount, highest first |
+| 2 | For equal amounts, donation time, earliest first |
 
-::: tip No minimum amount
-There is no lower limit on the amount, and it never affects your access to AppPorts — every feature stays completely free for all users.
+::: tip No minimum contribution
+There is no minimum donation, and donations never affect access to any AppPorts feature. The app remains completely free for everyone.
 :::
 
 Thank you to everyone who supports AppPorts ❤️

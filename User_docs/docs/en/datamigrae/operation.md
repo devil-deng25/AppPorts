@@ -1,112 +1,62 @@
----
-outline: deep
----
+# Move data
 
-# Data Migration Guide
+Data migration moves application data, tool directories or your own folders. It is independent of moving the app itself: eligible data can move while the app stays local.
 
-This page explains how to migrate data directories. For the technical implementation, see [How Data Migration Works](/en/datamigrae/baseinfo).
+## Find the content to move {#choose}
 
-## Find an App's Data Directories
+| Content | Where to start |
+| --- | --- |
+| Messages, caches and other app-related data | Data Directories → App Data; select an app and expand its directories. |
+| Package-manager caches, models and tool data | Data Directories → Tool Directories; inspect detected items. |
+| Your projects, media or other folders | Directory Migration; use + in the local folder area and choose the source and external destination. |
 
-1. Open the "Data Directories" tab in the AppPorts main window.
-2. Switch between "Tool Directories" and "App Data" at the top.
-3. In App Data, select an app on the left. Its associated directories under `~/Library/` appear on the right.
+App Data hides locked structures that are currently ineligible by default. Enable Show locked directory structure to inspect the full hierarchy and reasons. Items needing recovery or attention remain visible; another switch controls empty directories. **An available migration action does not guarantee execution checks will pass.** Space, permissions, processes using data and parent/child relationships with existing migrations still need checking.
 
-AppPorts matches these locations using the app's Bundle ID or name:
+Click status totals such as Linked, Mount Migration or Existing Symlink to show matching items. Necessary parent paths remain visible. Selecting a total does not shrink the other status totals, but other search and filter conditions still affect them. Click again or clear the filter to return; changing app or tab also resets this selection.
 
-| Scanned Path | Matching Method | Migration Method |
-|--------------|-----------------|------------------|
-| `~/Library/Application Support/` | Bundle ID or app name | Symbolic link |
-| `~/Library/Preferences/` | Bundle ID or app name | Symbolic link |
-| `~/Library/Containers/` | Bundle ID | **Mount migration** |
-| `~/Library/Group Containers/` | Bundle ID | **Mount migration** |
-| `~/Library/Caches/` | Bundle ID or app name | Symbolic link |
-| `~/Library/WebKit/` | Bundle ID | Symbolic link |
-| `~/Library/HTTPStorages/` | Bundle ID | Symbolic link |
-| `~/Library/Application Scripts/` | Bundle ID | Symbolic link |
-| `~/Library/Logs/` | App name | Symbolic link |
-| `~/Library/Saved Application State/` | App name | Symbolic link |
+A User folder shortcut to Desktop, Downloads or Pictures is not data owned exclusively by the app. Its target size is not counted, and migration and restore are unavailable. Size on this volume and Target size identify measurement scope. Parent and child rows cannot simply be added, and displayed size is not guaranteed freed space.
 
-For why containers need a different method, see [Mount Migration](/en/datamigrae/mount-migration).
+## Prepare before migration {#prepare}
 
-## Tool Directories
+1. Back up important data, connect the destination drive and check space.
+2. Save work and quit apps, tools and background jobs using the data completely.
+3. Check permissions under Settings → Readiness. Run AppPorts from Applications.
+4. Check directory name and location rather than guessing ownership from size.
 
-AppPorts recognizes directories created by common development tools under your home directory, such as `~/.npm` and `~/.gradle`:
+If a related app is running, AppPorts may offer Quit app and continue to request a normal quit. If the app still needs a save or exit confirmation, handle that prompt, then return to AppPorts and choose Continue.
 
-1. Select "Tool Directories" in the "Data Directories" tab.
-2. The list shows recognized directories, their sizes, priorities, and statuses.
+## Ordinary directories {#linked}
 
-If the local directory is missing but an AppPorts-managed directory remains at the standard external location, it is shown as "Awaiting Relink". See [Tool Directory Detection](/en/datamigrae/tools) for the supported list.
+For an ordinary directory offering Migrate, click it, check the destination and confirm. AppPorts copies and verifies data, then creates a [symbolic link](/docs/glossary#symlink) at the original location. The resulting state is normally Linked.
 
-## Directory Migration for Custom Folders
+Examples include npm and Gradle caches and some model or editor data. Quit the tool's jobs too; do not move directories while downloads, builds or writes are running.
 
-Use the "Directory Migration" tab to move arbitrary folders under your home directory, such as large projects, models, and asset libraries.
+A custom folder must be a real directory inside your home, not the entire home folder, and must not overlap managed directories. Check the destination shown when adding it before migration.
 
-1. Open "Directory Migration".
-2. Click "+" in the "Local Folders" heading.
-3. Select a local folder, then a destination root on the external drive. The destination is `目标根目录/文件夹名`.
+## Mount migration for container data {#mount}
 
-Validation rules: the local folder must be inside your home directory and cannot be the home directory itself. Neither it nor any parent path may be a symbolic link. It must not contain, or be contained by, an already managed directory. The external destination must be outside your home directory, and it must not overlap the local folder in either direction.
+In default mode, eligible container data uses the Migrate button and follows mount migration after checks. In classic mode, the separate action is Mount Migration. It needs **unencrypted APFS external storage**, enough space and correct permissions.
 
-After migration, the local pane shows the original path's status and the external pane shows the copy's status. "Relink" and "Restore" are available. Removing a configuration removes only the record, not the data.
+1. Choose Migrate in default mode, or Mount Migration in classic mode, and read the storage and permission checks.
+2. If requirements are unmet, choose another location or keep the data local. You do not have to erase an existing disk to continue.
+3. Confirm the data and destination. After completion, its state should be Mounted.
+4. Open the original app. If macOS requests Removable Volumes access, authorize according to your preference.
+5. Check existing content and perform a normal save.
 
-## Symbolic-Link Migration
+Mount migration does not replace the app's signature. System authorization and compatibility still apply. If original data is not visible, stop further writes and follow [missing-data checks](/docs/faq#missing-data).
 
-Use this for directories outside containers.
+## Read migration progress {#progress}
 
-1. Find the directory and click "Migrate".
-2. AppPorts copies it to the external drive, writes the management marker, renames the original directory to a safety backup, creates a symbolic link at the original path, and finally removes the backup.
-3. The status changes to "Linked".
+The window explains whether it is preparing, scanning, copying, writing to disk, verifying, switching entries or cleaning old copies. **The percentage measures file copying only. At 100%, verification and cleanup may still remain.** Scanning and verification show processed items, bytes read or the current file to indicate actual work.
 
-::: tip Re-sign after migration
-The "Re-sign after migration" switch in the Data Directories toolbar is off by default. When enabled, it applies an Ad-hoc signature to the associated app after migration, to address a "damaged" message; sandboxed apps are skipped. It is usually unnecessary. See [Re-signing and Crash Prevention](/en/datamigrae/resign).
-:::
+When no new progress arrives for a while, the window shows time since the last activity. Interpret that together with the current stage; do not disconnect the drive or force quit merely because the copy percentage has paused.
 
-## Mount Migration
+## After completion and when things go wrong {#after}
 
-Directories under `Containers` and `Group Containers` show a "Mount migration" button.
+Connect the drive and confirm reconnection before opening the app. For Pending Mount, follow the mount prompt. External drive not connected does not mean data was deleted. See [data states](/docs/badges#data) for other labels.
 
-1. Make sure the external drive uses APFS, then quit the associated app.
-2. Click "Mount migration", read the three notices in the confirmation dialog, and continue.
-3. AppPorts creates a volume on the external drive, copies the data, and mounts it at the original directory.
-4. The status changes to "Mounted". Allow the system permission prompt the first time you open the app.
+Read [restoration and reconnection](/docs/restore) to return data locally or rebuild an entry. After interruption, or when only cleanup remains, preserve the copies AppPorts identifies and do not repeatedly start new migrations.
 
-See [Mount Migration](/en/datamigrae/mount-migration) for the full guide.
+Related: [two data migration methods](/docs/datamigrae/baseinfo), [external storage](/docs/storage-guide#apfs) and [classic mode](/docs/classic-mode).
 
-## Restore
-
-**Symbolic-link migrations** ("Linked"): click "Restore". AppPorts copies the data back to this Mac, removes the symbolic link, and then deletes the external copy.
-
-**Mount migrations** ("Mounted" or "Awaiting mount"): click "Restore". AppPorts copies the volume's data back to this Mac, then unmounts and deletes the volume. Keep the external drive connected.
-
-Both methods copy first and switch paths afterward, so a failure midway does not lose data.
-
-## Handle Unusual Statuses
-
-| Status | Meaning | Action |
-|--------|---------|--------|
-| Needs Normalization | AppPorts manages the link, but its external path is not in the standard location | "Normalize" moves the external data to the standard path and recreates the link |
-| Awaiting Relink | The external data exists but the local link is missing | "Relink" recreates the symbolic link |
-| Existing Symlink | A symbolic link created outside AppPorts | Open "Link Details" to bring it under AppPorts management |
-| Awaiting mount | The mount-migrated volume is online but not mounted | Click "Mount" |
-| Drive Not Connected | The data volume cannot be found | Connect the external drive; AppPorts reconnects it automatically |
-
-Relinking and normalization apply only to directories. If a regular file occupies the external destination, AppPorts stops and preserves it.
-
-## Log Context
-
-Data directory operations log information about the associated app to help diagnose problems:
-
-| Field | Description |
-|-------|-------------|
-| `app_name` | Associated app name |
-| `app_status` | App status |
-| `app_is_resigned` | Whether the app has been re-signed |
-| `app_bundle_id` | The real app's Bundle ID |
-| `app_real_path` | The real app's path |
-
-Mount migration also logs the volume name, Volume UUID, and `diskutil` output.
-
-## Tree View
-
-Directories with subdirectories appear as a tree. An arrow to the left expands the parent directory; children are indented. Each node has its own size, status, and action buttons.
+For the reasons behind protected directories and parent/child limits, read [data migration boundaries](/docs/blog/data-migration-boundaries).

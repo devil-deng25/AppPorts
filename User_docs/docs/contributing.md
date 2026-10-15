@@ -6,15 +6,15 @@ outline: deep
 
 感谢你关注 AppPorts！我们欢迎社区成员参与贡献，无论是修复 Bug、改进文档，还是添加新功能。
 
-## 开始之前
+## 开始之前 {#section-1}
 
 1. 搜索现有的 [Issues](https://github.com/wzh4869/AppPorts/issues)，确认没有相关的重复议题。
 2. Fork 项目并克隆到本地。
 3. 基于 `develop` 分支创建功能分支（`feat/your-feature`）或修复分支（`fix/your-fix`）。
 
-## 开发方式
+## 开发方式 {#section-2}
 
-### 关于 Vibe Coding
+### 关于 Vibe Coding {#section-3}
 
 AppPorts 项目接受使用 AI 辅助工具（如 Cursor、GitHub Copilot、Claude 等）进行 Vibe Coding 开发。AI 工具可以显著提高开发效率，**但提交代码的质量和正确性仍由贡献者本人负责**。
 
@@ -26,19 +26,19 @@ AppPorts 项目接受使用 AI 辅助工具（如 Cursor、GitHub Copilot、Clau
 - AI 无法替代对 macOS 系统行为的理解。涉及文件系统操作、代码签名、权限管理等逻辑时，请务必手动验证。
 - **核心功能**（如迁移策略、数据目录迁移、代码签名等）的变更必须先提交 Issue 讨论，获得确认后再执行开发。
 
-### 代码规范
+### 代码规范 {#section-4}
 
 - 遵循 Swift 代码规范和项目既有风格。
 - 为复杂逻辑编写清晰的 Swift 文档注释。
 - SwiftUI 字面量使用 `LocalizedStringKey` API；AppKit/API 字符串使用 `.localized`。
 
-## 测试要求
+## 测试要求 {#section-5}
 
 ::: warning 所有 PR 必须通过测试
 无论使用何种开发方式，提交 PR 前必须完成以下测试。CI 会自动运行编译烟雾检查，未通过的 PR 将被阻止合并。
 :::
 
-### 必须通过：编译烟雾检查
+### 必须通过：编译烟雾检查 {#section-6}
 
 所有 PR 必须通过 Xcode Release 编译，这是合并的硬性门槛：
 
@@ -54,11 +54,11 @@ xcodebuild clean build \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-### 按需运行：专项测试
+### 按需运行：专项测试 {#section-7}
 
 当 PR 涉及对应模块时，建议主动补跑以下专项测试。CI 也会在 PR 中以 Advisory 模式运行，结果不阻塞合并，但会提供反馈。
 
-#### 数据目录测试
+#### 数据目录测试 {#section-8}
 
 当 PR 涉及 `DataDirMover`、`DataDirScanner` 或数据目录迁移相关逻辑时运行：
 
@@ -76,7 +76,7 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-#### 应用迁移测试
+#### 应用迁移测试 {#section-9}
 
 当 PR 涉及 `AppMigrationService`、`AppScanner` 或应用迁移逻辑时运行：
 
@@ -94,7 +94,7 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-#### 日志测试
+#### 日志测试 {#section-10}
 
 当 PR 涉及 `AppLogger` 或诊断功能时运行：
 
@@ -111,7 +111,7 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-#### 本地化审计
+#### 本地化审计 {#section-11}
 
 当 PR 涉及用户可见文案、菜单、弹窗、设置项、错误提示时运行：
 
@@ -128,7 +128,7 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-### 测试总览
+### 测试总览 {#section-12}
 
 | 测试套件 | 涉及模块 | 运行时机 |
 |----------|----------|----------|
@@ -140,7 +140,7 @@ xcodebuild test \
 | `AppLoggerTests` | 日志与诊断 | 涉及 `AppLogger` 时 |
 | `LocalizationAuditTests` | 本地化 | 涉及用户可见文案时 |
 
-## 本地化
+## 本地化 {#section-13}
 
 - 本地化适配是推荐项，不作为外部贡献者提交 PR 的强制门槛。
 - 如 PR 新增、修改或删除了用户可见文案，欢迎在同一个 PR 中同步更新 `Localizable.xcstrings`。
@@ -152,7 +152,7 @@ xcodebuild test \
 
 更多规则见：[LOCALIZATION.md](https://github.com/wzh4869/AppPorts/blob/main/LOCALIZATION.md)
 
-## Commit 规范
+## Commit 规范 {#section-14}
 
 - **Issue 优先**：重要功能的变更请先通过 Issue 讨论
 - **保持原子化**：每个 PR 尽量只解决一个问题或添加一个功能
@@ -163,7 +163,7 @@ xcodebuild test \
   - `refactor: ...` — 重构
   - `test: ...` — 测试相关
 
-## 提交 PR
+## 提交 PR {#section-15}
 
 1. 确保分支基于最新的 `develop` 分支。
 2. 推送到你的 Fork 仓库。
@@ -177,7 +177,7 @@ xcodebuild test \
 - 涉及 UI 变更时附上截图。
 :::
 
-## 欢迎的贡献方向
+## 欢迎的贡献方向 {#section-16}
 
 - 针对 `AppScanner` 等核心逻辑的稳定性和性能改进。
 - UI/UX 优化，特别是符合 macOS 系统原生体验的改进。
