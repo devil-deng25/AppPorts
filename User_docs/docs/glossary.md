@@ -68,6 +68,10 @@
 
 保存停用功能、旧版做法和未采用实验方案的说明，并标明版本与当前替代方式。它们不属于当前操作指南。见[历史功能归档](/docs/archive/overview)。
 
+### 签名原包、AppPorts Backups {#signature-backup}
+
+手动重签前保存的完整官方应用，用于恢复应用内容与原始签名。1.9.1 build 31 起，它自动保存在合适外盘根目录的 `AppPorts Backups` 文件夹，内附 `README.txt`；恢复时需要连接该盘。它不包含聊天记录、文档等个人数据，删除后会失去这份离线恢复材料。见[原包保存与清理](/docs/settings#signature-backups)。
+
 ## 系统与文件的通用概念 {#system}
 
 ### 符号链接、软链接 {#symlink}

@@ -41,4 +41,10 @@ AppPorts 会为挂载迁移创建专用数据卷；通常无需自己为每个�
 
 换盘前先[还原到本地](/docs/restore#data)，再选择新目标重新迁移。直接拖动受管数据或改卷名、目录结构，可能让已有入口失效。外盘找不到、数据没有接回时，先看[问题排查](/docs/faq#offline)。
 
+## 外盘上的签名原包 {#signature-backups}
+
+手动重签官方应用后，外盘可能出现可见的 `AppPorts Backups` 文件夹。AppPorts 自动选择合适外盘保存完整官方原包，里面的 `README.txt` 说明用途与删除影响；应用仍在内盘时也采用这一方式。恢复时需要接回保存原包的盘，保留文件夹原位置。
+
+原包不包含个人数据，也不是另一套独立灾备。内盘应用重签时仍需要临时空间，跨卷保存经核验完成后才清理内部原件。选择外盘、查看和清理的方法见[签名原包说明](/docs/settings#signature-backups)。
+
 实验依据：[意外断开外置盘的影响](/docs/blog/why-mount-and-apfs#unplug-experiment) · [重启与自动接回](/docs/blog/why-mount-and-apfs#startup-method)
