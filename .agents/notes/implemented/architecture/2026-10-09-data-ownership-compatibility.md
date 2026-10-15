@@ -24,6 +24,8 @@ Status: implemented
 
 ## Related decisions
 
+- 真实镜像测试的忙碌卸载处理见[所有权测试镜像有限重试](../testing/2026-10-15-ownership-image-detach.md)，不改变生产所有权语义。
+
 - 历史主动还原的源/目标根分离见[历史严格还原只映射目标根所有权](../bug-fix/2026-10-02-legacy-volume-restore-ownership.md)。
 
 - 专用 APFS 卷的建卷默认另记，见[普通 APFS 数据卷显式使用 noowners 与系统建卷](../../implemented/bug-fix/2026-10-13-apfs-noowners-volume-creation.md)。

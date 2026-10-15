@@ -35,6 +35,8 @@ XCTest 下默认/共享记录库落在稳定的进程专属临时目录，测试
 
 ## Related decisions
 
+- 所有权镜像的正常卸载与失败诊断见[所有权测试镜像有限重试](2026-10-15-ownership-image-detach.md)，仍只操作夹具自有镜像。
+
 - 独立宿主、真实卷和性能对照的策略见[隔离 APFS 验证与可比较的性能证据](../../implemented/testing/2026-10-12-apfs-validation-evidence.md)。
 
 ## Alternatives considered

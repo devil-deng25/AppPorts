@@ -488,7 +488,13 @@ private actor OwnershipTestImage {
     }
 
     func detach() async throws {
-        _ = try await run("/usr/bin/hdiutil", ["detach", mountPoint.path])
+        let result = try await detachOwnershipImage(at: mountPoint)
+        if result.status != 0 || result.timedOut {
+            let owners = try? await ProcessCommandRunner(captureLimit: 16_384).run(
+                executable: "/usr/sbin/lsof", arguments: ["-nP", "+f", "--", mountPoint.path], timeout: 5)
+            try #require(result.status == 0 && !result.timedOut,
+                "hdiutil detach \(mountPoint.path): \(result.combinedText); status=\(result.status), timedOut=\(result.timedOut); lsof: \(owners?.combinedText ?? "unavailable")")
+        }
         attached = false
     }
 
@@ -521,5 +527,81 @@ private actor OwnershipTestImage {
             }
         }
         try FileManager.default.removeItem(at: root)
+    }
+}
+
+/// Retry only a transient busy volume, never force it off or hide a timeout.
+private func detachOwnershipImage(
+    at mountPoint: URL,
+    runner: any ShellCommandRunning = ProcessCommandRunner(),
+    sleep: @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
+) async throws -> ShellCommandResult {
+    var retry = 0
+    while true {
+        try Task.checkCancellation()
+        let result = try await runner.run(executable: "/usr/bin/hdiutil",
+            arguments: ["detach", mountPoint.path], timeout: 45)
+        guard result.status == EBUSY, !result.timedOut, retry < 4 else { return result }
+        try await sleep(250_000_000 << retry)
+        retry += 1
+    }
+}
+
+@Suite("Ownership image detach retry boundaries")
+struct OwnershipImageDetachTests {
+    @Test("Busy detach retries, while success, persistent errors and timeouts retain their result",
+        arguments: ["success", "transient", "persistent", "other-error", "timeout"])
+    func retryBoundaries(scenario: String) async throws {
+        let statuses: [Int32]
+        switch scenario {
+        case "success": statuses = [0]
+        case "transient": statuses = [EBUSY, EBUSY, 0]
+        case "persistent": statuses = Array(repeating: EBUSY, count: 5)
+        case "other-error": statuses = [EACCES]
+        default: statuses = [EBUSY]
+        }
+        let runner = DetachTestRunner(statuses: statuses, timedOut: scenario == "timeout")
+        let mountPoint = URL(fileURLWithPath: "/private/tmp/detach-test/volume")
+        let result = try await detachOwnershipImage(at: mountPoint, runner: runner,
+            sleep: { await runner.recordSleep($0) })
+        #expect(result.status == statuses.last)
+        #expect(result.timedOut == (scenario == "timeout"))
+        #expect(await runner.calls == statuses.count)
+        let expectedDelays: [UInt64] = Array([250_000_000, 500_000_000, 1_000_000_000, 2_000_000_000].prefix(statuses.count - 1))
+        #expect(await runner.delays == expectedDelays)
+    }
+
+    @Test("Cancellation during retry wait does not issue another detach")
+    func cancellationStopsRetry() async throws {
+        let runner = DetachTestRunner(statuses: [EBUSY], timedOut: false)
+        await #expect(throws: CancellationError.self) {
+            try await detachOwnershipImage(at: URL(fileURLWithPath: "/private/tmp/detach-test/volume"),
+                runner: runner, sleep: { _ in throw CancellationError() })
+        }
+        #expect(await runner.calls == 1)
+    }
+}
+
+private actor DetachTestRunner: ShellCommandRunning {
+    let statuses: [Int32]
+    let timedOut: Bool
+    var calls = 0
+    var delays: [UInt64] = []
+
+    init(statuses: [Int32], timedOut: Bool) {
+        self.statuses = statuses
+        self.timedOut = timedOut
+    }
+
+    func recordSleep(_ delay: UInt64) { delays.append(delay) }
+
+    func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
+        #expect(executable == "/usr/bin/hdiutil")
+        #expect(arguments == ["detach", "/private/tmp/detach-test/volume"])
+        #expect(timeout == 45)
+        try #require(calls < statuses.count)
+        let status = statuses[calls]
+        calls += 1
+        return .init(status: status, standardOutput: Data(), standardError: Data(), timedOut: timedOut)
     }
 }

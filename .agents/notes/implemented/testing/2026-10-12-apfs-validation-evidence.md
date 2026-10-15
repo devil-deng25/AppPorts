@@ -39,6 +39,8 @@ Status: implemented
 - 私有 APFS 宿主隔离叠加在既有记录库与日志防线上，见[测试注入目录还必须隔离记录库和共享日志](../../implemented/testing/2026-10-01-test-state-isolation.md)。
 - 可比较的性能证据用于验证该简化，见[复用复制验证结果，不用时间戳替代内容证明](../simplification/2026-10-12-apfs-verification-reuse.md)。
 
+所有权镜像测试的有限卸载重试见[所有权测试镜像有限重试](2026-10-15-ownership-image-detach.md)；通过镜像测试仍不等于物理断盘验证。
+
 ## Alternatives considered
 
 - **用普通单测或镜像替代全部实机验证**：重复性好且风险低，却没有覆盖物理盘建卷、真实系统标签和 TCC 边界。
