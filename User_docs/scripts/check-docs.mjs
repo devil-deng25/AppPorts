@@ -88,14 +88,22 @@ assert.equal(resolveLegacyLink(legacy.routes['why-apfs'], '', '#encrypted-drives
 assert.equal(resolveLegacyLink(legacy.routes.logging, '', '#%E0%A4'), '/docs/faq#feedback');
 assert.equal(navigation.main[0].slug, 'AppPorts');
 assert.equal(navigation.main.at(-1).slug, 'glossary');
-assert.deepEqual(navigation.main.filter(entry => entry.children).map(entry => entry.name), ['原理', '实验记录', '帮助与支持']);
+assert.deepEqual(navigation.main.filter(entry => entry.children).map(entry => entry.name), ['原理', '博客', '帮助与支持', '历史功能归档']);
 for (const slug of ['settings', 'changelog', 'sponsor', 'licenses', 'privacy']) assert.ok(navigation.main.some(entry => entry.slug === slug));
-assert.equal(navigation.main.flatMap(entry => entry.children ?? [entry]).length, 25);
-for (const slug of navigation.auxiliary.filter(slug => slug.startsWith('archive/'))) {
+assert.equal(navigation.main.flatMap(entry => entry.children ?? [entry]).length, 26);
+for (const slug of pages.map(page => page.slug).filter(slug => slug.startsWith('archive/'))) {
   const body = await readFile(path.join(root, 'docs', slug + '.md'), 'utf8');
   assert.match(body, /归档/);
   assert.match(body, /当前/);
 }
+
+for (const slug of ['research/sandbox-symlink', 'research/sandbox-mountpoint', 'research/unplug-test', 'research/prelogin-mount', 'research/container-structure', 'research/data-integrity']) {
+  assert.ok(legacy.routes[slug]?.target.startsWith('/docs/blog/'), `Experiment missing blog destination: ${slug}`);
+  assert.ok(!pages.some(page => page.slug === slug), `Retired experiment still independently indexed: ${slug}`);
+}
+assert.equal(navigation.main.at(-1).name, '名词解释');
+assert.equal(navigation.main.find(entry => entry.name === '历史功能归档')?.children.length, 4);
+
 const aliasFixture = convert('# Title\n\n## New title {#new}\n\nBody', { old: 'new' });
 assert.match(aliasFixture.body, /id="old"/);
 assert.throws(() => convert('# Title', { old: 'missing' }), /Legacy anchor target does not exist/);
@@ -123,4 +131,4 @@ assert.match(sample.body, /\/docs\/faststart#下载/);
 assert.match(sample.body, /echo ":::"/);
 assert.throws(() => convert('::: warning Oops\n\ntext'), /Unclosed/);
 assert.equal(failures.length, 0, failures.join('\n'));
-console.log(`Verified ${pages.length} pages, internal links and anchors, 11 merged routes and their former chapters, archive/navigation contracts, conversion guards, and both JSON endpoints.`);
+console.log(`Verified ${pages.length} pages, internal links and anchors, ${Object.keys(legacy.routes).length} merged routes and their former chapters, archive/navigation contracts, conversion guards, and both JSON endpoints.`);

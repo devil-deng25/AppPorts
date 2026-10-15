@@ -11,12 +11,14 @@ AppPorts 是一款免费、开源的 macOS 应用与数据迁移工具。它帮�
 - **第一次使用**：从[快速开始](/docs/faststart)完成安装和一次迁移。
 - **已经知道要搬什么**：直接看[迁移应用](/docs/core)或[迁移数据](/docs/datamigrae/operation)。
 - **想把内容搬回来或恢复入口**：看[还原、接回与解除链接](/docs/restore)。
-- **想知道为什么这样设计**：阅读“原理”；想了解验证过程，再看“实验记录”。
-- **遇到陌生名词或异常提示**：查[词汇表](/docs/glossary)、[徽章与状态](/docs/badges)或[常见问题与排查](/docs/faq)。
+- **想知道为什么这样设计**：阅读“原理”；想了解实验过程与方案取舍，再看[博客](/docs/blog/overview)。
+- **遇到陌生名词或异常提示**：查[名词解释](/docs/glossary)、[徽章与状态](/docs/badges)或[常见问题与排查](/docs/faq)。
 
 当前中文文档按 **AppPorts 1.9.1 开发版**的界面和行为整理。正式版与开发版的区别见[更新日志](/docs/changelog)；使用较早版本时，请留意文中的版本说明。
 
 还可以参考 [DeepWiki 上的 AppPorts 文档](https://deepwiki.com/wzh4869/AppPorts)进一步了解项目。AppPorts 的来源，见[作者的博客文章](https://www.shimoko.com/p/appports/)。
+
+想了解迁移方案是怎样形成的，可以阅读[博客](/docs/blog/overview)：从实验过程与失败结果中，了解 AppPorts 的取舍。
 
 ## AppPorts 的产品哲学 {#philosophy}
 

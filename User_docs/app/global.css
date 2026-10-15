@@ -98,5 +98,5 @@ html > body[data-scroll-locked] { margin-right: 0 !important; --removed-body-scr
 .header-language-menu :is(a,button):hover, .header-language-menu :is(a,button):focus-visible { background: var(--color-fd-accent); }
 .header-language-menu [aria-current=true] { color: var(--brand); font-weight: 500; }
 .header-sponsor { white-space: nowrap; flex-shrink: 0; }
-@media (max-width: 400px) { .site-header-inner { gap: .5rem; }.header-sponsor span { display: none; } }
+@media (max-width: 400px) { .site-header-inner { padding-inline: .5rem; gap: .25rem; }.site-brand { flex-shrink: 0; gap: .25rem; font-size: .84rem; }.header-actions { gap: 0; }.header-sponsor span { display: none; } }
 #nd-page :is(h1,h2,h3,h4,h5,h6), #nd-page span[id] { scroll-margin-top: calc(var(--fd-docs-row-3) + 24px); }

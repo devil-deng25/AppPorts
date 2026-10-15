@@ -30,4 +30,4 @@ AppPorts 还会保护容器的关键结构，并区分“签名已替换”和�
 
 ## 去哪里继续 {#next}
 
-操作步骤见[macOS 27 升级与修复](/docs/macos-27)。想了解实验证据，可以读[符号链接实验](/docs/research/sandbox-symlink)、[挂载与授权实验](/docs/research/sandbox-mountpoint)和[容器目录结构实验](/docs/research/container-structure)。
+操作步骤见[macOS 27 升级与修复](/docs/macos-27)。想了解实验证据，可以读[符号链接实验](/docs/blog/why-mount-and-apfs#symlink-experiment)、[挂载与授权实验](/docs/blog/why-mount-and-apfs#mount-experiment)和[容器目录结构实验](/docs/blog/data-migration-boundaries#starting-point)。

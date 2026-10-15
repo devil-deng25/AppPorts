@@ -62,38 +62,23 @@
       ]
     },
     {
-      "name": "实验记录",
-      "icon": "FlaskConical",
+      "name": "博客",
+      "icon": "Newspaper",
       "children": [
         {
-          "slug": "research/sandbox-symlink",
-          "name": "符号链接为什么不总是可用",
-          "icon": "FlaskConical"
+          "slug": "blog/overview",
+          "name": "文章列表",
+          "icon": "Newspaper"
         },
         {
-          "slug": "research/sandbox-mountpoint",
-          "name": "挂载迁移与系统授权",
-          "icon": "FlaskConical"
+          "slug": "blog/why-mount-and-apfs",
+          "name": "为什么 AppPorts 选择挂载迁移，又为什么是 APFS",
+          "icon": "HardDrive"
         },
         {
-          "slug": "research/unplug-test",
-          "name": "意外断开外置盘的影响",
-          "icon": "FlaskConical"
-        },
-        {
-          "slug": "research/prelogin-mount",
-          "name": "重启与外置盘自动接回",
-          "icon": "FlaskConical"
-        },
-        {
-          "slug": "research/container-structure",
-          "name": "为什么有些容器目录不能搬",
-          "icon": "FlaskConical"
-        },
-        {
-          "slug": "research/data-integrity",
-          "name": "数据完整性：文件复制完就够了吗",
-          "icon": "FlaskConical"
+          "slug": "blog/data-migration-boundaries",
+          "name": "为什么有些数据目录不能迁移",
+          "icon": "FolderLock"
         }
       ]
     },
@@ -129,6 +114,32 @@
       "icon": "Heart"
     },
     {
+      "name": "历史功能归档",
+      "icon": "Archive",
+      "children": [
+        {
+          "slug": "archive/overview",
+          "name": "归档索引",
+          "icon": "Archive"
+        },
+        {
+          "slug": "archive/data-signing",
+          "name": "旧版数据链接与自动重签名",
+          "icon": "ShieldCheck"
+        },
+        {
+          "slug": "archive/app-strategies",
+          "name": "早期应用迁移方式",
+          "icon": "Boxes"
+        },
+        {
+          "slug": "archive/mount-experiments",
+          "name": "未采用的挂载实验方案",
+          "icon": "FlaskConical"
+        }
+      ]
+    },
+    {
       "slug": "licenses",
       "name": "开源许可",
       "icon": "Scale"
@@ -140,15 +151,11 @@
     },
     {
       "slug": "glossary",
-      "name": "词汇表",
+      "name": "名词解释",
       "icon": "BookA"
     }
   ],
   "auxiliary": [
-    "contributing",
-    "archive/overview",
-    "archive/data-signing",
-    "archive/app-strategies",
-    "archive/mount-experiments"
+    "contributing"
   ]
 }

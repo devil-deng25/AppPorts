@@ -2,8 +2,8 @@ import type { Root, Node } from 'fumadocs-core/page-tree';
 import { source } from './source';
 import { entries } from './docs-structure';
 import { createElement } from 'react';
-import { AppWindow, BookOpen, BookA, Rocket, Boxes, Tags, FolderOpen, HardDrive, ShieldCheck, RefreshCw, Settings, CircleHelp, ScrollText, FlaskConical, Heart, Scale, Lock, Undo2, History, FileText, type LucideIcon } from 'lucide-react';
-const icons: Record<string, LucideIcon> = { AppWindow, BookOpen, BookA, Rocket, Boxes, Tags, FolderOpen, HardDrive, ShieldCheck, RefreshCw, Settings, CircleHelp, ScrollText, FlaskConical, Heart, Scale, Lock, Undo2, History };
+import { AppWindow, BookOpen, BookA, Rocket, Boxes, Tags, FolderOpen, HardDrive, ShieldCheck, RefreshCw, Settings, CircleHelp, ScrollText, FlaskConical, Heart, Scale, Lock, Undo2, History, Newspaper, FolderLock, Archive, FileText, type LucideIcon } from 'lucide-react';
+const icons: Record<string, LucideIcon> = { AppWindow, BookOpen, BookA, Rocket, Boxes, Tags, FolderOpen, HardDrive, ShieldCheck, RefreshCw, Settings, CircleHelp, ScrollText, FlaskConical, Heart, Scale, Lock, Undo2, History, Newspaper, FolderLock, Archive };
 const names = new Map(entries.flatMap(entry => [entry, ...(entry.children ?? [])]).map(entry => [entry.name, entry.icon]));
 
 export function docsTree(): Root {

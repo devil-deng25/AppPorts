@@ -26,7 +26,7 @@
         "状态与操作": "/docs/badges#data",
         "卸载或移动-appports-之前": "/docs/restore#data",
         "排查": "/docs/faq#mount",
-        "为什么不用磁盘映像": "/docs/research/unplug-test",
+        "为什么不用磁盘映像": "/docs/blog/why-mount-and-apfs#unplug-experiment",
         "技术细节": "/docs/datamigrae/operation#mount",
         "自动重挂的时序": "/docs/storage-guide#daily",
         "卷上的-spotlight-索引": "/docs/datamigrae/operation#mount",
@@ -172,6 +172,126 @@
         "隐私保护": "/docs/faq#feedback",
         "提交-issue": "/docs/faq#feedback"
       }
+    },
+    "research/sandbox-symlink": {
+      "target": "/docs/blog/why-mount-and-apfs#symlink-experiment",
+      "anchors": {
+        "environment": "/docs/blog/why-mount-and-apfs#symlink-method",
+        "method": "/docs/blog/why-mount-and-apfs#symlink-method",
+        "results": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "meaning": "/docs/blog/why-mount-and-apfs#symlink-implication",
+        "limits": "/docs/blog/why-mount-and-apfs#symlink-limits",
+        "环境": "/docs/blog/why-mount-and-apfs#symlink-method",
+        "测试应用的-entitlements": "/docs/blog/why-mount-and-apfs#symlink-method",
+        "结果": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "便签符号链接重定向-datalibrarystickies": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "微信符号链接重定向-datadocumentsxwechat_fileswxid_": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "决定性日志原文": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "便签--主实验外置卷": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "便签--c1主目录内的容器外路径": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "微信--w2官方签名--外置卷": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "微信--w3官方签名--本地数据阳性对照": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "微信--w1--w4ad-hoc-重签名": "/docs/blog/why-mount-and-apfs#symlink-results",
+        "结论": "/docs/blog/why-mount-and-apfs#symlink-limits",
+        "对-appports-的含义": "/docs/blog/why-mount-and-apfs#symlink-implication",
+        "本次实验的边界": "/docs/blog/why-mount-and-apfs#symlink-limits"
+      }
+    },
+    "research/sandbox-mountpoint": {
+      "target": "/docs/blog/why-mount-and-apfs#mount-experiment",
+      "anchors": {
+        "environment": "/docs/blog/why-mount-and-apfs#mount-method",
+        "method": "/docs/blog/why-mount-and-apfs#mount-method",
+        "results": "/docs/blog/why-mount-and-apfs#mount-results",
+        "permissions": "/docs/blog/why-mount-and-apfs#permissions",
+        "limits": "/docs/blog/why-mount-and-apfs#mount-limits",
+        "环境": "/docs/blog/why-mount-and-apfs#mount-method",
+        "实验方法": "/docs/blog/why-mount-and-apfs#mount-method",
+        "结果总表": "/docs/blog/why-mount-and-apfs#mount-results",
+        "原始日志": "/docs/blog/why-mount-and-apfs#mount-results",
+        "1-便签静默拒绝": "/docs/blog/why-mount-and-apfs#mount-results",
+        "2-微信先拒绝后授权之后完全正常": "/docs/blog/why-mount-and-apfs#mount-results",
+        "3-小米互联服务app-store-应用明确的授权弹框": "/docs/blog/why-mount-and-apfs#mount-results",
+        "4-把卷挂到容器路径需要-full-disk-access": "/docs/blog/why-mount-and-apfs#mount-results",
+        "5-fstab-持久化": "/docs/archive/mount-experiments#fstab",
+        "结论": "/docs/blog/why-mount-and-apfs#mount-limits",
+        "1-挂载点方案对沙盒应用是否可行": "/docs/blog/why-mount-and-apfs#mount-results",
+        "2-失败时的具体机制": "/docs/blog/why-mount-and-apfs#mount-results",
+        "3-盘不在时的安全对策": "/docs/blog/why-mount-and-apfs#mount-results",
+        "4-与理论不符的现象": "/docs/blog/why-mount-and-apfs#mount-results",
+        "对-appports-的含义": "/docs/blog/why-mount-and-apfs#permissions",
+        "后续补充": "/docs/blog/why-mount-and-apfs#mount-limits",
+        "实验边界": "/docs/blog/why-mount-and-apfs#mount-limits"
+      }
+    },
+    "research/unplug-test": {
+      "target": "/docs/blog/why-mount-and-apfs#unplug-experiment",
+      "anchors": {
+        "environment": "/docs/blog/why-mount-and-apfs#unplug-method",
+        "method": "/docs/blog/why-mount-and-apfs#unplug-method",
+        "results": "/docs/blog/why-mount-and-apfs#unplug-results",
+        "meaning": "/docs/blog/why-mount-and-apfs#daily-use",
+        "limits": "/docs/blog/why-mount-and-apfs#unplug-limits",
+        "环境": "/docs/blog/why-mount-and-apfs#unplug-method",
+        "第一轮普通-fsync": "/docs/blog/why-mount-and-apfs#unplug-results",
+        "第二轮f_fullfsync": "/docs/blog/why-mount-and-apfs#unplug-results",
+        "第三轮asif已中止": "/docs/blog/why-mount-and-apfs#unplug-results",
+        "性能对照拔盘前同一块-u-盘": "/docs/blog/why-mount-and-apfs#unplug-limits",
+        "其它观察": "/docs/blog/why-mount-and-apfs#unplug-limits",
+        "结论": "/docs/blog/why-mount-and-apfs#unplug-limits",
+        "清理": "/docs/blog/why-mount-and-apfs#unplug-limits"
+      }
+    },
+    "research/prelogin-mount": {
+      "target": "/docs/blog/why-mount-and-apfs#startup-method",
+      "anchors": {
+        "environment": "/docs/blog/why-mount-and-apfs#startup-method",
+        "method": "/docs/blog/why-mount-and-apfs#startup-method",
+        "results": "/docs/blog/why-mount-and-apfs#startup-results",
+        "meaning": "/docs/blog/why-mount-and-apfs#startup-current",
+        "limits": "/docs/blog/why-mount-and-apfs#startup-limits",
+        "环境": "/docs/blog/why-mount-and-apfs#startup-method",
+        "探测-1系统域-root-守护进程能不能挂到容器路径": "/docs/blog/why-mount-and-apfs#startup-results",
+        "探测-2同样的命令换个上下文就成功": "/docs/blog/why-mount-and-apfs#startup-results",
+        "探测-3filevault-让登录前直接不存在": "/docs/blog/why-mount-and-apfs#startup-results",
+        "探测-4守护进程只做喊人是可行的": "/docs/blog/why-mount-and-apfs#startup-results",
+        "上一轮开机的真实时序竞速的来源": "/docs/blog/why-mount-and-apfs#startup-results",
+        "受控探测的结论": "/docs/blog/why-mount-and-apfs#startup-limits",
+        "开机实测2026-09-22-054808-那次": "/docs/blog/why-mount-and-apfs#startup-results",
+        "a-方案的判定": "/docs/blog/why-mount-and-apfs#startup-limits",
+        "重启后自查验证-keepalive-是否真的让代理提前": "/docs/blog/why-mount-and-apfs#startup-results",
+        "重启实测2026-09-22-063547-那次": "/docs/blog/why-mount-and-apfs#startup-results",
+        "顺带发现watchpaths-会按子树匹配空跑偏多改动前就存在": "/docs/blog/why-mount-and-apfs#startup-current",
+        "后续加固把再试一次挂到-volumes-的真实事件上2026-09-23": "/docs/blog/why-mount-and-apfs#startup-current",
+        "起因": "/docs/blog/why-mount-and-apfs#startup-results",
+        "根因diskutil-mount--mountpoint-会假装成功": "/docs/blog/why-mount-and-apfs#startup-results",
+        "volumes-的事件能在-01-秒内等到": "/docs/blog/why-mount-and-apfs#startup-results",
+        "改动": "/docs/blog/why-mount-and-apfs#startup-current",
+        "真机验证2026-09-23-0804微信卷未受影响": "/docs/blog/why-mount-and-apfs#startup-results",
+        "第二轮加固2026-09-23-144x省掉开机时那次-9-秒的-diskutil-查询": "/docs/blog/why-mount-and-apfs#startup-current",
+        "附探测脚本实测后已撤除": "/docs/blog/why-mount-and-apfs#startup-limits",
+        "相关文档": "/docs/blog/why-mount-and-apfs#startup-limits"
+      }
+    },
+    "research/container-structure": {
+      "target": "/docs/blog/data-migration-boundaries#starting-point",
+      "anchors": {
+        "environment": "/docs/blog/data-migration-boundaries#starting-point",
+        "method": "/docs/blog/data-migration-boundaries#investigation",
+        "results": "/docs/blog/data-migration-boundaries#business-directories",
+        "meaning": "/docs/blog/data-migration-boundaries#practical-boundary",
+        "limits": "/docs/blog/data-migration-boundaries#references"
+      }
+    },
+    "research/data-integrity": {
+      "target": "/docs/blog/data-migration-boundaries#copy-and-switch",
+      "anchors": {
+        "environment": "/docs/blog/data-migration-boundaries#integrity-method",
+        "method": "/docs/blog/data-migration-boundaries#integrity-method",
+        "results": "/docs/blog/data-migration-boundaries#integrity-results",
+        "current": "/docs/blog/data-migration-boundaries#copy-current",
+        "limits": "/docs/blog/data-migration-boundaries#integrity-limits"
+      }
     }
   },
   "anchors": {
@@ -315,74 +435,6 @@
       "策略选择决策树": "types",
       "目标冲突与替换策略": "limits"
     },
-    "research/prelogin-mount": {
-      "环境": "environment",
-      "探测-1系统域-root-守护进程能不能挂到容器路径": "results",
-      "探测-2同样的命令换个上下文就成功": "results",
-      "探测-3filevault-让登录前直接不存在": "results",
-      "探测-4守护进程只做喊人是可行的": "results",
-      "上一轮开机的真实时序竞速的来源": "results",
-      "受控探测的结论": "limits",
-      "开机实测2026-09-22-054808-那次": "results",
-      "a-方案的判定": "limits",
-      "重启后自查验证-keepalive-是否真的让代理提前": "results",
-      "重启实测2026-09-22-063547-那次": "results",
-      "顺带发现watchpaths-会按子树匹配空跑偏多改动前就存在": "meaning",
-      "后续加固把再试一次挂到-volumes-的真实事件上2026-09-23": "meaning",
-      "起因": "results",
-      "根因diskutil-mount--mountpoint-会假装成功": "results",
-      "volumes-的事件能在-01-秒内等到": "results",
-      "改动": "meaning",
-      "真机验证2026-09-23-0804微信卷未受影响": "results",
-      "第二轮加固2026-09-23-144x省掉开机时那次-9-秒的-diskutil-查询": "meaning",
-      "附探测脚本实测后已撤除": "limits",
-      "相关文档": "limits"
-    },
-    "research/sandbox-mountpoint": {
-      "环境": "environment",
-      "实验方法": "method",
-      "结果总表": "results",
-      "原始日志": "results",
-      "1-便签静默拒绝": "results",
-      "2-微信先拒绝后授权之后完全正常": "results",
-      "3-小米互联服务app-store-应用明确的授权弹框": "results",
-      "4-把卷挂到容器路径需要-full-disk-access": "results",
-      "5-fstab-持久化": "results",
-      "结论": "limits",
-      "1-挂载点方案对沙盒应用是否可行": "results",
-      "2-失败时的具体机制": "results",
-      "3-盘不在时的安全对策": "results",
-      "4-与理论不符的现象": "results",
-      "对-appports-的含义": "permissions",
-      "后续补充": "limits",
-      "实验边界": "limits"
-    },
-    "research/sandbox-symlink": {
-      "环境": "environment",
-      "测试应用的-entitlements": "environment",
-      "结果": "results",
-      "便签符号链接重定向-datalibrarystickies": "results",
-      "微信符号链接重定向-datadocumentsxwechat_fileswxid_": "results",
-      "决定性日志原文": "results",
-      "便签--主实验外置卷": "results",
-      "便签--c1主目录内的容器外路径": "results",
-      "微信--w2官方签名--外置卷": "results",
-      "微信--w3官方签名--本地数据阳性对照": "results",
-      "微信--w1--w4ad-hoc-重签名": "results",
-      "结论": "limits",
-      "对-appports-的含义": "meaning",
-      "本次实验的边界": "limits"
-    },
-    "research/unplug-test": {
-      "环境": "environment",
-      "第一轮普通-fsync": "results",
-      "第二轮f_fullfsync": "results",
-      "第三轮asif已中止": "results",
-      "性能对照拔盘前同一块-u-盘": "limits",
-      "其它观察": "limits",
-      "结论": "limits",
-      "清理": "limits"
-    },
     "settings": {
       "app-store-与-ios-设置": "app-store",
       "签名设置": "manual-signing",
@@ -401,6 +453,9 @@
       "exfat": "apfs",
       "容量规划": "space",
       "注意事项": "daily"
+    },
+    "blog/why-mount-and-apfs": {
+      "startup": "startup-method"
     }
   }
 }

@@ -41,4 +41,4 @@ AppPorts 会为挂载迁移创建专用数据卷；通常无需自己为每个�
 
 换盘前先[还原到本地](/docs/restore#data)，再选择新目标重新迁移。直接拖动受管数据或改卷名、目录结构，可能让已有入口失效。外盘找不到、数据没有接回时，先看[问题排查](/docs/faq#offline)。
 
-实验依据：[意外断开外置盘的影响](/docs/research/unplug-test) · [重启与自动接回](/docs/research/prelogin-mount)
+实验依据：[意外断开外置盘的影响](/docs/blog/why-mount-and-apfs#unplug-experiment) · [重启与自动接回](/docs/blog/why-mount-and-apfs#startup-method)

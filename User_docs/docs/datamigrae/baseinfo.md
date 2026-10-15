@@ -25,7 +25,7 @@
 
 容器中既有业务数据，也有系统要求保持原状的结构。即使复制和挂载成功，改变受保护的结构仍可能让应用无法启动。
 
-因此，AppPorts 可以展示某个目录，却不提供迁移按钮。不要把“看得见”理解成“可以移动”，也不要通过自选目录绕过保护。相关实验见[为什么有些容器目录不能搬](/docs/research/container-structure)。
+因此，AppPorts 可以展示某个目录，却不提供迁移按钮。不要把“看得见”理解成“可以移动”，也不要通过自选目录绕过保护。相关实验见[为什么有些容器目录不能搬](/docs/blog/data-migration-boundaries#starting-point)。
 
 ## 迁移成功还需要什么 {#access}
 
@@ -33,4 +33,6 @@
 
 迁移完成后，确认状态正常，再打开应用检查原有内容和保存功能。重要数据应另有备份；副本检查不能保证任意后台程序都不会继续改写源数据。
 
-相关内容：[迁移数据的步骤](/docs/datamigrae/operation) · [挂载与系统授权实验](/docs/research/sandbox-mountpoint) · [经典模式](/docs/classic-mode) · [词汇表](/docs/glossary)
+相关内容：[迁移数据的步骤](/docs/datamigrae/operation) · [挂载与系统授权实验](/docs/blog/why-mount-and-apfs#mount-experiment) · [经典模式](/docs/classic-mode) · [名词解释](/docs/glossary)
+
+延伸阅读：[为什么 AppPorts 选择挂载迁移，又为什么是 APFS](/docs/blog/why-mount-and-apfs) · [数据目录的迁移边界](/docs/blog/data-migration-boundaries)。

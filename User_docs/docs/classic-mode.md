@@ -29,6 +29,6 @@
 
 没有合适 APFS 存储时，可以让容器数据继续留在本机。不要只为绕过格式要求而开启经典模式。
 
-相关内容：[还原与接回](/docs/restore) · [符号链接实验](/docs/research/sandbox-symlink) · [经典模式词条](/docs/glossary#classic-mode)
+相关内容：[还原与接回](/docs/restore) · [符号链接实验](/docs/blog/why-mount-and-apfs#symlink-experiment) · [经典模式词条](/docs/glossary#classic-mode)
 
 旧版开关与自动签名的详细变化保存在[历史功能归档](/docs/archive/data-signing)。

@@ -46,3 +46,5 @@
 需要恢复本机存放或重建入口时，阅读[还原与接回](/docs/restore)。中断或只剩清理未完成时，保留 AppPorts 提示的副本，不要反复创建新的迁移。
 
 相关内容：[两种数据迁移方式](/docs/datamigrae/baseinfo) · [外置盘准备](/docs/storage-guide#apfs) · [经典模式](/docs/classic-mode)
+
+想了解锁定目录和父子层级限制的来由，可阅读[数据目录的迁移边界](/docs/blog/data-migration-boundaries)。
