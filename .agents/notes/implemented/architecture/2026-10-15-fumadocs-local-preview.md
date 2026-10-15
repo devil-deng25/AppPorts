@@ -10,6 +10,8 @@ Status: implemented
 
 User_docs 使用 Fumadocs Base UI、Next.js 与静态导出，只加载简体中文。现有 docs Markdown 是正文源；构建准备脚本把提示框、折叠块和组件转换为忽略的 MDX 产物。lib/navigation.ts 明确保留原侧栏分组、顺序与名称，并为目录与页面提供 Lucide 图标。原 VitePress 配置及其他语言源文件保留，其他语言不进入当前构建。
 
+后续目录、内容深度、词汇表及实验整理见[面向普通用户的文档方案](../../proposed/architecture/2026-10-15-reader-first-docs-structure.md)。该方案仍待批准，当前预览保留现有目录和正文。
+
 首页与文档内页共用 SiteHeader，提供文档、更新日志、官网、下载、赞助、搜索和主题入口。首页只保留主标题和操作入口，不显示副标题。文档顶部显示一次分类、标题、简介，以及统一尺寸的复制 Markdown 与打开菜单；原生面包屑关闭，避免重复分类。菜单提供 Markdown 和 GitHub 源文件入口，复制与打开行为不自动发送内容。
 
 Header 的 LanguageSwitch 提供原站八种语言，简体中文标记为当前语言，其他语言在当前标签页打开线上文档。准备脚本根据保留的译文源文件生成 .content/languages.json；存在同路径译文时转换为线上 /<lang>/<slug>.html，没有译文或从首页切换时进入该语言首页。切换不沿用中文章节锚点或查询参数。这个入口保留当前仅构建中文的边界，译文仍使用线上 VitePress 外观。
