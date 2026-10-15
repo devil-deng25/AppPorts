@@ -43,7 +43,7 @@ enum WriterAdmissionError: LocalizedError {
 /// for live writers, not a schema/version gate or an operation journal. A stale
 /// registration cannot authorize a reused PID or another data directory.
 final class WriterAdmission {
-    static let requiredCapability = "appports-verified-writer-v4"
+    static let requiredCapability = "appports-verified-writer-v5"
     static var defaultDataDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AppPorts", isDirectory: true)

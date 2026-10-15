@@ -273,6 +273,29 @@ final class AppUpdateProtectionStore {
         try setProtection(false, record: relocation, root: root)
     }
 
+    /// A signature receipt proves the unchanged parent and original/candidate
+    /// objects before calling this after a volume remount. Only path hints move;
+    /// the previously owned protection bits never acquire new authority.
+    func rebaseExchangePath(_ relocation: AppUpdateProtectionRelocation, to root: URL,
+                            parentIdentity: DataPathIdentity) throws -> AppUpdateProtectionRelocation {
+        try WriterAdmission.recheck(dataDirectory: writerDataDirectory)
+        guard try DataPathIdentity.capture(root.deletingLastPathComponent()).matchesFilesystemObject(parentIdentity) else {
+            throw CodeSigner.SigningError.applicationChanged
+        }
+        let identity = try DataPathIdentity.capture(root)
+        let rebound = Record(id: relocation.id, path: root.path, identity: relocation.identity, entries: relocation.entries)
+        let current = try currentRecord(relocation, at: root, identity: identity)
+        guard current == relocation || current == rebound
+            || ((current.path == relocation.path || current.path == root.path) && current.identity.matchesFilesystemObject(identity)) else {
+            throw CodeSigner.SigningError.applicationChanged
+        }
+        if current.path != root.path {
+            let relocated = Record(id: current.id, path: root.path, identity: current.identity, entries: current.entries)
+            try DurableFileIO.write(try PropertyListEncoder().encode(relocated), to: recordURL(relocated))
+        }
+        return rebound
+    }
+
     /// A same-volume rename preserves every filesystem object. Rebind only the
     /// previously recorded bits; never adopt immutable flags found at the new path.
     func commitSameObjectMove(_ relocation: AppUpdateProtectionRelocation, to root: URL) throws {

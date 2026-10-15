@@ -20,6 +20,12 @@ struct SignatureBackup: Codable, Equatable, Sendable {
     /// reconciled against a later official update, without trusting a hash change.
     var originalDeveloper: OriginalDeveloperIdentity?
     var originalApplicationGroups: [String]?
+    var snapshotLocation: SignatureDirectoryLocation?
+    var snapshotIdentity: DataPathIdentity?
+    var applicationParentLocation: SignatureDirectoryLocation?
+    var relocation: SignatureBackupRelocation?
+
+    var hasFullSnapshot: Bool { schemaVersion == 2 || schemaVersion == 3 }
 }
 
 struct SignatureBackupCleanup: Codable, Equatable, Sendable {
@@ -28,6 +34,21 @@ struct SignatureBackupCleanup: Codable, Equatable, Sendable {
     var applicationFingerprint: String
     var removalManifest: SignatureRemovalManifest?
     var actualDeletionStarted: Bool?
+}
+
+/// The old internal original remains authoritative until the external copy and
+/// its index are durable. Source removal is a separate, resumable final step.
+struct SignatureBackupRelocation: Codable, Equatable, Sendable {
+    let sourceName: String
+    let sourceIdentity: DataPathIdentity
+    let sourceParentIdentity: DataPathIdentity
+    let destination: SignatureDirectoryLocation
+    let destinationName: String
+    var destinationIdentity: DataPathIdentity?
+    var partialRemoval: SignatureRemovalManifest?
+    let sourceRemoval: SignatureRemovalManifest
+    var published = false
+    var sourceRemovalStarted = false
 }
 
 struct SignatureMaterialDeletion: Codable, Equatable, Sendable {
@@ -41,6 +62,12 @@ struct SignatureMaterialDeletion: Codable, Equatable, Sendable {
     let moveToTrash: Bool
     var started = false
     var recordParentIdentity: DataPathIdentity?
+    var targetLocation: SignatureDirectoryLocation?
+
+    var targetURL: URL {
+        (targetLocation?.displayURL ?? URL(fileURLWithPath: targetPath).deletingLastPathComponent())
+            .appendingPathComponent(URL(fileURLWithPath: targetPath).lastPathComponent)
+    }
 }
 
 struct SignatureHistoryStore: Sendable {
@@ -153,18 +180,48 @@ struct SignatureHistoryStore: Sendable {
     func snapshotURL(for backup: SignatureBackup) -> URL? {
         guard let name = backup.snapshotName, name.hasPrefix("original-"), name.hasSuffix(".app"),
               URL(fileURLWithPath: name).lastPathComponent == name else { return nil }
+        if backup.schemaVersion == 3 {
+            return backup.snapshotLocation?.displayURL.appendingPathComponent(name)
+        }
         return directoryURL.appendingPathComponent(name)
     }
 
+    func snapshotParent(for backup: SignatureBackup) throws -> URL {
+        if backup.schemaVersion == 3 {
+            guard let location = backup.snapshotLocation else { throw CodeSigner.SigningError.snapshotInvalid }
+            return try location.resolve()
+        }
+        guard backup.schemaVersion == 2,
+              directoryURL.standardizedFileURL == directoryURL.resolvingSymlinksInPath().standardizedFileURL,
+              try SignatureSnapshot.info(at: directoryURL).st_mode & S_IFMT == S_IFDIR else {
+            throw CodeSigner.SigningError.snapshotInvalid
+        }
+        return directoryURL
+    }
+
     func verifiedSnapshot(for backup: SignatureBackup) throws -> URL {
-        guard backup.schemaVersion == 2 else { throw CodeSigner.SigningError.legacyBackupIncomplete }
+        guard backup.hasFullSnapshot else { throw CodeSigner.SigningError.legacyBackupIncomplete }
         do {
+            _ = try snapshotParent(for: backup)
             guard let snapshot = snapshotURL(for: backup), let fingerprint = backup.originalFingerprint,
                   try SignatureSnapshot.info(at: snapshot).st_mode & S_IFMT == S_IFDIR,
+                  try backup.schemaVersion != 3 || backup.snapshotIdentity?.matchesFilesystemObject(DataPathIdentity.capture(snapshot)) == true,
                   try SignatureSnapshot.fingerprint(of: snapshot) == fingerprint else { throw CodeSigner.SigningError.snapshotInvalid }
             return snapshot
         } catch is CancellationError { throw CancellationError() }
         catch { throw CodeSigner.SigningError.snapshotInvalid }
+    }
+
+    /// Absence is meaningful only on the original, available storage. An
+    /// offline external volume never authorizes dropping its recovery index.
+    func snapshotIsMissing(for backup: SignatureBackup) throws -> Bool {
+        if backup.schemaVersion == nil || backup.schemaVersion == 1 {
+            return backup.snapshotName == nil
+        }
+        guard backup.hasFullSnapshot, let snapshot = snapshotURL(for: backup) else { return false }
+        let parent = try snapshotParent(for: backup)
+        guard backup.schemaVersion == 3 || isOnlineLocalSnapshotParent(parent) else { return false }
+        return try !SignatureSnapshot.entryExists(snapshot)
     }
 
     func belongs(_ backup: SignatureBackup, to app: URL, currentFingerprint: String? = nil, fact: SignatureFact? = nil,
@@ -181,7 +238,7 @@ struct SignatureHistoryStore: Sendable {
                   try DataPathIdentity.capture(recorded).matchesFilesystemObject(identity) else { return false }
         }
         if let version = backup.version, try SignatureAppVersion.read(at: app) != version { return false }
-        if let currentFingerprint, backup.schemaVersion == 2,
+        if let currentFingerprint, backup.hasFullSnapshot,
            backup.restorableFingerprints?.contains(currentFingerprint) != true { return false }
         return true
     }
@@ -211,7 +268,7 @@ struct SignatureHistoryStore: Sendable {
         let records = inventory.records
         let deletionInventory = try deletionInventory()
         let pendingDeletions = deletionInventory.deletions
-        let deletingPaths = Set(pendingDeletions.map(\.targetPath))
+        let deletingPaths = Set(pendingDeletions.map { $0.targetURL.path })
         var materials = inventory.unavailableDirectories
         var referenced = Set<String>()
         for record in records {
@@ -240,25 +297,27 @@ struct SignatureHistoryStore: Sendable {
             if deletingPaths.contains(target.path) { continue }
             // Older records have no durable evidence for the original's parent
             // volume. Missing or unreadable paths never mean space was freed.
-            let exists = try? SignatureSnapshot.entryExists(target)
+            let storageAvailable = backup.schemaVersion != 3 || (try? snapshotParent(for: backup)) != nil
+            let exists = storageAvailable ? try? SignatureSnapshot.entryExists(target) : nil
             let isDirectory = exists == true && (try? SignatureSnapshot.info(at: target).st_mode & S_IFMT) == S_IFDIR
-            let legacy = backup.schemaVersion != 2 || snapshot == nil
-            let cleanup = backup.cleanup != nil
+            let legacy = !backup.hasFullSnapshot || snapshot == nil
+            let cleanup = backup.cleanup != nil || backup.relocation != nil
             let protected = hasPendingDeletion(for: record, snapshot: snapshot, recordID: id, inventory: deletionInventory)
             // A missing file in an online local backup directory is not an
             // available copy. Keep its historical metadata for provenance,
             // while removing the stale row from the physical-copy inventory.
-            if let snapshot, exists == false, !cleanup, !protected,
+            if let snapshot, backup.schemaVersion != 3, exists == false, !cleanup, !protected,
                isOnlineLocalSnapshotParent(snapshot.deletingLastPathComponent()) {
                 continue
             }
             let missingAfterDeletion = exists == false && backup.cleanup?.actualDeletionStarted == true
                 && backup.cleanup?.removalManifest != nil && backup.cleanup?.snapshotIdentity != nil
-            let canResume = cleanup && snapshot != nil && (isDirectory || missingAfterDeletion)
+            let canResume = backup.relocation != nil || cleanup && snapshot != nil && (isDirectory || missingAfterDeletion)
             let detail: String
             if snapshot != nil && !isDirectory {
                 detail = "历史原件当前无法核实；位置可能离线或已改变。可选择官方原件，或仅移除记录。".localized
-            } else if cleanup { detail = "原件已恢复或备份已确认冗余，清理尚未完成".localized }
+            } else if backup.relocation != nil { detail = "正在将原包迁到外盘，可继续未完成的操作。".localized }
+            else if cleanup { detail = "原件已恢复或备份已确认冗余，清理尚未完成".localized }
             else if legacy { detail = "旧版身份记录不包含可恢复的应用；可选择同版本官方原件".localized }
             else { detail = "历史签名恢复原件；恢复时将核对当前安装、版本和内容".localized }
             materials.append(.init(id: id,
@@ -268,7 +327,7 @@ struct SignatureHistoryStore: Sendable {
                 sizeBytes: exists == true ? try? allocatedBytes(at: target) : nil, detail: detail,
                 canResume: canResume && !protected, canCancel: false, canRestore: isDirectory && !legacy && !cleanup && !protected,
                 canDelete: !cleanup && snapshot != nil && isDirectory && !protected,
-                canRemoveRecord: (legacy || !isDirectory) && !protected))
+                canRemoveRecord: (legacy || !isDirectory) && !protected && backup.relocation == nil))
         }
         for url in inventory.children
             where url.pathExtension == "app" && !referenced.contains(url.path) && !deletingPaths.contains(url.path) {
@@ -286,9 +345,9 @@ struct SignatureHistoryStore: Sendable {
         }
         for deletion in pendingDeletions {
             materials.append(.init(id: "history-cleanup:" + deletion.id.uuidString, kind: .historicalSnapshot,
-                url: URL(fileURLWithPath: deletion.targetPath), appURL: nil,
+                url: deletion.targetURL, appURL: nil,
                 appName: URL(fileURLWithPath: deletion.targetPath).lastPathComponent, bundleIdentifier: nil,
-                sizeBytes: try? allocatedBytes(at: URL(fileURLWithPath: deletion.targetPath)),
+                sizeBytes: try? allocatedBytes(at: deletion.targetURL),
                 detail: deletion.moveToTrash ? "移入废纸篓尚未完成；完成后仍占存储空间".localized : "已授权删除历史签名原件，清理尚未完成".localized,
                 canResume: true, canCancel: false, canRestore: false, canDelete: false))
         }
@@ -324,7 +383,7 @@ struct SignatureHistoryStore: Sendable {
     private func hasPendingDeletion(for record: URL, snapshot: URL?, recordID: String?, inventory: DeletionInventory) -> Bool {
         let paths = Set([record.path, snapshot?.path].compactMap { $0 })
         return inventory.unavailableDirectory != nil
-            || inventory.deletions.contains { paths.contains($0.targetPath) || $0.recordPath == record.path }
+            || inventory.deletions.contains { paths.contains($0.targetURL.path) || $0.recordPath == record.path }
             || inventory.unreadableRecords.contains { $0.concerns(snapshot ?? record, record: record, recordID: recordID) }
     }
 
@@ -351,7 +410,8 @@ struct SignatureHistoryStore: Sendable {
         let snapshot = backup.flatMap { snapshotURL(for: $0) }
         guard !(try hasPendingDeletion(for: record, snapshot: snapshot)) else { return false }
         guard let backup else { return true }
-        guard backup.schemaVersion == 2, let snapshot else { return true }
+        guard backup.relocation == nil else { return false }
+        guard backup.hasFullSnapshot, let snapshot else { return true }
         return (try? SignatureSnapshot.info(at: snapshot).st_mode & S_IFMT) != S_IFDIR
     }
 
@@ -424,8 +484,11 @@ struct SignatureHistoryStore: Sendable {
               deletion.parentIdentity.isResolved, deletion.targetIdentity.isResolved,
               deletion.recordParentIdentity?.isResolved != false,
               deletion.manifest.rootIdentity.matchesFilesystemObject(deletion.targetIdentity),
-              target.deletingLastPathComponent() == directoryURL.standardizedFileURL
-                || target.deletingLastPathComponent() == directoryURL.appendingPathComponent("retired").standardizedFileURL,
+              (deletion.targetLocation.map { $0.identity.matchesFilesystemObject(deletion.parentIdentity)
+                  && $0.path == target.deletingLastPathComponent().path
+                  && target.lastPathComponent.hasPrefix("original-") && target.pathExtension == "app" }
+                ?? (target.deletingLastPathComponent() == directoryURL.standardizedFileURL
+                    || target.deletingLastPathComponent() == directoryURL.appendingPathComponent("retired").standardizedFileURL)),
               deletion.recordPath.map({ containsRecord(URL(fileURLWithPath: $0)) }) != false else {
             throw CodeSigner.SigningError.snapshotInvalid
         }

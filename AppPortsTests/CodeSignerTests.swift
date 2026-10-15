@@ -50,7 +50,8 @@ private enum SignedTestApplication {
             try FileManager.default.createDirectory(at: probe, withIntermediateDirectories: true)
             let copy = probe.appendingPathComponent(app.lastPathComponent)
             try SignatureSnapshot.copy(from: app, to: copy)
-            guard try SignatureInspector.inspect(at: copy).developerIdentity != nil else { return false }
+            // Fixture eligibility must be independent of the inspector under
+            // test, otherwise losing developer evidence silently skips it.
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
             process.arguments = ["--verify", "--deep", "--strict", copy.path]

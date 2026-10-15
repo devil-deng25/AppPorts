@@ -347,9 +347,11 @@ struct SignatureFactStore: Sendable {
             try Task.checkCancellation()
             // Unreadable records stay visible in the material inventory. They
             // cannot contribute identity or become a global mutation barrier.
-            guard var record = try? operations.read(url), record.applicationPath == app.path,
-                  record.candidateIdentity?.matchesFilesystemObject(identity) == true,
-                  [.switching, .committed, .cleaning].contains(record.phase) else { continue }
+            guard let stored = try? operations.read(url),
+                  stored.candidateIdentity?.matchesFilesystemObject(identity) == true,
+                  [.switching, .committed, .cleaning].contains(stored.phase) else { continue }
+            var record = try stored.resolvingApplicationLocation()
+            guard record.applicationPath == app.path else { continue }
             guard record.originalBackup?.completed != false else {
                 // Relocation must not orphan the still-required official package.
                 throw CodeSigner.SigningError.operationInProgress
@@ -412,7 +414,7 @@ struct SignatureFactStore: Sendable {
         // History that no longer decodes or matches remains a visible material;
         // it cannot veto a new explicit signature or be relabelled as valid.
         guard var backup = try? history.read(at: url),
-              backup.bundleIdentifier == record.version.bundleIdentifier, backup.schemaVersion == 2,
+              backup.bundleIdentifier == record.version.bundleIdentifier, backup.hasFullSnapshot,
               backup.restorableFingerprints?.contains(record.originalFingerprint) == true
                 || (backup.applicationIdentity?.matchesFilesystemObject(fact.applicationIdentity) == true
                     && backup.restorableFingerprints?.contains(fact.currentFingerprint) == true) else { return }

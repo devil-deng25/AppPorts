@@ -25,6 +25,7 @@ Status: implemented
 
 ## Related decisions
 
+- 原包位置、可见目录与自动迁出内盘由后续的[签名原包自动保存到外盘的可见目录](2026-10-15-signature-backup-volume.md)接管；本篇保留完整原包及按恢复价值退休的理由继续成立。
 - 本篇翻转是否保留长期原包的选择；已提交的相反理由见[迁移与手动签名分离，手动签名只保留临时候选](../../implemented/architecture/2026-10-10-independent-manual-signing.md)。
 - 备份保存与迁移均依赖持久提交，但签名仍独立，见[迁移以持久化切换和可重试清理为完成依据](../../implemented/architecture/2026-10-10-verified-transfer-lifecycle.md)。
 - 本篇按已确认的历史迁移处理入库，见[将决策笔记集中到随仓库维护的 Agent Notes](../../implemented/process/2026-10-14-agent-notes-adoption.md)。

@@ -22,6 +22,7 @@ actor CodeSigner {
         case insufficientTemporarySpace(parent: URL, requiredBytes: Int64, availableBytes: Int64)
         case temporaryMaterialCannotBeTrashed, deletionDispositionChanged
         case unreadableOperationRecord(URL)
+        case backupStorageUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -53,6 +54,8 @@ actor CodeSigner {
                 return "此操作已确定清理方式，不能改用另一种删除方式。AppPorts 会继续原操作。".localized
             case .unreadableOperationRecord(let url):
                 return "此应用的签名操作记录无法读取；已保留现有应用和操作记录，未继续更改：".localized + url.path
+            case .backupStorageUnavailable:
+                return "请连接可写且空间足够的外置磁盘后重试。签名原包只保存在外盘。".localized
             }
         }
     }
@@ -98,6 +101,9 @@ actor CodeSigner {
     let applicationTransferStore: AppTransferStore
     let dataTransferStore: ContainerMountStore
     let homeDirectory: URL
+    let backupDestination: @Sendable (URL, Int64) throws -> SignatureDirectoryLocation
+    let preferMovingOriginal: Bool
+    let writerAdmissionCheck: @Sendable () throws -> Void
 
     init(
         backupDirectoryURL: URL? = nil,
@@ -127,7 +133,10 @@ actor CodeSigner {
         protectionStore: AppUpdateProtectionStore? = nil,
         applicationTransferStore: AppTransferStore? = nil,
         dataTransferStore: ContainerMountStore? = nil,
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        backupDestination: (@Sendable (URL, Int64) throws -> SignatureDirectoryLocation)? = nil,
+        preferMovingOriginal: Bool = true,
+        writerAdmissionCheck: (@Sendable () throws -> Void)? = nil
     ) {
         let directory = backupDirectoryURL ?? Self.defaultBackupDirectoryURL
         self.backupDirectoryURL = directory
@@ -157,6 +166,18 @@ actor CodeSigner {
         self.exchangeApplications = exchangeApplications
         self.copyApplication = copyApplication
         self.availableTemporaryCapacity = availableTemporaryCapacity
+        self.preferMovingOriginal = preferMovingOriginal
+        self.writerAdmissionCheck = writerAdmissionCheck ?? {
+            try WriterAdmission.recheck(dataDirectory: directory.deletingLastPathComponent())
+        }
+        // An injected storage root keeps tests and standalone service clients
+        // within their own dataset. The application never supplies this override.
+        self.backupDestination = backupDestination ?? { app, bytes in
+            if directory.standardizedFileURL != Self.defaultBackupDirectoryURL.standardizedFileURL {
+                return try SignatureBackupStorage.prepareDirectory(directory)
+            }
+            return try SignatureBackupStorage.automaticDestination(for: app, requiredBytes: bytes)
+        }
         // Kept as a source-compatible initializer parameter. Signature changes
         // never recursively chown the live application to obtain permission.
         _ = allowAdministratorPrompt
@@ -350,26 +371,39 @@ actor CodeSigner {
         let existingFact = try facts.currentFact(at: app, inspection: inspection, verifyContent: true)
         // Invalid/mismatched history stays visible but does not prevent a newly
         // authorized manual signature from using the current application.
-        let legacy = try? matchingBackup(app: app, fingerprint: originalFingerprint, fact: existingFact)
-        var developer = existingFact?.originalDeveloper
+        let legacy: (url: URL, backup: SignatureBackup)?
+        if let fact = existingFact, let path = fact.legacyBackupRecordPath,
+           let retained = try? history.read(at: URL(fileURLWithPath: path)), retained.hasFullSnapshot,
+           try history.belongs(retained, to: app, currentFingerprint: originalFingerprint,
+                               fact: fact, recordURL: URL(fileURLWithPath: path)) {
+            // A known original is an ongoing recovery obligation. An offline
+            // disk or pending relocation must not silently discard its lineage
+            // when another signature replaces the application's inode.
+            guard retained.relocation == nil else { throw SigningError.operationInProgress }
+            _ = try history.snapshotParent(for: retained)
+            _ = try history.verifiedSnapshot(for: retained)
+            legacy = (URL(fileURLWithPath: path), retained)
+        } else {
+            legacy = try? matchingBackup(app: app, fingerprint: originalFingerprint, fact: existingFact)
+        }
+        // A certificate-signed input must become a verified recovery original
+        // before it can be replaced. Verification failure is not evidence of an
+        // unsigned app and must never silently waive the retention obligation.
+        var officialOriginal: OriginalDeveloperIdentity?
+        if !inspection.isAdHoc, inspection.sandboxStatus != .unsigned {
+            guard let identity = inspection.developerIdentity else { throw SigningError.snapshotInvalid }
+            try await verifyStrict(app)
+            officialOriginal = identity
+        }
+        var developer = officialOriginal ?? existingFact?.originalDeveloper
         if developer == nil, let identity = inspection.developerIdentity {
-            do { try await verifyStrict(app); developer = identity }
-            catch is CancellationError { throw CancellationError() }
-            catch { /* Damaged signatures cannot establish a verified original developer. */ }
+            try await verifyStrict(app)
+            developer = identity
         }
         if developer == nil, let legacy, legacy.backup.originalSignatureWasValid == true {
             let original = try history.verifiedSnapshot(for: legacy.backup)
             try await verifyStrict(original)
             developer = try inspectSignature(original).developerIdentity
-        }
-        var officialOriginal: OriginalDeveloperIdentity?
-        if !inspection.isAdHoc, let identity = inspection.developerIdentity {
-            do {
-                try await verifyStrict(app)
-                officialOriginal = identity
-                developer = identity
-            } catch is CancellationError { throw CancellationError() }
-            catch { /* Keep existing provenance; damaged current code is not a new official original. */ }
         }
         if legacy == nil, officialOriginal != nil {
             // An updater may have replaced the signed installation before the
@@ -584,7 +618,7 @@ actor CodeSigner {
     }
 
     private func requireWriterAdmission() throws {
-        try WriterAdmission.recheck(dataDirectory: backupDirectoryURL.deletingLastPathComponent())
+        try writerAdmissionCheck()
     }
 
     private func requireSigningInspection(at app: URL, allowSandboxed: Bool) throws -> SignatureInspection {
@@ -604,7 +638,8 @@ actor CodeSigner {
         if let unreadable = inventory.unreadableRecords.first(where: { $0.concerns(app, identity: identity) }) {
             throw SigningError.unreadableOperationRecord(unreadable.url)
         }
-        return inventory.records.filter { $0.applicationPath == app.path }
+        return inventory.records.filter { $0.applicationPath == app.path
+            || (try? $0.resolvingApplicationLocation().applicationPath) == app.path }
     }
 
     private func requireNoPreparation(for app: URL, records: [SignatureOperationRecord]? = nil) throws {
@@ -672,6 +707,13 @@ actor CodeSigner {
         // Recheck only the remaining metadata headroom before exchange.
         try requireTemporarySpace(.init(parentURL: record.applicationURL.deletingLastPathComponent(),
             logicalSourceBytes: 0, requiredAdditionalBytes: Self.temporaryMetadataReserveBytes))
+        if let intent = record.originalBackup, intent.backup.schemaVersion == 3 {
+            let parent = try history.snapshotParent(for: intent.backup)
+            _ = try SignatureBackupStorage.prepareDirectory(parent)
+            let budget = try Self.temporarySpaceRequirement(appURL: record.applicationURL)
+            try requireTemporarySpace(.init(parentURL: parent, logicalSourceBytes: budget.logicalSourceBytes,
+                requiredAdditionalBytes: intent.movesOriginal == true ? Self.temporaryMetadataReserveBytes : budget.requiredAdditionalBytes))
+        }
         try requireWriterAdmission()
         if let token = record.updateProtection { try protection.suspendForExchange(token, at: record.applicationURL) }
         guard try SignatureSnapshot.info(at: record.applicationURL).st_flags & UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND) == 0 else {
@@ -768,6 +810,13 @@ actor CodeSigner {
                 record.cleanupStarted = true
                 try write(record)
                 try requireWriterAdmission()
+                if let intent = record.originalBackup {
+                    // A completed copy may have gone offline since its receipt
+                    // was saved. Recheck it immediately before discarding any
+                    // remaining local original, including a cold partial cleanup.
+                    guard intent.completed else { throw SigningError.snapshotInvalid }
+                    _ = try history.verifiedSnapshot(for: intent.backup)
+                }
                 try deleteTemporaryTree(record.candidateURL, manifest, partial, false)
                 try DurableFileIO.syncDirectory(at: record.directoryURL)
             } else if !record.cleanupStarted { throw SigningError.snapshotInvalid }
@@ -794,8 +843,13 @@ actor CodeSigner {
 
     private func planOriginalBackup(_ record: inout SignatureOperationRecord,
                                     developer: OriginalDeveloperIdentity, groups: [String]) throws {
-        let parent = backupDirectoryURL.resolvingSymlinksInPath().standardizedFileURL
-        guard try SignatureSnapshot.info(at: parent).st_mode & S_IFMT == S_IFDIR else { throw SigningError.snapshotInvalid }
+        let budget = try Self.temporarySpaceRequirement(appURL: record.applicationURL)
+        let location = try backupDestination(record.applicationURL, budget.requiredAdditionalBytes)
+        let parent = try location.resolve()
+        try requireTemporarySpace(.init(parentURL: parent, logicalSourceBytes: budget.logicalSourceBytes,
+            requiredAdditionalBytes: budget.requiredAdditionalBytes))
+        let movesOriginal = preferMovingOriginal && location.identity.device == record.applicationIdentity.device
+            && location.volumeUUID.caseInsensitiveCompare(record.applicationIdentity.volumeUUID ?? "") == .orderedSame
         var recordURL = try history.recordURL(bundleIdentifier: record.version.bundleIdentifier)
         if try SignatureSnapshot.entryExists(recordURL) {
             let retired = backupDirectoryURL.appendingPathComponent("retired")
@@ -809,16 +863,19 @@ actor CodeSigner {
         guard try !SignatureSnapshot.entryExists(recordURL) else { throw SigningError.snapshotInvalid }
         let backup = SignatureBackup(bundleIdentifier: record.version.bundleIdentifier,
             signingIdentity: developer.authority ?? developer.teamIdentifier ?? "official",
-            originalPath: record.applicationPath, backupDate: Date(), schemaVersion: 2,
+            originalPath: record.applicationPath, backupDate: Date(), schemaVersion: 3,
             snapshotName: "original-" + record.id.uuidString + ".app", originalFingerprint: record.originalFingerprint,
             restorableFingerprints: [record.originalFingerprint], originalSignatureWasValid: true,
             applicationIdentity: record.applicationIdentity, version: record.version,
-            originalDeveloper: developer, originalApplicationGroups: groups)
-        record.schemaVersion = 2
+            originalDeveloper: developer, originalApplicationGroups: groups,
+            snapshotLocation: location, snapshotIdentity: movesOriginal ? record.applicationIdentity : nil,
+            applicationParentLocation: try SignatureDirectoryLocation.capture(record.applicationURL.deletingLastPathComponent()))
+        record.schemaVersion = 3
         record.legacyRecordPath = recordURL.path
         record.originalBackup = .init(recordPath: recordURL.path,
             parentIdentity: try DataPathIdentity.capture(parent),
-            recordParentIdentity: try DataPathIdentity.capture(recordURL.deletingLastPathComponent()), backup: backup)
+            recordParentIdentity: try DataPathIdentity.capture(recordURL.deletingLastPathComponent()), backup: backup,
+            movesOriginal: movesOriginal)
         try write(record)
     }
 
@@ -827,9 +884,9 @@ actor CodeSigner {
     /// can be retried without overwriting either the live application or history.
     private func retainOfficialOriginal(_ record: inout SignatureOperationRecord) async throws {
         guard var intent = record.originalBackup, !intent.completed else { return }
-        let parent = backupDirectoryURL.resolvingSymlinksInPath().standardizedFileURL
+        let parent = try history.snapshotParent(for: intent.backup)
         let recordURL = URL(fileURLWithPath: intent.recordPath)
-        guard record.schemaVersion == 2, record.kind == .sign,
+        guard (2...3).contains(record.schemaVersion), record.kind == .sign,
               record.legacyRecordPath == intent.recordPath,
               intent.backup.bundleIdentifier == record.version.bundleIdentifier,
               intent.backup.originalFingerprint == record.originalFingerprint,
@@ -842,43 +899,64 @@ actor CodeSigner {
         }
         try requireDirectory(record)
         let source = record.candidateURL
-        try await requireStopped(source, record.version.bundleIdentifier)
-        try requireUnchangedApplication(source, identity: record.applicationIdentity,
-            version: record.version, fingerprint: record.originalFingerprint)
-        try originalManifest.verify(at: source, allowingPartial: false)
-        if try SignatureSnapshot.entryExists(snapshot) {
-            guard let identity = intent.snapshotIdentity,
-                  try DataPathIdentity.capture(snapshot).matchesFilesystemObject(identity) else { throw SigningError.snapshotInvalid }
-            if try intent.removalManifest != nil || SignatureSnapshot.fingerprint(of: snapshot) != record.originalFingerprint {
-                // A cold partial copy must first be proved to contain only the
-                // original's bytes. Then persist exact deletion evidence.
-                if intent.removalManifest == nil {
-                    let baseline = try TreeCopySession.snapshot(at: source, validateRelocatedLinks: false)
-                    _ = try TreeCopySession.partialCopySnapshot(at: snapshot, source: source, against: baseline)
-                    intent.removalManifest = try SignatureRemovalManifest.capture(at: snapshot)
-                    record.originalBackup = intent
-                    try write(record)
-                }
-                try await requireStopped(snapshot, record.version.bundleIdentifier)
-                try requireWriterAdmission()
-                try intent.removalManifest!.remove(at: snapshot, allowingPartial: true, unlockCopiedFlags: true)
-                try synchronizeDirectory(parent)
-            }
+        if try intent.movesOriginal != true || SignatureSnapshot.entryExists(source) {
+            try await requireStopped(source, record.version.bundleIdentifier)
+            try requireUnchangedApplication(source, identity: record.applicationIdentity,
+                version: record.version, fingerprint: record.originalFingerprint)
+            try originalManifest.verify(at: source, allowingPartial: false)
         }
-        if try !SignatureSnapshot.entryExists(snapshot) {
-            intent.snapshotIdentity = nil
-            intent.removalManifest = nil
-            record.originalBackup = intent
-            try write(record)
-            let sourceBudget = try Self.temporarySpaceRequirement(appURL: record.applicationURL, sourceURL: source)
-            try requireTemporarySpace(.init(parentURL: parent, logicalSourceBytes: sourceBudget.logicalSourceBytes,
-                requiredAdditionalBytes: sourceBudget.requiredAdditionalBytes))
-            guard try DataPathIdentity.capture(parent).matchesFilesystemObject(intent.parentIdentity) else { throw SigningError.snapshotInvalid }
-            guard mkdir(snapshot.path, 0o700) == 0 else { throw SigningError.snapshotInvalid }
-            intent.snapshotIdentity = try DataPathIdentity.capture(snapshot)
-            record.originalBackup = intent
-            try write(record)
-            try copyApplication(source, snapshot)
+        if intent.movesOriginal == true {
+            guard record.schemaVersion == 3, intent.backup.snapshotIdentity == record.applicationIdentity else {
+                throw SigningError.snapshotInvalid
+            }
+            if try SignatureSnapshot.entryExists(source) {
+                guard try !SignatureSnapshot.entryExists(snapshot),
+                      try SignatureSnapshot.info(at: source).st_dev == SignatureSnapshot.info(at: parent).st_dev else {
+                    throw SigningError.snapshotInvalid
+                }
+                try requireWriterAdmission()
+                guard renamex_np(source.path, snapshot.path, UInt32(RENAME_EXCL)) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                try synchronizeDirectory(record.directoryURL)
+            }
+            intent.snapshotIdentity = record.applicationIdentity
+        } else {
+            if try SignatureSnapshot.entryExists(snapshot) {
+                guard let identity = intent.snapshotIdentity,
+                      try DataPathIdentity.capture(snapshot).matchesFilesystemObject(identity) else { throw SigningError.snapshotInvalid }
+                if try intent.removalManifest != nil || SignatureSnapshot.fingerprint(of: snapshot) != record.originalFingerprint {
+                    // A cold partial copy must first be proved to contain only the
+                    // original's bytes. Then persist exact deletion evidence.
+                    if intent.removalManifest == nil {
+                        let baseline = try TreeCopySession.snapshot(at: source, validateRelocatedLinks: false)
+                        _ = try TreeCopySession.partialCopySnapshot(at: snapshot, source: source, against: baseline)
+                        intent.removalManifest = try SignatureRemovalManifest.capture(at: snapshot)
+                        record.originalBackup = intent
+                        try write(record)
+                    }
+                    try await requireStopped(snapshot, record.version.bundleIdentifier)
+                    try requireWriterAdmission()
+                    try intent.removalManifest!.remove(at: snapshot, allowingPartial: true, unlockCopiedFlags: true)
+                    try synchronizeDirectory(parent)
+                }
+            }
+            if try !SignatureSnapshot.entryExists(snapshot) {
+                intent.snapshotIdentity = nil
+                intent.removalManifest = nil
+                record.originalBackup = intent
+                try write(record)
+                let sourceBudget = try Self.temporarySpaceRequirement(appURL: record.applicationURL, sourceURL: source)
+                try requireTemporarySpace(.init(parentURL: parent, logicalSourceBytes: sourceBudget.logicalSourceBytes,
+                    requiredAdditionalBytes: sourceBudget.requiredAdditionalBytes))
+                guard try DataPathIdentity.capture(parent).matchesFilesystemObject(intent.parentIdentity) else { throw SigningError.snapshotInvalid }
+                guard mkdir(snapshot.path, 0o700) == 0 else { throw SigningError.snapshotInvalid }
+                intent.snapshotIdentity = try DataPathIdentity.capture(snapshot)
+                if intent.backup.schemaVersion == 3 { intent.backup.snapshotIdentity = intent.snapshotIdentity }
+                record.originalBackup = intent
+                try write(record)
+                try copyApplication(source, snapshot)
+            }
         }
         guard let snapshotIdentity = intent.snapshotIdentity,
               try DataPathIdentity.capture(snapshot).matchesFilesystemObject(snapshotIdentity),
@@ -887,7 +965,9 @@ actor CodeSigner {
         if let developer = intent.backup.originalDeveloper { try requireDeveloperIdentity(developer, snapshot) }
         try synchronizeTree(snapshot)
         try synchronizeConfirmedDirectory(parent, identity: intent.parentIdentity)
-        try requireUnchangedApplication(source, identity: record.applicationIdentity,
+        guard try DataPathIdentity.capture(snapshot).matchesFilesystemObject(snapshotIdentity),
+              try SignatureSnapshot.fingerprint(of: snapshot) == record.originalFingerprint else { throw SigningError.snapshotInvalid }
+        try requireUnchangedApplication(intent.movesOriginal == true ? snapshot : source, identity: record.applicationIdentity,
             version: record.version, fingerprint: record.originalFingerprint)
         guard try DataPathIdentity.capture(recordURL.deletingLastPathComponent()).matchesFilesystemObject(intent.recordParentIdentity) else {
             throw SigningError.snapshotInvalid
@@ -901,12 +981,18 @@ actor CodeSigner {
         _ = try facts.finishCommittedMetadata(record)
         intent.completed = true
         record.originalBackup = intent
+        if intent.movesOriginal == true { record.cleanupStarted = true }
         try write(record)
     }
 
     private func cleanFailedPreparation(_ record: SignatureOperationRecord, failure: Error) async {
+        // Withdrawing an uncommitted operation is bookkeeping, not permission
+        // to delete its files. Persist that intent before writer admission can
+        // block cleanup; a failed manual attempt must not later auto-commit.
+        var pending = (try? operations.record(id: record.id)) ?? record
+        pending.phase = .cancelling
+        pending.warning = failure.localizedDescription
         if let unconfirmed = failure as? ShellCommandUnconfirmedTermination {
-            var pending = (try? operations.record(id: record.id)) ?? record
             pending.unconfirmedCommand = unconfirmed.process
             pending.warning = unconfirmed.localizedDescription
             try? write(pending)
@@ -916,9 +1002,8 @@ actor CodeSigner {
             // A cancelled task must not start another full-tree scan merely to
             // delete its candidate. The confirmed-stopped workspace remains a
             // visible explicit cleanup action, with no work running after return.
-            var pending = (try? operations.record(id: record.id)) ?? record
-            pending.phase = .cancelling
             pending.warning = "签名准备已取消，原应用未替换。AppPorts 会自动清理本次暂存数据。".localized
+            try? write(pending)
             if let token = pending.updateProtection {
                 do {
                     try requireParent(pending)
@@ -931,13 +1016,15 @@ actor CodeSigner {
             try? write(pending)
             return
         }
-        do { _ = try cancelUncommitted(record) }
+        try? write(pending)
+        do { _ = try cancelUncommitted(pending) }
         catch {
             // Preserve the most recent deletion checkpoint, including a
             // partially removed candidate. Never overwrite it with stale input.
-            var pending = (try? operations.record(id: record.id)) ?? record
-            pending.warning = failure.localizedDescription + "\n" + error.localizedDescription
-            try? write(pending)
+            var remaining = (try? operations.record(id: record.id)) ?? pending
+            if remaining.phase != .abandoned { remaining.phase = .cancelling }
+            remaining.warning = failure.localizedDescription + "\n" + error.localizedDescription
+            try? write(remaining)
         }
     }
 
@@ -1086,7 +1173,7 @@ extension CodeSigner {
         guard try SignatureSnapshot.entryExists(url) else { return nil }
         let backup = try history.read(at: url)
         guard try history.belongs(backup, to: app, currentFingerprint: fingerprint, fact: fact, recordURL: url),
-              backup.schemaVersion == 2 else { return nil }
+              backup.hasFullSnapshot else { return nil }
         _ = try history.verifiedSnapshot(for: backup)
         return (url, backup)
     }
@@ -1146,6 +1233,7 @@ extension CodeSigner {
             verifySignature = true
         } else {
             guard let record else { throw SigningError.noBackupFound }
+            guard record.1.relocation == nil else { throw SigningError.operationInProgress }
             guard !(try history.hasPendingDeletion(for: record.0, snapshot: history.snapshotURL(for: record.1))) else {
                 throw SigningError.snapshotInvalid
             }
@@ -1205,7 +1293,7 @@ extension CodeSigner {
                 }
                 return true
             }
-            guard backup.schemaVersion == 2, backup.originalFingerprint == restoredFingerprint else { return false }
+            guard backup.hasFullSnapshot, backup.originalFingerprint == restoredFingerprint else { return false }
             _ = try history.verifiedSnapshot(for: backup)
             return true
         } catch is CancellationError { throw CancellationError() }
@@ -1214,10 +1302,10 @@ extension CodeSigner {
 
     private func finishBackupCleanup(_ original: SignatureBackup, recordURL: URL, app: URL,
                                      applicationFingerprint: String, excludingOperation: UUID? = nil) async throws {
-        let parent = backupDirectoryURL.resolvingSymlinksInPath().standardizedFileURL
+        let parent = try history.snapshotParent(for: original)
         let app = try Self.resolveAppURL(at: app)
         guard !app.path.hasPrefix(parent.path + "/"), app != parent,
-              original.schemaVersion == 2,
+              original.hasFullSnapshot, original.relocation == nil,
               try associatedApplication(original, recordURL: recordURL, requested: app) != nil,
               Self.bundleIdentifier(at: app) == original.bundleIdentifier,
               try SignatureSnapshot.fingerprint(of: app) == applicationFingerprint,
@@ -1377,7 +1465,7 @@ extension CodeSigner {
         let locks = try acquireLocks()
         defer { locks.forEach { $0.release() } }
         if let uuid = operationID(id) {
-            var record = try operations.record(id: uuid)
+            var record = try resolveOperationLocation(operations.record(id: uuid))
             try requireCommandStopped(&record)
             if try hasExchanged(record) { return await finishCommitted(record) }
             if record.phase == .cancelling { return try cancelUncommitted(record) }
@@ -1389,7 +1477,12 @@ extension CodeSigner {
         if let deletion = try history.deletions().first(where: { "history-cleanup:" + $0.id.uuidString == id }) {
             return try finishMaterialDeletion(deletion)
         }
-        guard let (url, backup) = try history.selectedRecord(materialID: id), let cleanup = backup.cleanup else { throw SigningError.snapshotInvalid }
+        guard let (url, backup) = try history.selectedRecord(materialID: id) else { throw SigningError.snapshotInvalid }
+        if backup.relocation != nil {
+            _ = try await relocateInternalBackup(backup, recordURL: url)
+            return .init(applicationURL: nil, operationID: nil, committed: true, cleanupWarning: nil)
+        }
+        guard let cleanup = backup.cleanup else { throw SigningError.snapshotInvalid }
         let app = try Self.resolveAppURL(at: URL(fileURLWithPath: backup.originalPath))
         try await finishBackupCleanup(backup, recordURL: url, app: app, applicationFingerprint: cleanup.applicationFingerprint)
         return .init(applicationURL: app, operationID: nil, committed: true, cleanupWarning: nil)
@@ -1401,7 +1494,7 @@ extension CodeSigner {
         let locks = try acquireLocks()
         defer { locks.forEach { $0.release() } }
         guard let uuid = operationID(id) else { throw SigningError.snapshotInvalid }
-        let record = try operations.record(id: uuid)
+        let record = try resolveOperationLocation(operations.record(id: uuid))
         if record.phase == .abandoned { return try cancelUncommitted(record) }
         if try hasExchanged(record) { return await finishCommitted(record) }
         return try cancelUncommitted(record)
@@ -1424,6 +1517,14 @@ extension CodeSigner {
         }
         guard let material = try history.materials().first(where: { $0.id == id }), material.canDelete else { throw SigningError.snapshotInvalid }
         let record = try history.selectedRecord(materialID: id)
+        if let (_, backup) = record {
+            guard backup.relocation == nil else { throw SigningError.operationInProgress }
+            _ = try history.snapshotParent(for: backup)
+            guard try !hasBackupDependencies(backup, recordURL: record!.0,
+                app: URL(fileURLWithPath: backup.originalPath), groups: backup.originalApplicationGroups ?? []) else {
+                throw SigningError.operationInProgress
+            }
+        }
         let target = material.url
         let identity = try DataPathIdentity.capture(target)
         if let appURL = material.appURL, let app = try? Self.resolveAppURL(at: appURL),
@@ -1435,14 +1536,16 @@ extension CodeSigner {
             parentIdentity: try DataPathIdentity.capture(target.deletingLastPathComponent()), targetIdentity: identity,
             manifest: try SignatureRemovalManifest.capture(at: target), recordPath: record?.0.path,
             recordDigest: try record.map { try history.materialID(for: $0.0) }, moveToTrash: moveToTrash,
-            recordParentIdentity: try record.map { try DataPathIdentity.capture($0.0.deletingLastPathComponent()) })
+            recordParentIdentity: try record.map { try DataPathIdentity.capture($0.0.deletingLastPathComponent()) },
+            targetLocation: try record?.1.snapshotLocation.map { _ in try SignatureDirectoryLocation.capture(target.deletingLastPathComponent()) })
         try history.writeDeletion(deletion)
         return try finishMaterialDeletion(deletion)
     }
 
     private func finishMaterialDeletion(_ input: SignatureMaterialDeletion) throws -> SignatureOperationResult {
         var deletion = input
-        let target = URL(fileURLWithPath: deletion.targetPath)
+        if let location = deletion.targetLocation { _ = try location.resolve() }
+        let target = deletion.targetURL
         let parent = target.deletingLastPathComponent()
         guard try DataPathIdentity.capture(parent).matchesFilesystemObject(deletion.parentIdentity) else { throw SigningError.snapshotInvalid }
         if try SignatureSnapshot.entryExists(target) {
@@ -1505,15 +1608,17 @@ extension CodeSigner {
                 _ = try? cancelUncommitted(record)
                 continue
             }
-            let isCurrentCandidate = record.candidateIdentity?.matchesFilesystemObject(try DataPathIdentity.capture(app)) == true
-                && (try? SignatureAppVersion.read(at: app)) == record.version
-                && (try? SignatureSnapshot.fingerprint(of: app)) == record.candidateFingerprint
             let result = try await reconcilePendingSignature(record)
+            // Reconciliation has already verified and committed this operation.
+            // Do not repeat a cancellable tree scan to return that result: late
+            // cancellation must preserve its committed warning, not start over.
+            if result.committed, record.kind == kind,
+               let current = try? DataPathIdentity.capture(app),
+               record.candidateIdentity?.matchesFilesystemObject(current) == true { return result }
             if let remaining = try? operations.record(id: record.id),
                remaining.originalBackup?.completed == false {
                 throw SigningError.restoreFailed(result.cleanupWarning ?? "正在保留原始签名，请稍后重试。".localized)
             }
-            if result.committed, record.kind == kind, isCurrentCandidate { return result }
         }
         return nil
     }
@@ -1521,11 +1626,27 @@ extension CodeSigner {
     /// Reconcile the already authorized operation before exposing another sign
     /// or restore. An incomplete preparation rolls back; verified work resumes.
     private func reconcilePendingSignature(_ input: SignatureOperationRecord) async throws -> SignatureOperationResult {
-        var record = input
+        var record = try resolveOperationLocation(input)
         try requireCommandStopped(&record)
         if try hasExchanged(record) { return await finishCommitted(record) }
         if [.prepared, .switching].contains(record.phase) { return try await commit(&record) }
         return try cancelUncommitted(record)
+    }
+
+    private func resolveOperationLocation(_ input: SignatureOperationRecord) throws -> SignatureOperationRecord {
+        var record = try input.resolvingApplicationLocation()
+        guard record.applicationPath != input.applicationPath
+            || record.updateProtection.map({ $0.path != record.applicationPath }) == true else { return record }
+        try requireParent(record)
+        let identity = try DataPathIdentity.capture(record.applicationURL)
+        guard identity.matchesFilesystemObject(record.applicationIdentity)
+            || record.candidateIdentity?.matchesFilesystemObject(identity) == true else { throw SigningError.applicationChanged }
+        if let token = record.updateProtection {
+            record.updateProtection = try protection.rebaseExchangePath(token, to: record.applicationURL,
+                parentIdentity: record.applicationParentIdentity)
+        }
+        try write(record)
+        return record
     }
 
     func performAutomaticMaintenance() async -> [String] {
@@ -1545,7 +1666,16 @@ extension CodeSigner {
             for url in try history.records() {
                 do {
                     let backup = try history.read(at: url)
-                    _ = try await retireUnneededBackup(backup, recordURL: url)
+                    if try await retireUnrecoverableRecord(backup, recordURL: url) {
+                        continue
+                    } else if backup.relocation != nil {
+                        _ = try await relocateInternalBackup(backup, recordURL: url)
+                    } else if backup.cleanup == nil, try history.snapshotIsMissing(for: backup) {
+                        continue // Keep useful provenance without retrying a nonexistent copy.
+                    } else if try await !retireUnneededBackup(backup, recordURL: url), backup.schemaVersion == 2,
+                              backup.cleanup == nil {
+                        _ = try await relocateInternalBackup(backup, recordURL: url)
+                    }
                 } catch { warnings.append(url.lastPathComponent + ": " + error.localizedDescription) }
             }
             // Finish older, already authorized deletion journals as well.
@@ -1557,9 +1687,182 @@ extension CodeSigner {
         return warnings
     }
 
+    /// Legacy name-only records cannot restore signature bytes. Retire them
+    /// only after a current fact preserves their useful provenance, or an
+    /// authenticated official installation makes that provenance obsolete.
+    private func retireUnrecoverableRecord(_ backup: SignatureBackup, recordURL: URL) async throws -> Bool {
+        guard backup.cleanup == nil, backup.relocation == nil,
+              try history.snapshotIsMissing(for: backup),
+              !(try history.hasPendingDeletion(for: recordURL, snapshot: history.snapshotURL(for: backup))),
+              let app = try associatedApplication(backup, recordURL: recordURL) else { return false }
+        let groups = backup.originalApplicationGroups ?? []
+        guard try !hasBackupDependencies(backup, recordURL: recordURL, app: app, groups: groups) else { return false }
+        let identity = try DataPathIdentity.capture(app)
+        let inspection = try inspectSignature(app)
+        let fact = try facts.currentFact(at: app, inspection: inspection, verifyContent: true)
+        let inventory = try facts.inventory()
+        let linked = inventory.facts.filter { $0.legacyBackupRecordPath == recordURL.path }
+        // A different or unavailable installation can still need this identity
+        // history. Do not detach its record based on the currently visible app.
+        guard linked.allSatisfy({ $0.installationID == fact?.installationID }) else { return false }
+        let factPreservesOrigin: Bool
+        if let fact, let developer = fact.originalDeveloper {
+            let sameDeveloper = backup.originalDeveloper.map { $0 == developer }
+                ?? (developer.authority == backup.signingIdentity)
+            let sameLineage = fact.legacyBackupRecordPath == recordURL.path
+                || backup.originalFingerprint == fact.originalFingerprint
+            factPreservesOrigin = sameDeveloper && sameLineage
+        } else { factPreservesOrigin = false }
+        if !factPreservesOrigin {
+            guard !inspection.isAdHoc, let developer = inspection.developerIdentity else { return false }
+            try await verifyStrict(app)
+            if let expected = backup.originalDeveloper { try requireDeveloperIdentity(expected, app) }
+            else if developer.authority != backup.signingIdentity { return false }
+        }
+        let manifest = try SignatureRemovalManifest.capture(at: recordURL)
+        let parent = recordURL.deletingLastPathComponent()
+        let parentIdentity = try DataPathIdentity.capture(parent)
+        guard try DataPathIdentity.capture(app).matchesFilesystemObject(identity),
+              try inspectSignature(app).codeDirectoryHash == inspection.codeDirectoryHash,
+              try history.read(at: recordURL) == backup,
+              try history.snapshotIsMissing(for: backup),
+              try !hasBackupDependencies(backup, recordURL: recordURL, app: app, groups: groups) else {
+            throw SigningError.applicationChanged
+        }
+        // Durable facts precede metadata removal. A retry after this write can
+        // use the same independent provenance without the obsolete record.
+        if var fact, fact.legacyBackupRecordPath == recordURL.path {
+            fact.legacyBackupRecordPath = nil
+            try facts.write(fact)
+        }
+        try requireWriterAdmission()
+        try manifest.remove(at: recordURL, allowingPartial: false, unlockCopiedFlags: false)
+        try synchronizeConfirmedDirectory(parent, identity: parentIdentity)
+        AppLogger.shared.logContext("已清理不可恢复的旧签名记录", details: [("bundle_id", backup.bundleIdentifier)])
+        NotificationCenter.default.post(name: .signatureMaterialsDidChange, object: nil)
+        NotificationCenter.default.post(name: .appPortsRecordsDidChange, object: nil)
+        return true
+    }
+
+    private func relocateInternalBackup(_ input: SignatureBackup, recordURL: URL) async throws -> Bool {
+        var backup = input
+        guard backup.cleanup == nil,
+              !(try history.hasPendingDeletion(for: recordURL, snapshot: history.snapshotURL(for: backup))) else { return false }
+        let app = try associatedApplication(backup, recordURL: recordURL) ?? URL(fileURLWithPath: backup.originalPath)
+        let groups = backup.originalApplicationGroups ?? []
+        guard try !hasBackupDependencies(backup, recordURL: recordURL, app: app, groups: groups) else { return false }
+        if backup.relocation == nil {
+            guard backup.schemaVersion == 2 else { return false }
+            let source = try history.verifiedSnapshot(for: backup)
+            let budget = try Self.temporarySpaceRequirement(appURL: source)
+            let destination = try backupDestination((try? Self.resolveAppURL(at: app)) ?? source, budget.requiredAdditionalBytes)
+            let parent = try destination.resolve()
+            guard parent.path != source.deletingLastPathComponent().standardizedFileURL.path else { return false }
+            try requireTemporarySpace(.init(parentURL: parent, logicalSourceBytes: budget.logicalSourceBytes,
+                requiredAdditionalBytes: budget.requiredAdditionalBytes))
+            let identity = try DataPathIdentity.capture(source)
+            guard (try? DataPathIdentity.capture(app).matchesFilesystemObject(identity)) != true else { throw SigningError.snapshotInvalid }
+            try await requireStopped(source, backup.bundleIdentifier)
+            backup.relocation = .init(sourceName: source.lastPathComponent, sourceIdentity: identity,
+                sourceParentIdentity: try DataPathIdentity.capture(source.deletingLastPathComponent()), destination: destination,
+                destinationName: "original-" + UUID().uuidString + ".app",
+                sourceRemoval: try SignatureRemovalManifest.capture(at: source))
+            try history.write(backup, to: recordURL)
+        }
+        guard var move = backup.relocation,
+              move.sourceName.hasPrefix("original-"), move.sourceName.hasSuffix(".app"),
+              URL(fileURLWithPath: move.sourceName).lastPathComponent == move.sourceName,
+              move.destinationName.hasPrefix("original-"), move.destinationName.hasSuffix(".app"),
+              URL(fileURLWithPath: move.destinationName).lastPathComponent == move.destinationName,
+              try DataPathIdentity.capture(backupDirectoryURL).matchesFilesystemObject(move.sourceParentIdentity) else {
+            throw SigningError.snapshotInvalid
+        }
+        let source = backupDirectoryURL.appendingPathComponent(move.sourceName)
+        let parent = try move.destination.resolve()
+        let destination = parent.appendingPathComponent(move.destinationName)
+        if !move.published {
+            guard backup.schemaVersion == 2, try history.verifiedSnapshot(for: backup).path == source.path,
+                  try DataPathIdentity.capture(source).matchesFilesystemObject(move.sourceIdentity) else { throw SigningError.snapshotInvalid }
+            try await requireStopped(source, backup.bundleIdentifier)
+            if try SignatureSnapshot.entryExists(destination) {
+                guard let identity = move.destinationIdentity,
+                      try DataPathIdentity.capture(destination).matchesFilesystemObject(identity) else { throw SigningError.snapshotInvalid }
+                if try move.partialRemoval != nil || SignatureSnapshot.fingerprint(of: destination) != backup.originalFingerprint {
+                    if move.partialRemoval == nil {
+                        let baseline = try TreeCopySession.snapshot(at: source, validateRelocatedLinks: false)
+                        _ = try TreeCopySession.partialCopySnapshot(at: destination, source: source, against: baseline)
+                        move.partialRemoval = try SignatureRemovalManifest.capture(at: destination)
+                        backup.relocation = move
+                        try history.write(backup, to: recordURL)
+                    }
+                    try requireWriterAdmission()
+                    try move.partialRemoval!.remove(at: destination, allowingPartial: true, unlockCopiedFlags: true)
+                    try synchronizeDirectory(parent)
+                }
+            }
+            if try !SignatureSnapshot.entryExists(destination) {
+                move.destinationIdentity = nil
+                move.partialRemoval = nil
+                backup.relocation = move
+                try history.write(backup, to: recordURL)
+                let budget = try Self.temporarySpaceRequirement(appURL: source)
+                try requireTemporarySpace(.init(parentURL: parent, logicalSourceBytes: budget.logicalSourceBytes,
+                    requiredAdditionalBytes: budget.requiredAdditionalBytes))
+                guard mkdir(destination.path, 0o700) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                move.destinationIdentity = try DataPathIdentity.capture(destination)
+                backup.relocation = move
+                try history.write(backup, to: recordURL)
+                try copyApplication(source, destination)
+            }
+            guard try SignatureSnapshot.fingerprint(of: destination) == backup.originalFingerprint,
+                  try SignatureSnapshot.fingerprint(of: source) == backup.originalFingerprint else { throw SigningError.snapshotInvalid }
+            if backup.originalSignatureWasValid == true { try await verifyStrict(destination) }
+            try synchronizeTree(destination)
+            try synchronizeConfirmedDirectory(parent, identity: move.destination.identity)
+            move.published = true
+            backup.schemaVersion = 3
+            backup.snapshotName = move.destinationName
+            backup.snapshotLocation = move.destination
+            backup.snapshotIdentity = move.destinationIdentity
+            backup.relocation = move
+            try history.write(backup, to: recordURL)
+        }
+        guard backup.schemaVersion == 3, backup.snapshotLocation == move.destination,
+              backup.snapshotName == move.destinationName,
+              try history.verifiedSnapshot(for: backup).path == destination.path,
+              try history.read(at: recordURL) == backup,
+              try !hasBackupDependencies(backup, recordURL: recordURL, app: app, groups: groups) else {
+            throw SigningError.snapshotInvalid
+        }
+        if try SignatureSnapshot.entryExists(source) {
+            guard try DataPathIdentity.capture(source).matchesFilesystemObject(move.sourceIdentity) else { throw SigningError.snapshotInvalid }
+            try await requireStopped(source, backup.bundleIdentifier)
+            try move.sourceRemoval.verify(at: source, allowingPartial: move.sourceRemovalStarted)
+            guard try DataPathIdentity.capture(backupDirectoryURL).matchesFilesystemObject(move.sourceParentIdentity),
+                  try history.verifiedSnapshot(for: backup).path == destination.path,
+                  try !hasBackupDependencies(backup, recordURL: recordURL, app: app, groups: groups) else {
+                throw SigningError.snapshotInvalid
+            }
+            move.sourceRemovalStarted = true
+            backup.relocation = move
+            try history.write(backup, to: recordURL)
+            try requireWriterAdmission()
+            try deleteTemporaryTree(source, move.sourceRemoval, true, true)
+        } else if !move.sourceRemovalStarted { throw SigningError.snapshotInvalid }
+        try synchronizeConfirmedDirectory(backupDirectoryURL, identity: move.sourceParentIdentity)
+        guard try history.read(at: recordURL) == backup else { throw SigningError.applicationChanged }
+        backup.relocation = nil
+        try history.write(backup, to: recordURL)
+        return true
+    }
+
     private func associatedApplication(_ backup: SignatureBackup, recordURL: URL, requested: URL? = nil) throws -> URL? {
         var candidates: [URL] = []
         if let recorded = try? Self.resolveAppURL(at: URL(fileURLWithPath: backup.originalPath)) { candidates.append(recorded) }
+        if let parent = try? backup.applicationParentLocation?.resolve(),
+           let recorded = try? Self.resolveAppURL(at: parent.appendingPathComponent(URL(fileURLWithPath: backup.originalPath).lastPathComponent)) {
+            candidates.append(recorded)
+        }
         let inventory = try facts.inventory()
         for fact in inventory.facts where fact.legacyBackupRecordPath == recordURL.path {
             guard let app = try? Self.resolveAppURL(at: URL(fileURLWithPath: fact.applicationPath)),
@@ -1668,7 +1971,7 @@ extension CodeSigner {
     }
 
     private func retireUnneededBackup(_ input: SignatureBackup, recordURL: URL, appURL: URL? = nil) async throws -> Bool {
-        guard input.schemaVersion == 2, let originalFingerprint = input.originalFingerprint,
+        guard input.hasFullSnapshot, input.relocation == nil, let originalFingerprint = input.originalFingerprint,
               let app = try associatedApplication(input, recordURL: recordURL, requested: appURL) else { return false }
         // An AppPorts replacement cannot be the saved official original. Avoid
         // hashing that whole application on every maintenance pass just to

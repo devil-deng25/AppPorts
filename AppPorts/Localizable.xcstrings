@@ -12191,142 +12191,6 @@
         }
       }
     },
-    "%lld%%" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "br" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "eo" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "th" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        },
-        "zh-martian" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld%%"
-          }
-        }
-      }
-    },
     "========== AppPorts 启动 ==========" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -53829,143 +53693,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开始规范化受管数据目录链接"
-          }
-        }
-      }
-    },
-    "开机自动重签名" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "إعادة التوقيع التلقائي عند تسجيل الدخول"
-          }
-        },
-        "br" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⠠⠁⠥⠞⠕ ⠠⠗⠑⠤⠎⠊⠛⠝ ⠁⠞ ⠠⠇⠕⠛⠊⠝"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatische Neuzeichnung bei Anmeldung"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Auto Re-sign at Login"
-          }
-        },
-        "eo" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aŭtomata resubskribo ĉe ensaluto"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Re-firmado al iniciar sesión"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Re-signature à la connexion"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लॉगिन पर ऑटो री-साइन"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tanda Ulang Otomatis saat Login"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Firma automatica al login"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ログイン時自動再署名"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "로그인 시 자동 재서명"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Auto-hertekening bij aanmelding"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatyczne podpisywanie przy logowaniu"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Re-assinatura ao fazer login"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автопереподпись при входе"
-          }
-        },
-        "th" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "เซ็นใหม่อัตโนมัติเมื่อเข้าสู่ระบบ"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Girişte Otomatik Yeniden İmzalama"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tự động ký lại khi đăng nhập"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开机自动重签名"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開機自動重簽名"
-          }
-        },
-        "zh-martian" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开机自动重签名"
           }
         }
       }
@@ -121100,143 +120827,6 @@
         }
       }
     },
-    "登录时仅检查旧版签名记录。完整备份由 AppPorts 安全处理，请在应用内手动重签。手动签名或恢复会停止本次登录的后台任务，下次登录仍按此设置运行。" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تُفحص سجلات التوقيع القديمة فقط عند تسجيل الدخول. يتعامل AppPorts مع النسخ الاحتياطية الكاملة بأمان؛ أعد التوقيع يدويًا داخل التطبيق. يوقف التوقيع اليدوي أو الاستعادة مهمة الخلفية لجلسة تسجيل الدخول الحالية، ويظل هذا الإعداد مطبّقًا عند تسجيل الدخول التالي."
-          }
-        },
-        "br" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⠠⠁⠞ ⠇⠕⠛⠊⠝⠂ ⠕⠝⠇⠽ ⠇⠑⠛⠁⠉⠽ ⠎⠊⠛⠝⠊⠝⠛ ⠗⠑⠉⠕⠗⠙⠎ ⠁⠗⠑ ⠉⠓⠑⠉⠅⠑⠙⠲ ⠠⠉⠕⠍⠏⠇⠑⠞⠑ ⠃⠁⠉⠅⠥⠏⠎ ⠁⠗⠑ ⠓⠁⠝⠙⠇⠑⠙ ⠎⠁⠋⠑⠇⠽ ⠊⠝ ⠠⠁⠏⠏⠠⠏⠕⠗⠞⠎⠆ ⠗⠑⠤⠎⠊⠛⠝ ⠞⠓⠑⠎⠑ ⠁⠏⠏⠎ ⠍⠁⠝⠥⠁⠇⠇⠽⠲ ⠠⠍⠁⠝⠥⠁⠇ ⠎⠊⠛⠝⠊⠝⠛ ⠕⠗ ⠗⠑⠎⠞⠕⠗⠁⠞⠊⠕⠝ ⠎⠞⠕⠏⠎ ⠞⠓⠑ ⠃⠁⠉⠅⠛⠗⠕⠥⠝⠙ ⠞⠁⠎⠅ ⠋⠕⠗ ⠞⠓⠊⠎ ⠎⠑⠎⠎⠊⠕⠝⠆ ⠞⠓⠊⠎ ⠎⠑⠞⠞⠊⠝⠛ ⠎⠞⠊⠇⠇ ⠁⠏⠏⠇⠊⠑⠎ ⠁⠞ ⠞⠓⠑ ⠝⠑⠭⠞ ⠇⠕⠛⠊⠝⠲"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bei der Anmeldung werden nur alte Signaturdatensätze geprüft. Vollständige Sicherungen verarbeitet AppPorts sicher; signiere diese Apps manuell in AppPorts neu. Manuelles Signieren oder Wiederherstellen stoppt den Hintergrundtask für diese Sitzung. Bei der nächsten Anmeldung gilt diese Einstellung weiterhin."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "At login, only legacy signing records are checked. Complete backups are handled safely in AppPorts; re-sign these apps manually. Manual signing or restoration stops the background task for this session; this setting still applies at the next login."
-          }
-        },
-        "eo" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ĉe ensaluto estas kontrolataj nur malnovaj subskribaj registroj. AppPorts sekure traktas kompletajn sekurkopiojn; resubskribu permane en la aplikaĵo. Mana subskribo aŭ restaŭro haltigas la fonan taskon por la nuna ensaluta seanco; la sekva ensaluto plu uzos ĉi tiun agordon."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Al iniciar sesión solo se comprueban los registros de firma antiguos. AppPorts gestiona las copias completas de forma segura; vuelve a firmar esas apps manualmente desde AppPorts. Firmar o restaurar manualmente detiene la tarea en segundo plano de esta sesión. Este ajuste seguirá aplicándose en el próximo inicio de sesión."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "À l’ouverture de session, seuls les anciens enregistrements de signature sont vérifiés. AppPorts traite les sauvegardes complètes en toute sécurité ; re-signez ces apps manuellement dans AppPorts. Une signature ou une restauration manuelle arrête la tâche d’arrière-plan pour cette session. Ce réglage s’appliquera toujours à la prochaine ouverture de session."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लॉगिन के समय केवल पुराने हस्ताक्षर रिकॉर्ड जाँचे जाते हैं। पूरे बैकअप AppPorts सुरक्षित रूप से संभालता है; ऐप के अंदर मैनुअली पुनः हस्ताक्षर करें। मैनुअल हस्ताक्षर या पुनर्स्थापन मौजूदा लॉगिन सत्र का बैकग्राउंड काम रोक देता है। अगले लॉगिन पर भी यही सेटिंग लागू होगी।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Saat masuk, hanya catatan tanda tangan lama yang diperiksa. AppPorts menangani cadangan lengkap secara aman; tandatangani ulang secara manual di dalam app. Penandatanganan atau pemulihan manual menghentikan tugas latar belakang untuk sesi masuk ini; pengaturan ini tetap berlaku saat masuk berikutnya."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Al login vengono controllate solo le vecchie registrazioni di firma. AppPorts gestisce i backup completi in modo sicuro; rifirma manualmente le app dall’applicazione. La firma o il ripristino manuale arrestano l’attività in background per questo login; l’impostazione sarà applicata di nuovo al prossimo login."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ログイン時には旧形式の署名記録のみをチェックします。完全なバックアップは AppPorts が安全に処理するため、AppPorts 内で手動で再署名してください。手動で署名または復元すると、今回のログインのバックグラウンドタスクは停止しますが、次回のログイン時にはこの設定どおりに実行されます。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "로그인 시 이전 버전의 서명 기록만 확인합니다. 전체 백업은 AppPorts가 안전하게 처리하므로 앱 안에서 수동으로 재서명하세요. 수동 서명 또는 복원을 하면 이번 로그인 세션의 백그라운드 작업이 중지되며 다음 로그인 시에는 이 설정에 따라 다시 실행됩니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bij het inloggen worden alleen oude handtekeningregistraties gecontroleerd. AppPorts verwerkt volledige reservekopieën veilig; onderteken deze apps handmatig opnieuw in de app. Handmatig ondertekenen of herstellen stopt de achtergrondtaak voor deze sessie. Bij de volgende login blijft deze instelling van toepassing."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Przy logowaniu sprawdzane są tylko stare wpisy podpisów. AppPorts bezpiecznie obsługuje pełne kopie zapasowe; ponownie podpisuj te aplikacje ręcznie w AppPorts. Ręczne podpisanie lub przywrócenie zatrzymuje zadanie w tle na bieżącą sesję. Przy następnym logowaniu to ustawienie nadal będzie obowiązywać."
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ao iniciar a sessão, apenas os registros de assinatura antigos são verificados. O AppPorts lida com os backups completos com segurança; reassine manualmente dentro do app. Assinar ou restaurar manualmente interrompe a tarefa em segundo plano nesta sessão; a configuração continuará valendo no próximo início de sessão."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "При входе в систему проверяются только старые записи о подписях. AppPorts безопасно обрабатывает полные резервные копии; переподписывайте такие приложения вручную в AppPorts. Ручная подпись или восстановление останавливает фоновую задачу до конца текущего сеанса. При следующем входе она снова будет работать согласно этой настройке."
-          }
-        },
-        "th" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "เมื่อเข้าสู่ระบบ จะตรวจสอบเฉพาะระเบียนลายเซ็นรุ่นเก่า AppPorts จะจัดการข้อมูลสำรองที่ครบถ้วนอย่างปลอดภัย โปรดเซ็นใหม่ด้วยตนเองภายในแอป การเซ็นหรือคืนค่าด้วยตนเองจะหยุดงานเบื้องหลังของการเข้าสู่ระบบครั้งนี้ และยังใช้การตั้งค่านี้ในการเข้าสู่ระบบครั้งถัดไป"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Oturum açılırken yalnızca eski imza kayıtları kontrol edilir. Tam yedekleri AppPorts güvenle işler; bu uygulamaları AppPorts içinden elle yeniden imzalayın. Elle imzalama veya geri yükleme, bu oturumun arka plan görevini durdurur. Sonraki oturum açılışında görev yine bu ayara göre çalışır."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Khi đăng nhập, chỉ kiểm tra bản ghi chữ ký cũ. AppPorts xử lý bản sao lưu đầy đủ một cách an toàn; hãy ký lại thủ công trong ứng dụng. Ký hoặc khôi phục thủ công sẽ dừng tác vụ nền của phiên đăng nhập này; lần đăng nhập sau vẫn dùng cài đặt này."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "登录时仅检查旧版签名记录。完整备份由 AppPorts 安全处理，请在应用内手动重签。手动签名或恢复会停止本次登录的后台任务，下次登录仍按此设置运行。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "登入時僅檢查舊版簽名記錄。完整備份由 AppPorts 安全處理，請在 AppPorts 中手動重簽名。手動簽名或恢復會停止本次登入的背景作業，下次登入時仍會依此設定執行。"
-          }
-        },
-        "zh-martian" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "登录時仅检查舊版签名记录。完整備份由 AppPorts 安洤处理，请在应用内手动重签。手动签名或恢复会停止本次登录的后台任务，下次登录仍按此設寘运行。"
-          }
-        }
-      }
-    },
     "迁移记录无法读取，已停止修改并保留原记录。请检查文件权限或从备份恢复记录后重试。" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -131644,143 +131234,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "選擇目錄苡查看完整蕗徑"
-          }
-        }
-      }
-    },
-    "macOS 27 及以上不支持开机自动重签名，以免影响应用启动。请在应用内查看签名修复步骤。" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "إعادة التوقيع تلقائيًا عند تسجيل الدخول غير متاحة في macOS 27 أو أحدث لتجنب مشاكل تشغيل التطبيقات. راجع خطوات إصلاح التوقيع داخل AppPorts."
-          }
-        },
-        "br" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⠠⠁⠥⠞⠕⠍⠁⠞⠊⠉ ⠗⠑⠤⠎⠊⠛⠝⠊⠝⠛ ⠁⠞ ⠇⠕⠛⠊⠝ ⠊⠎ ⠥⠝⠁⠧⠁⠊⠇⠁⠃⠇⠑ ⠕⠝ ⠍⠁⠉⠠⠕⠠⠎ ⠼⠃⠛ ⠕⠗ ⠇⠁⠞⠑⠗ ⠞⠕ ⠁⠧⠕⠊⠙ ⠇⠁⠥⠝⠉⠓ ⠏⠗⠕⠃⠇⠑⠍⠎⠲ ⠠⠧⠊⠑⠺ ⠞⠓⠑ ⠎⠊⠛⠝⠁⠞⠥⠗⠑ ⠗⠑⠏⠁⠊⠗ ⠎⠞⠑⠏⠎ ⠊⠝ ⠠⠁⠏⠏⠠⠏⠕⠗⠞⠎⠲"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatisches Neusignieren bei der Anmeldung ist unter macOS 27 oder neuer nicht verfügbar, um Startprobleme zu vermeiden. Die Schritte zur Signaturreparatur finden Sie in AppPorts."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatic re-signing at login is unavailable on macOS 27 or later to avoid launch problems. View the signature repair steps in AppPorts."
-          }
-        },
-        "eo" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aŭtomata resubskribo ĉe ensaluto ne disponeblas en macOS 27 aŭ pli nova por eviti lanĉproblemojn. Vidu la paŝojn por ripari la subskribon en AppPorts."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La firma automática al iniciar sesión no está disponible en macOS 27 o posterior para evitar problemas al abrir las apps. Consulta los pasos para reparar la firma en AppPorts."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La re-signature automatique à l’ouverture de session est indisponible sous macOS 27 ou version ultérieure pour éviter les problèmes de lancement. Consultez les étapes de réparation de la signature dans AppPorts."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ऐप खुलने में समस्या से बचने के लिए macOS 27 और बाद के संस्करणों में लॉगिन पर अपने-आप दोबारा हस्ताक्षर करना उपलब्ध नहीं है। AppPorts में हस्ताक्षर सुधारने के चरण देखें।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Penandatanganan ulang otomatis saat masuk tidak tersedia di macOS 27 atau lebih baru untuk menghindari masalah saat membuka aplikasi. Lihat langkah perbaikan tanda tangan di AppPorts."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La rifirma automatica all’accesso non è disponibile su macOS 27 o versioni successive per evitare problemi di avvio. Consulta i passaggi per riparare la firma in AppPorts."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アプリの起動への影響を避けるため、macOS 27 以降ではログイン時の自動再署名は利用できません。AppPorts 内で署名の修復手順をご確認ください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "앱 실행 문제를 방지하기 위해 macOS 27 이상에서는 로그인 시 자동 재서명을 지원하지 않습니다. AppPorts에서 서명 복구 절차를 확인해 주세요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatisch opnieuw ondertekenen bij het inloggen is niet beschikbaar op macOS 27 of nieuwer om startproblemen te voorkomen. Bekijk de stappen voor handtekeningherstel in AppPorts."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatyczne ponowne podpisywanie przy logowaniu jest niedostępne w macOS 27 lub nowszym, aby uniknąć problemów z uruchamianiem aplikacji. Zobacz instrukcje naprawy podpisu w AppPorts."
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A reassinatura automática ao iniciar sessão não está disponível no macOS 27 ou posterior para evitar problemas ao abrir apps. Consulte as etapas de reparação da assinatura no AppPorts."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автоматическая повторная подпись при входе недоступна в macOS 27 и новее во избежание проблем с запуском приложений. Инструкции по восстановлению подписи доступны в AppPorts."
-          }
-        },
-        "th" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ไม่รองรับการลงลายเซ็นใหม่อัตโนมัติเมื่อเข้าสู่ระบบบน macOS 27 ขึ้นไป เพื่อหลีกเลี่ยงปัญหาในการเปิดแอป โปรดดูขั้นตอนซ่อมแซมลายเซ็นใน AppPorts"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Uygulama açılış sorunlarını önlemek için macOS 27 ve sonrasında oturum açılışında otomatik yeniden imzalama kullanılamaz. İmza onarım adımlarını AppPorts içinde görüntüleyin."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "macOS 27 trở lên không hỗ trợ tự động ký lại khi đăng nhập để tránh lỗi mở ứng dụng. Hãy xem các bước khôi phục chữ ký trong AppPorts."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "macOS 27 及以上不支持开机自动重签名，以免影响应用启动。请在应用内查看签名修复步骤。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "macOS 27 及以上不支援登入時自動重新簽署，以免影響 App 啟動。請在 App 內查看簽章修復步驟。"
-          }
-        },
-        "zh-martian" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "macOS 27 及苡丄芣支持開機自動重簽名，苡免影響應用啟動。請茬應用內查看簽名修復步驟。"
           }
         }
       }
@@ -177568,6 +177021,417 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "操作尚未完成"
+          }
+        }
+      }
+    },
+    "原包将自动保存到外盘的 AppPorts Backups 文件夹。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "سيُحفظ التطبيق الأصلي تلقائيًا في مجلد AppPorts Backups على قرص خارجي."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑ ⠕⠗⠊⠛⠊⠝⠁⠇ ⠁⠏⠏⠇⠊⠉⠁⠞⠊⠕⠝ ⠺⠊⠇⠇ ⠃⠑ ⠎⠁⠧⠑⠙ ⠁⠥⠞⠕⠍⠁⠞⠊⠉⠁⠇⠇⠽ ⠊⠝ ⠞⠓⠑ ⠠⠁⠏⠏⠠⠏⠕⠗⠞⠎ ⠠⠃⠁⠉⠅⠥⠏⠎ ⠋⠕⠇⠙⠑⠗ ⠕⠝ ⠁⠝ ⠑⠭⠞⠑⠗⠝⠁⠇ ⠙⠊⠎⠅⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Originalanwendung wird automatisch im Ordner AppPorts Backups auf einem externen Datenträger gespeichert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The original application will be saved automatically in the AppPorts Backups folder on an external disk."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La originala aplikaĵo estos aŭtomate konservita en la dosierujo AppPorts Backups sur ekstera disko."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La aplicación original se guardará automáticamente en la carpeta AppPorts Backups de un disco externo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’application originale sera enregistrée automatiquement dans le dossier AppPorts Backups sur un disque externe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "मूल ऐप बाहरी डिस्क के AppPorts Backups फ़ोल्डर में अपने आप सहेजा जाएगा।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aplikasi asli akan disimpan secara otomatis di folder AppPorts Backups pada disk eksternal."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’applicazione originale verrà salvata automaticamente nella cartella AppPorts Backups di un disco esterno."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "元のアプリは外付けディスクの AppPorts Backups フォルダに自動保存されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원본 앱은 외장 디스크의 AppPorts Backups 폴더에 자동으로 저장됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De originele app wordt automatisch opgeslagen in de map AppPorts Backups op een externe schijf."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oryginalna aplikacja zostanie automatycznie zapisana w folderze AppPorts Backups na dysku zewnętrznym."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A aplicação original será guardada automaticamente na pasta AppPorts Backups de um disco externo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оригинал приложения будет автоматически сохранён в папке AppPorts Backups на внешнем диске."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "แอปต้นฉบับจะถูกบันทึกโดยอัตโนมัติในโฟลเดอร์ AppPorts Backups บนดิสก์ภายนอก"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Özgün uygulama, harici diskteki AppPorts Backups klasörüne otomatik olarak kaydedilecektir."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bản gốc của ứng dụng sẽ được tự động lưu vào thư mục AppPorts Backups trên ổ đĩa ngoài."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原包将自动保存到外盘的 AppPorts Backups 文件夹。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原包將自動儲存至外盤的 AppPorts Backups 資料夾。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原包將自動葆存到外盤の AppPorts Backups 攵件夾。"
+          }
+        }
+      }
+    },
+    "正在将原包迁到外盘，可继续未完成的操作。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "جارٍ نقل التطبيق الأصلي إلى وحدة تخزين خارجية. يمكن استئناف العملية غير المكتملة."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠍⠕⠧⠊⠝⠛ ⠞⠓⠑ ⠕⠗⠊⠛⠊⠝⠁⠇ ⠁⠏⠏⠇⠊⠉⠁⠞⠊⠕⠝ ⠞⠕ ⠑⠭⠞⠑⠗⠝⠁⠇ ⠎⠞⠕⠗⠁⠛⠑⠲ ⠠⠞⠓⠑ ⠥⠝⠋⠊⠝⠊⠎⠓⠑⠙ ⠕⠏⠑⠗⠁⠞⠊⠕⠝ ⠉⠁⠝ ⠃⠑ ⠗⠑⠎⠥⠍⠑⠙⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Originalanwendung wird auf einen externen Datenträger verschoben. Der unvollständige Vorgang kann fortgesetzt werden."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moving the original application to external storage. The unfinished operation can be resumed."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La originala aplikaĵo estas movata al ekstera stokado. La nefinita operacio povas esti daŭrigita."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trasladando la aplicación original al almacenamiento externo. Puedes reanudar la operación pendiente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacement de l’application originale vers un stockage externe. L’opération inachevée peut être reprise."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "मूल ऐप को बाहरी स्टोरेज पर ले जाया जा रहा है। अधूरी प्रक्रिया को फिर से शुरू किया जा सकता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memindahkan aplikasi asli ke penyimpanan eksternal. Operasi yang belum selesai dapat dilanjutkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spostamento dell’applicazione originale su un’unità esterna. È possibile riprendere l’operazione incompleta."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "元のアプリを外付けディスクに移動しています。未完了の操作を再開できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원본 앱을 외장 저장 장치로 옮기고 있습니다. 완료되지 않은 작업을 재개할 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De originele app wordt naar externe opslag verplaatst. De onvoltooide bewerking kan worden hervat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przenoszenie oryginalnej aplikacji na nośnik zewnętrzny. Można wznowić niedokończoną operację."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A mover a aplicação original para o armazenamento externo. A operação pendente pode ser retomada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оригинал приложения переносится на внешний носитель. Незавершённую операцию можно продолжить."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "กำลังย้ายแอปต้นฉบับไปยังที่จัดเก็บข้อมูลภายนอก สามารถดำเนินการที่ยังไม่เสร็จต่อได้"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Özgün uygulama harici depolamaya taşınıyor. Tamamlanmamış işleme devam edilebilir."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đang chuyển bản gốc của ứng dụng sang bộ nhớ ngoài. Có thể tiếp tục thao tác chưa hoàn tất."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在将原包迁到外盘，可继续未完成的操作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在將原包移至外盤，可繼續未完成的操作。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "㊣在將原包遷到外盤，可繼續未完成の操作。"
+          }
+        }
+      }
+    },
+    "请连接可写且空间足够的外置磁盘后重试。签名原包只保存在外盘。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "وصّل قرصًا خارجيًا قابلًا للكتابة وبه مساحة خالية كافية، ثم أعد المحاولة. تُحفظ النسخ الأصلية من التطبيقات على وحدات التخزين الخارجية فقط."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠉⠕⠝⠝⠑⠉⠞ ⠁ ⠺⠗⠊⠞⠁⠃⠇⠑ ⠑⠭⠞⠑⠗⠝⠁⠇ ⠙⠊⠎⠅ ⠺⠊⠞⠓ ⠑⠝⠕⠥⠛⠓ ⠋⠗⠑⠑ ⠎⠏⠁⠉⠑ ⠁⠝⠙ ⠞⠗⠽ ⠁⠛⠁⠊⠝⠲ ⠠⠕⠗⠊⠛⠊⠝⠁⠇ ⠁⠏⠏⠇⠊⠉⠁⠞⠊⠕⠝⠎ ⠁⠗⠑ ⠃⠁⠉⠅⠑⠙ ⠥⠏ ⠕⠝⠇⠽ ⠞⠕ ⠑⠭⠞⠑⠗⠝⠁⠇ ⠎⠞⠕⠗⠁⠛⠑⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schließe einen beschreibbaren externen Datenträger mit ausreichend freiem Speicherplatz an und versuche es erneut. Originalanwendungen werden nur auf externen Datenträgern gesichert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect a writable external disk with enough free space and try again. Original applications are backed up only to external storage."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Konektu skribeblan eksteran diskon kun sufiĉe da libera spaco kaj reprovu. Originalaj aplikaĵoj estas sekurkopiataj nur sur ekstera stokado."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conecta un disco externo con permisos de escritura y suficiente espacio libre e inténtalo de nuevo. Las aplicaciones originales solo se respaldan en almacenamiento externo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connectez un disque externe accessible en écriture avec suffisamment d’espace libre, puis réessayez. Les applications originales sont sauvegardées uniquement sur un stockage externe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "लिखने योग्य और पर्याप्त खाली जगह वाली बाहरी डिस्क कनेक्ट करें और फिर से कोशिश करें। मूल ऐप का बैकअप केवल बाहरी स्टोरेज पर रखा जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hubungkan disk eksternal yang dapat ditulis dan memiliki ruang kosong yang cukup, lalu coba lagi. Aplikasi asli hanya dicadangkan ke penyimpanan eksternal."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collega un disco esterno scrivibile con spazio libero sufficiente e riprova. Le applicazioni originali vengono salvate solo su unità esterne."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "書き込み可能で空き容量が十分な外付けディスクを接続して、やり直してください。元のアプリは外付けディスクにのみバックアップされます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "쓰기가 가능하고 여유 공간이 충분한 외장 디스크를 연결한 후 다시 시도하세요. 원본 앱은 외장 저장 장치에만 백업됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sluit een beschrijfbare externe schijf met voldoende vrije ruimte aan en probeer het opnieuw. Originele apps worden alleen op externe opslag bewaard."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Podłącz dysk zewnętrzny z możliwością zapisu i wystarczającą ilością wolnego miejsca, a następnie spróbuj ponownie. Oryginalne aplikacje są zapisywane tylko na nośnikach zewnętrznych."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ligue um disco externo com permissão de escrita e espaço livre suficiente e tente novamente. As aplicações originais são guardadas apenas no armazenamento externo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите внешний диск с разрешённой записью и достаточным свободным местом и повторите попытку. Оригиналы приложений сохраняются только на внешних носителях."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "เชื่อมต่อดิสก์ภายนอกที่เขียนข้อมูลได้และมีพื้นที่ว่างเพียงพอ แล้วลองอีกครั้ง แอปต้นฉบับจะสำรองไว้ในที่จัดเก็บข้อมูลภายนอกเท่านั้น"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yazılabilir ve yeterli boş alanı olan bir harici disk bağlayıp yeniden deneyin. Özgün uygulamalar yalnızca harici depolamaya yedeklenir."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kết nối ổ đĩa ngoài có thể ghi và đủ dung lượng trống rồi thử lại. Bản gốc của ứng dụng chỉ được sao lưu trên bộ nhớ ngoài."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请连接可写且空间足够的外置磁盘后重试。签名原包只保存在外盘。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請連接可寫入且空間足夠的外置磁碟後重試。簽名原包僅儲存在外盤。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請連接可寫且涳間足夠の外置磁盤後重試。簽名原包只葆存在外盤。"
           }
         }
       }

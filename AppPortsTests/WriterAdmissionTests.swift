@@ -277,6 +277,12 @@ final class WriterAdmissionTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let executable = directory.appendingPathComponent("AppPorts")
         try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: executable)
+        // A copied platform binary can be killed by macOS before admission is
+        // checked. Sign only this temporary fixture so it remains a live writer.
+        let signature = try await ProcessCommandRunner().run(executable: "/usr/bin/codesign",
+            arguments: ["--force", "--sign", "-", executable.path], timeout: 15)
+        XCTAssertEqual(signature.status, 0, signature.combinedText)
+        guard signature.status == 0 else { return }
         let process = Process()
         process.executableURL = executable
         process.arguments = ["30"]
@@ -294,6 +300,7 @@ final class WriterAdmissionTests: XCTestCase {
         let admission = WriterAdmission(dataDirectory: directory.appendingPathComponent("isolated-data"),
             processSnapshot: { try WriterAdmission.runningAppPortsProcesses().filter { [current.processID, running.processID].contains($0.processID) } })
         try admission.registerCurrentProcess()
+        XCTAssertTrue(process.isRunning, "The unregistered fixture must still be running when admission is checked")
         XCTAssertThrowsError(try admission.checkCurrentWriters()) { error in
             XCTAssertTrue(error.localizedDescription.contains(String(running.processID)))
         }

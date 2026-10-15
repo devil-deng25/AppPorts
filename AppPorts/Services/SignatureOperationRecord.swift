@@ -84,12 +84,12 @@ struct SignatureOperationRecord: Codable, Equatable, Sendable {
     let id: UUID
     let kind: Kind
     let createdAt: Date
-    let applicationPath: String
+    var applicationPath: String
     let applicationIdentity: DataPathIdentity
     let applicationParentIdentity: DataPathIdentity
     let version: SignatureAppVersion
     let originalFingerprint: String
-    let directoryPath: String
+    var directoryPath: String
     var directoryIdentity: DataPathIdentity?
     var candidateIdentity: DataPathIdentity?
     var candidateFingerprint: String?
@@ -109,6 +109,18 @@ struct SignatureOperationRecord: Codable, Equatable, Sendable {
     var applicationURL: URL { URL(fileURLWithPath: applicationPath) }
     var directoryURL: URL { URL(fileURLWithPath: directoryPath) }
     var candidateURL: URL { directoryURL.appendingPathComponent(applicationURL.lastPathComponent) }
+
+    func resolvingApplicationLocation(mountedVolumes: [URL]? = nil) throws -> Self {
+        guard schemaVersion == 3, let location = originalBackup?.backup.applicationParentLocation else { return self }
+        guard location.identity.matchesFilesystemObject(applicationParentIdentity) else { throw CodeSigner.SigningError.snapshotInvalid }
+        let parent = try location.resolve(mountedVolumes: mountedVolumes)
+        guard parent.path != applicationURL.deletingLastPathComponent().path else { return self }
+        var record = self
+        record.applicationPath = parent.appendingPathComponent(applicationURL.lastPathComponent).path
+        record.directoryPath = parent.appendingPathComponent(".AppPorts-signature-" + id.uuidString).path
+        if record.pendingFact?.applicationPath == applicationPath { record.pendingFact?.applicationPath = record.applicationPath }
+        return record
+    }
 }
 
 /// Keeping the only official original is a durable obligation, separate from
@@ -122,6 +134,7 @@ struct SignatureOriginalBackupIntent: Codable, Equatable, Sendable {
     var snapshotIdentity: DataPathIdentity?
     var removalManifest: SignatureRemovalManifest?
     var completed = false
+    var movesOriginal: Bool?
 }
 
 /// Store only the entitlement declarations and original-object binding needed
@@ -219,8 +232,10 @@ struct SignatureOperationStore: Sendable {
 
     private func decode(_ data: Data, at url: URL) throws -> SignatureOperationRecord {
         let record = try PropertyListDecoder().decode(SignatureOperationRecord.self, from: data)
-        guard (1...2).contains(record.schemaVersion),
-              record.originalBackup == nil || record.schemaVersion == 2 && record.kind == .sign,
+        guard (1...3).contains(record.schemaVersion),
+              record.originalBackup == nil || record.schemaVersion >= 2 && record.kind == .sign,
+              record.originalBackup?.backup.schemaVersion != 3 || record.schemaVersion == 3,
+              record.originalBackup?.movesOriginal != true || record.schemaVersion == 3,
               url.lastPathComponent == record.id.uuidString + ".plist",
               record.applicationIdentity.isResolved, record.applicationParentIdentity.isResolved,
               record.directoryIdentity?.isResolved != false, record.candidateIdentity?.isResolved != false,

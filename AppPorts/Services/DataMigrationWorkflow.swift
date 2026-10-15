@@ -21,6 +21,7 @@ enum DataMigrationWorkflow {
         var confirmationMessage: String {
             var message = String(format: "将重签「%@」。AppPorts 会自动保留仍有恢复价值的官方原包，并在确认恢复官方状态后清理。你可以在应用上使用“恢复原始签名”。".localized,
                 url.lastPathComponent)
+            message += "\n" + "原包将自动保存到外盘的 AppPorts Backups 文件夹。".localized
             message += "\n\n" + String(format: "临时位置：%@\n预计额外空间：%@（按完整复制预留）。".localized,
                 temporarySpaceRequirement.parentURL.path,
                 LocalizedByteCountFormatter.string(fromByteCount: temporarySpaceRequirement.requiredAdditionalBytes))

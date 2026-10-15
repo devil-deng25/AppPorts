@@ -48,8 +48,7 @@ struct AppStoreSettingsView: View {
     /// 最大日志文件大小（字节）
     @AppStorage("MaxLogSizeBytes") private var maxLogSize = 2 * 1024 * 1024
     
-    /// 新安装默认关闭；仅受支持的系统保留已有登录任务的默认状态。
-    @AppStorage(AutoResignInstaller.enabledDefaultsKey) private var autoResignAtLogin = AutoResignInstaller.isSupported && AutoResignInstaller.isInstalled
+    /// Only a failed retirement needs a settings action; login signing is no longer a feature.
     @AppStorage(AutoResignInstaller.policyErrorDefaultsKey) private var autoResignPolicyError = ""
     @State private var isRetryingAutoResignCleanup = false
 
@@ -278,69 +277,18 @@ struct AppStoreSettingsView: View {
             .background(Color.primary.opacity(0.03))
             .cornerRadius(12)
 
-            // 开机自动重签名
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .foregroundColor(AutoResignInstaller.isSupported ? .orange : .secondary)
-                            Text("开机自动重签名".localized)
-                                .font(.headline)
-                        }
-                        Text(AutoResignInstaller.isSupported
-                             ? "登录时仅检查旧版签名记录。完整备份由 AppPorts 安全处理，请在应用内手动重签。手动签名或恢复会停止本次登录的后台任务，下次登录仍按此设置运行。".localized
-                             : "macOS 27 及以上不支持开机自动重签名，以免影响应用启动。请在应用内查看签名修复步骤。".localized)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer()
-
-                    Toggle("开机自动重签名".localized, isOn: Binding(
-                        get: { AutoResignInstaller.isSupported && autoResignAtLogin },
-                        set: { autoResignAtLogin = $0 }
-                    ))
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .disabled(!AutoResignInstaller.isSupported || operationState.isBusy)
-                        .onChange(of: autoResignAtLogin) { enabled in
-                            // 系统策略负责 27 上的完整停止与清理，不能再触发旧卸载流程。
-                            guard AutoResignInstaller.isSupported else { return }
-                            if enabled {
-                                do {
-                                    try AutoResignInstaller.install()
-                                } catch {
-                                    AppLogger.shared.logError(
-                                        "安装自动重签名失败",
-                                        error: error,
-                                        errorCode: "AUTO-RESIGN-INSTALL-FAILED"
-                                    )
-                                    autoResignAtLogin = false
-                                }
-                            } else {
-                                AutoResignInstaller.uninstall()
-                            }
-                        }
+            if !autoResignPolicyError.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("旧的登录重签任务尚未完全关闭，请重试。".localized)
+                        .foregroundColor(.orange)
+                    Text(verbatim: autoResignPolicyError)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("重试".localized, action: retryAutoResignCleanup)
+                        .disabled(operationState.isBusy || isRetryingAutoResignCleanup)
                 }
-
-                if !AutoResignInstaller.isSupported && !autoResignPolicyError.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("旧的登录重签任务尚未完全关闭，请重试。".localized)
-                            .foregroundColor(.orange)
-                        Text(verbatim: autoResignPolicyError)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("重试".localized, action: retryAutoResignCleanup)
-                            .disabled(operationState.isBusy || isRetryingAutoResignCleanup)
-                    }
-                    .font(.caption)
-                }
+                .font(.caption)
             }
-            .padding()
-            .background(Color.primary.opacity(0.03))
-            .cornerRadius(12)
 
             classicModeSection
 

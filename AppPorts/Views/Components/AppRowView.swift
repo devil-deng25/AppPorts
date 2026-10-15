@@ -107,10 +107,10 @@ struct AppRowView: View {
                 }
             }
 
-            // History diagnostics do not decide whether a fresh, explicitly
-            // selected signing operation is possible. Its service inspects the
-            // current installation again before showing the confirmation.
-            if !app.isFolder,
+            // A confirmed re-signed installation offers restoration. Unknown
+            // history still permits a fresh service inspection before signing.
+            if !app.isResigned,
+               !app.isFolder,
                !app.isSystemApp,
                app.status != AppStatus.orphanedLink,
                app.displayURL.pathExtension.lowercased() == "app",
