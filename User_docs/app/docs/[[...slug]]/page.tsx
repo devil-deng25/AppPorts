@@ -1,3 +1,5 @@
+import legacy from '@/config/legacy-links.json';
+import { LegacyRedirect } from '@/components/legacy-redirect';
 import { source } from '@/lib/source';
 import Link from 'next/link';
 import { PageActions } from '@/components/page-actions';
@@ -11,7 +13,9 @@ import { createRelativeLink } from 'fumadocs-ui/mdx';
 type Props = { params: Promise<{ slug?: string[] }> };
 export default async function Page({ params }: Props) {
   const { slug } = await params;
-  if (!slug?.length) redirect('/docs/faststart');
+  if (!slug?.length) redirect('/docs/AppPorts');
+  const route = legacy.routes[slug.join('/') as keyof typeof legacy.routes];
+  if (route) return <LegacyRedirect route={route} />;
   const page = source.getPage(slug);
   if (!page) notFound();
   const MDX = page.data.body;
@@ -25,8 +29,10 @@ export default async function Page({ params }: Props) {
     <DocsBody><MDX components={getMDXComponents({ a: createRelativeLink(source, page) })} /></DocsBody>
   </DocsPage>;
 }
-export function generateStaticParams() { return [{ slug: [] }, ...source.generateParams()]; }
+export function generateStaticParams() { return [{ slug: [] }, ...source.generateParams(), ...Object.keys(legacy.routes).map(slug => ({ slug: slug.split('/') }))]; }
 export async function generateMetadata({ params }: Props) {
   const { slug } = await params;
-  return { title: source.getPage(slug)?.data.title || '使用指南' };
+  const route = legacy.routes[(slug ?? []).join('/') as keyof typeof legacy.routes];
+  if (route) return { title: '文档已合并', robots: { index: false }, alternates: { canonical: route.target.split('#')[0] } };
+  return { title: source.getPage(slug)?.data.title || 'AppPorts 文档' };
 }

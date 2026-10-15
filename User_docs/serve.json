@@ -1,0 +1,7 @@
+{
+  "cleanUrls": [
+    "/",
+    "**/!(*.html)"
+  ],
+  "directoryListing": false
+}

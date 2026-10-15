@@ -1,55 +1,36 @@
 # 快速开始
 
-## 安装 AppPorts
+准备一块连接稳定、空间足够的外置盘，以及运行 macOS 12 或更高版本的 Mac。本页带你完成安装和第一次应用迁移；如果你只想移动聊天记录、缓存或模型等数据，可以在准备完成后转到[迁移数据](/docs/datamigrae/operation)。
 
-开始使用前，请先确认满足以下条件：
+## 下载并安装 {#install}
 
-1. 准备一个稳定可用的外部存储设备，例如移动硬盘或外置 SSD。
-2. Mac 运行 macOS 12.0（Monterey）或更高版本。
+1. 从[AppPorts 下载页](https://file.shimoko.com/AppPorts)获取安装包，也可以使用 [GitHub Releases](https://github.com/wzh4869/AppPorts/releases)。
+2. 打开安装包，把 AppPorts 拖入 Mac 的“应用程序”文件夹。
+3. 从“应用程序”打开 AppPorts，按首次使用引导继续。不要长期从安装镜像中运行。
 
-### 下载
+## 准备权限与外置盘 {#permissions}
 
-前往 [GitHub Releases](https://github.com/wzh4869/AppPorts/releases) 下载最新版 `.dmg` 安装包。
+1. 连接外置盘，在 AppPorts 中选择外部存储位置。
+2. 按提示到系统的“隐私与安全性”设置中，为 AppPorts 开启“完全磁盘访问权限”；系统要求时再授予 App 管理权限。
+3. 按提示重新打开 AppPorts。之后可在“设置 → 准备情况”中点击“检查”。
 
-::: tip 下载备用地址
-如果 GitHub Releases 无法访问，可通过[直链网盘](https://file.shimoko.com/AppPorts)获取安装包。
-:::
+**只有容器数据的挂载迁移要求未加密的 APFS 存储。** 普通应用和普通文件夹按各自条件检查，不必为了第一次应用迁移就抹掉现有磁盘。格式不符合要求时，先阅读[外置盘准备方法](/docs/storage-guide#apfs)。
 
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/download.gif?sign=Xb9FOEqPxR8Q7WLixKzg5NCYcjVzmzq2eh0634xGdG0=:0)
+## 完成第一次迁移 {#first-move}
 
+1. 选择一个你熟悉的应用，保存工作并完全退出它。
+2. 在“Mac 本地应用”中选中应用，点击“迁移到外部”。
+3. 阅读目标位置和冲突提示，确认是你要移动的内容后继续。
+4. 等待复制、检查和收尾全部完成。过程中保持外置盘连接，不要重新打开该应用。
+5. 从 Finder 或 Dock 打开迁移后的应用，检查主要功能是否正常。
 
-### 安装并启动
+完成后，真实应用存放在外置盘，本地保留启动入口；列表会显示相应的[状态徽章](/docs/badges)。遇到同名目标、权限不足或中断时，先按提示处理，不要自行删除两边的数据。
 
-1. 打开下载好的 `.dmg` 安装包。
-2. 将 AppPorts 拖入 `Applications` 文件夹。
-3. 从 `Applications` 文件夹或 Launchpad 启动 AppPorts。
+## 下一步 {#next}
 
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/install.gif?sign=dg-gU67tz19m6DGdI3NywEAcuqKnyTpWGas0YhZeGfM=:0)
+- 应用能正常打开：继续了解[迁移后的更新方式](/docs/core#updates)。
+- 想移动应用产生的数据：阅读[迁移数据](/docs/datamigrae/operation)。
+- 想恢复本地存放：阅读[还原与接回](/docs/restore)。
+- 操作没完成或应用打不开：从[常见问题与排查](/docs/faq)查找对应现象。
 
-
-### 必要授权
-
-首次运行时，AppPorts 需要**完全磁盘访问权限**，用于读取和修改 `/Applications` 目录。
-
-1. 打开系统设置 → 隐私与安全性 → 完全磁盘访问权限。
-2. 点击 `+` 按钮，添加 AppPorts，并打开对应开关。
-3. 重新启动 AppPorts，使授权生效。
-
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/outh.gif?sign=fTXqbKCR_tZBKDb6p1DziuJYjD9NZAJk-Zsw7c4oOJM=:0)
-   
-#### App Store 应用自更新授权
-
-如果使用 macOS 15.1（Sequoia）或更高版本，并希望 App Store 应用安装到外部存储后仍可正常更新，请在 App Store 中开启「下载并安装大型 App 到独立存储盘」。AppPorts 会在外部存储中准备对应的 `/Applications` 目录，以便 App Store 在该位置安装和更新应用。
-
-::: warning macOS 15.1 之前的限制
-macOS 15.1 之前的系统不支持 App Store 应用原生安装到外部存储。你仍可在 AppPorts 右上角设置中开启 App Store 应用迁移功能，但后续应用更新需要手动再次迁移，以覆盖外部存储上的旧版本。
-:::
-
-1. 打开 App Store。
-2. 在菜单栏中进入 App Store 设置。
-3. 勾选「下载并安装大型 App 到独立存储盘」，并选择与 AppPorts 外部应用库相同的外部存储设备。
- 
-![](https://file.shimoko.com/d/openlist/openlist/%E7%BD%91%E7%AB%99%E5%AA%92%E4%BD%93%E6%96%87%E4%BB%B6/appstore.gif?sign=JwDPVgjgPb3AulPjZq6Y2KgubkHxmGNqaUawCBRhCEM=:0)
-
-
-   
+迁移会改变数据的存放位置，不会替代备份。日常使用前先连接外置盘，断开前退出使用它的应用并正常弹出磁盘。

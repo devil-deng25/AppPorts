@@ -1,0 +1,154 @@
+{
+  "main": [
+    {
+      "slug": "AppPorts",
+      "name": "简介",
+      "icon": "AppWindow"
+    },
+    {
+      "slug": "faststart",
+      "name": "快速开始",
+      "icon": "Rocket"
+    },
+    {
+      "slug": "core",
+      "name": "迁移应用",
+      "icon": "Boxes"
+    },
+    {
+      "slug": "datamigrae/operation",
+      "name": "迁移数据",
+      "icon": "FolderOpen"
+    },
+    {
+      "slug": "restore",
+      "name": "还原、接回与解除链接",
+      "icon": "Undo2"
+    },
+    {
+      "slug": "storage-guide",
+      "name": "外置盘与日常使用",
+      "icon": "HardDrive"
+    },
+    {
+      "name": "原理",
+      "icon": "BookOpen",
+      "children": [
+        {
+          "slug": "migration-strategy/portal",
+          "name": "应用迁移方式",
+          "icon": "AppWindow"
+        },
+        {
+          "slug": "datamigrae/baseinfo",
+          "name": "数据迁移方式",
+          "icon": "FolderOpen"
+        },
+        {
+          "slug": "badges",
+          "name": "徽章与状态",
+          "icon": "Tags"
+        },
+        {
+          "slug": "classic-mode",
+          "name": "经典模式",
+          "icon": "History"
+        },
+        {
+          "slug": "principles/macos-27",
+          "name": "macOS 27 与迁移方式的变化",
+          "icon": "ShieldCheck"
+        }
+      ]
+    },
+    {
+      "name": "实验记录",
+      "icon": "FlaskConical",
+      "children": [
+        {
+          "slug": "research/sandbox-symlink",
+          "name": "符号链接为什么不总是可用",
+          "icon": "FlaskConical"
+        },
+        {
+          "slug": "research/sandbox-mountpoint",
+          "name": "挂载迁移与系统授权",
+          "icon": "FlaskConical"
+        },
+        {
+          "slug": "research/unplug-test",
+          "name": "意外断开外置盘的影响",
+          "icon": "FlaskConical"
+        },
+        {
+          "slug": "research/prelogin-mount",
+          "name": "重启与外置盘自动接回",
+          "icon": "FlaskConical"
+        },
+        {
+          "slug": "research/container-structure",
+          "name": "为什么有些容器目录不能搬",
+          "icon": "FlaskConical"
+        },
+        {
+          "slug": "research/data-integrity",
+          "name": "数据完整性：文件复制完就够了吗",
+          "icon": "FlaskConical"
+        }
+      ]
+    },
+    {
+      "name": "帮助与支持",
+      "icon": "CircleHelp",
+      "children": [
+        {
+          "slug": "faq",
+          "name": "常见问题与排查",
+          "icon": "CircleHelp"
+        },
+        {
+          "slug": "macos-27",
+          "name": "macOS 27 升级与修复",
+          "icon": "RefreshCw"
+        }
+      ]
+    },
+    {
+      "slug": "settings",
+      "name": "设置与权限",
+      "icon": "Settings"
+    },
+    {
+      "slug": "changelog",
+      "name": "更新日志",
+      "icon": "ScrollText"
+    },
+    {
+      "slug": "sponsor",
+      "name": "赞助",
+      "icon": "Heart"
+    },
+    {
+      "slug": "licenses",
+      "name": "开源许可",
+      "icon": "Scale"
+    },
+    {
+      "slug": "privacy",
+      "name": "隐私政策",
+      "icon": "Lock"
+    },
+    {
+      "slug": "glossary",
+      "name": "词汇表",
+      "icon": "BookA"
+    }
+  ],
+  "auxiliary": [
+    "contributing",
+    "archive/overview",
+    "archive/data-signing",
+    "archive/app-strategies",
+    "archive/mount-experiments"
+  ]
+}

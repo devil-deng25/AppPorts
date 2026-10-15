@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir, rm, readdir, cp } from 'node:fs/promises';
 import path from 'node:path';
 import matter from 'gray-matter';
+import GithubSlugger from 'github-slugger';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
@@ -15,12 +16,9 @@ const parser = unified().use(remarkParse).use(remarkGfm);
 const writer = unified().use(remarkStringify).use(remarkGfm).use(remarkMdx);
 const languageLabels = { en: 'English', 'zh-Hant': '繁體中文', ja: '日本語', ko: '한국어', de: 'Deutsch', fr: 'Français', es: 'Español' };
 const locales = new Set(Object.keys(languageLabels));
-export const navigation = {
-  '': { title: 'AppPorts 文档', pages: ['---指南---', 'AppPorts', 'faststart', 'core', 'badges', 'datamigrae', 'migration-strategy', 'settings', 'storage-guide', 'why-apfs', 'macos-27', 'limitations', 'troubleshooting', 'faq', 'logging', 'research', 'changelog', 'sponsor', 'contributing', 'licenses', 'privacy'] },
-  datamigrae: { title: '数据迁移', pages: ['baseinfo', 'tools', 'operation', 'mount-migration', 'resign', 'container-identity'] },
-  'migration-strategy': { title: 'App 迁移策略', pages: ['portal', 'strategy-map', 'updater-detection', 'appstore-update'] },
-  research: { title: '实验记录', pages: ['sandbox-symlink', 'sandbox-mountpoint', 'unplug-test', 'prelogin-mount'] },
-};
+const navigation = JSON.parse(await readFile(path.join(root, 'config/docs-navigation.json'), 'utf8'));
+const legacy = JSON.parse(await readFile(path.join(root, 'config/legacy-links.json'), 'utf8'));
+
 function jsx(name, props = {}, children = []) {
   return { type: 'mdxJsxFlowElement', name, attributes: Object.entries(props).map(([name, value]) => ({ type: 'mdxJsxAttribute', name, value })), children };
 }
@@ -64,7 +62,7 @@ export function portableMarkdown(tree, sponsorData) {
   }
   return unified().use(remarkStringify).use(remarkGfm).stringify(convertNode(tree)[0]);
 }
-export function convert(content) {
+export function convert(content, aliases = {}) {
   content = content.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '')
     .replace(/<div align="center">\s*<img src="([^"]+)" alt="([^"]*)"[^>]*\/>\s*<\/div>/g, '![$2]($1)');
   const tree = parser.parse(spaceContainers(content));
@@ -92,14 +90,28 @@ export function convert(content) {
     }
   }
   if (stack.length !== 1) throw new Error('Unclosed VitePress container');
-  visit(result, 'heading', (node, index, parent) => {
+  const slugger = new GithubSlugger();
+  const headingIds = new Set();
+  visit(result, 'heading', node => {
     const last = node.children.at(-1);
     const anchor = last?.type === 'text' && last.value.match(/\s*\{#([^}]+)\}\s*$/);
-    if (anchor) {
-      last.value = last.value.slice(0, anchor.index);
-      parent.children.splice(index, 0, jsx('span', { id: anchor[1] }));
-      return index + 2;
-    }
+    if (anchor) last.value = last.value.slice(0, anchor.index);
+    if (node.depth === 1) return;
+    const id = anchor ? anchor[1] : slugger.slug(textOf(node));
+    if (headingIds.has(id)) throw new Error(`Duplicate heading ID: ${id}`);
+    headingIds.add(id);
+    node.data = { ...node.data, canonicalId: id };
+  });
+  for (const [old, target] of Object.entries(aliases)) {
+    if (!headingIds.has(target)) throw new Error(`Legacy anchor target does not exist: ${target}`);
+    if (headingIds.has(old) && old !== target) throw new Error(`Legacy anchor collision: ${old} belongs to ${target}`);
+  }
+  visit(result, 'heading', (node, index, parent) => {
+    const spans = Object.entries(aliases)
+      .filter(([old, target]) => target === node.data?.canonicalId && old !== target)
+      .map(([id]) => jsx('span', { id }));
+    parent.children.splice(index, 0, ...spans);
+    return index + spans.length + 1;
   });
   visit(result, 'link', node => {
     const [url, hash] = node.url.split('#');
@@ -114,7 +126,11 @@ export function convert(content) {
   const firstHeading = result.children.findIndex(node => node.type === 'heading' && node.depth === 1);
   let title;
   if (firstHeading !== -1) title = textOf(result.children.splice(firstHeading, 1)[0]);
-  return { title, body: writer.stringify(result), tree: result };
+  const mdxTree = structuredClone(result);
+  visit(mdxTree, 'heading', node => {
+    if (node.data?.canonicalId) node.children.push({ type: 'text', value: ` [#${node.data.canonicalId}]` });
+  });
+  return { title, body: writer.stringify(mdxTree), tree: result };
 }
 async function walk(dir, prefix = '') {
   const files = [];
@@ -134,8 +150,8 @@ if (process.argv[1] === import.meta.filename) {
   await rm(path.join(root, 'public/docs-md'), { recursive: true, force: true });
   for (const file of await walk(input)) {
     const { content, data } = matter(await readFile(path.join(input, file), 'utf8'));
-    const { title, body, tree } = convert(content);
     const slug = file.replace(/\.md$/, '');
+    const { title, body, tree } = convert(content, legacy.anchors[slug]);
     const target = path.join(output, slug + '.mdx');
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, matter.stringify(body, { title: data.title || title || slug, sourcePath: file }));
@@ -144,9 +160,12 @@ if (process.argv[1] === import.meta.filename) {
     await writeFile(markdownPath, '# ' + (data.title || title || slug) + '\n\n' + portableMarkdown(tree, sponsors));
     manifest.push({ slug, sourcePath: file, title: data.title || title || slug });
   }
-  for (const [folder, meta] of Object.entries(navigation)) {
-    await mkdir(path.join(output, folder), { recursive: true });
-    await writeFile(path.join(output, folder, 'meta.json'), JSON.stringify(meta, null, 2));
+  const expected = [...navigation.main.flatMap(entry => entry.children ?? [entry]).map(entry => entry.slug), ...navigation.auxiliary];
+  if (new Set(expected).size !== expected.length || expected.length !== manifest.length || expected.some(slug => !manifest.some(page => page.slug === slug))) {
+    throw new Error('Navigation and Chinese source inventory differ');
+  }
+  for (const entry of navigation.main.flatMap(entry => entry.children ?? [entry])) {
+    if (!manifest.find(page => page.slug === entry.slug)?.title.includes(entry.name)) throw new Error(`Navigation title differs: ${entry.slug}`);
   }
   await writeFile(path.join(root, '.content/manifest.json'), JSON.stringify(manifest, null, 2));
   const languages = await Promise.all(Object.entries(languageLabels).map(async ([lang, label]) => ({

@@ -1,0 +1,36 @@
+{
+  "restore": [
+    {
+      "slug": "core"
+    }
+  ],
+  "classic-mode": [
+    {
+      "slug": "settings",
+      "anchor": "classic-data-migration-mode"
+    }
+  ],
+  "principles/macos-27": [
+    {
+      "slug": "datamigrae/container-identity"
+    },
+    {
+      "slug": "macos-27"
+    }
+  ],
+  "archive/data-signing": [
+    {
+      "slug": "datamigrae/resign"
+    }
+  ],
+  "archive/app-strategies": [
+    {
+      "slug": "migration-strategy/portal"
+    }
+  ],
+  "archive/mount-experiments": [
+    {
+      "slug": "research/prelogin-mount"
+    }
+  ]
+}

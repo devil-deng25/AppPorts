@@ -36,6 +36,8 @@ import SponsorList from "./.vitepress/theme/components/SponsorList.vue";
 未提供昵称时，我们不会展示赞助信息；提供昵称但没有链接时，仅展示昵称，不附带跳转链接。
 :::
 
+如需修改赞助名单中的昵称、个人链接或其他展示信息，请联系 [a@shimoko.com](mailto:a@shimoko.com)，并注明原昵称和需要修改的内容。
+
 ## 展示顺序
 
 赞助者按以下规则排序：

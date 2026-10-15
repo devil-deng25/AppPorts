@@ -1,179 +1,40 @@
----
-outline: deep
----
+# 符号链接为什么不总是可用
 
-# 实验记录：沙盒应用 + 符号链接（macOS 27）
+符号链接可以把一个路径指向另一个位置，但不会自动授予应用访问新位置的权限。本次实验中，便签与官方签名的微信都出现了“应用能启动，却读不到外部数据”的情况。
 
-本文是一次**受控实验**的原始记录，面向想核对证据的读者；面向用户的结论见[容器数据、沙盒与签名身份](/datamigrae/container-identity)。实验回答的问题是：
+## 实验条件 {#environment}
 
-> 容器数据被复制到外部卷、原位置留下符号链接之后，**在不重签名**的前提下，沙盒应用能不能读到这些数据？
+实验于 2026 年 9 月 18 日进行，系统为 macOS 27.0（26A428）、Apple Silicon，系统完整性保护开启。外部存储为 APFS。受测应用为系统便签，以及微信 4.1.15（270099）。微信的官方签名样本与本地重签样本分开测试。
 
-结论是**不能**。而且这与外部卷无关——只要目标在容器之外，沙盒就会拒绝。
+## 怎样验证 {#method}
 
-::: tip 一句话结论
-沙盒应用读写容器数据时，内核按**符号链接解析后的真实路径**做沙盒判定。
+1. 保存原数据，选取应用启动时实际读取的子目录。
+2. 分别保留原目录、将数据移到容器内另一位置、移到容器外或外部卷；移动后在原位置留下符号链接。
+3. 启动应用，检查原内容是否出现，并观察系统拒绝访问的日志。
+4. 微信另做签名对照，分别检查官方签名和本地重签的启动与访问结果。
 
-- 指向 `/Volumes/...`（外部卷）→ 拒绝
-- 指向 `~/Desktop/...`（内置卷、容器外）→ 同样拒绝
-- 指向容器内部 → 正常放行
+这里的“读到数据”由应用实际展示的内容判断，不能只凭链接存在或应用进程启动。
 
-因此对沙盒应用来说，「只迁移、不重签名」**不是一个安全选项**，而是「应用能启动、但读不到数据」。
-:::
+## 观察结果 {#results}
 
-## 环境
+| 应用与条件 | 启动 | 原数据访问 |
+| --- | --- | --- |
+| 便签：数据留在原目录 | 成功 | 正常 |
+| 便签：链接到容器内另一位置 | 成功 | 正常 |
+| 便签：链接到本机的容器外位置 | 能启动 | 未读到，出现拒绝日志 |
+| 便签：链接到外部 APFS 卷 | 能启动 | 未读到，出现拒绝日志 |
+| 微信官方签名：数据在本地原位置 | 成功 | 正常 |
+| 微信官方签名：链接到外部卷 | 能启动 | 提示存储权限异常 |
+| 微信本地重签：本地或外部链接数据 | 迅速退出 | 未完成正常访问 |
 
-| 项目 | 值 |
-|------|-----|
-| 系统 | macOS 27.0 (26A428)，Darwin 27.0.0，arm64 (T8132) |
-| SIP | enabled |
-| 外部卷 | `/Volumes/<external-drive>` — `apfs, local, nodev, nosuid, journaled, noowners` |
-| 测试应用 A | 便签 Stickies — `/System/Applications/Stickies.app`，`com.apple.Stickies` |
-| 测试应用 B | 微信 WeChat 4.1.15 (270099) — 开发者签名，非重签名 |
-| 方法 | 符号链接重定向 + `open -a` 启动 + `log stream` 抓沙盒判定 |
+失败时，符号链接可以仍然完好。文件还在与应用能访问文件，是两项不同的检查。
 
-### 测试应用的 entitlements
+## 对使用有什么意义 {#meaning}
 
-便签（`com.apple.Stickies`）——确认是真正的沙盒应用：
+链接迁移适用于许多普通目录，但容器数据还受应用沙盒、签名身份和授权限制。保留原路径中的一个链接，并不足以保证兼容；重签名也没有在这组样本中解决问题。
 
-```xml
-<key>com.apple.security.app-sandbox</key><true/>
-<key>com.apple.security.files.user-selected.read-write</key><true/>
-<key>com.apple.security.print</key><true/>
-<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
-<array><string>/Library/Preferences/widget-com.apple.widget.stickies.plist</string></array>
-```
+AppPorts 因此对符合条件的容器数据采用[挂载迁移](/docs/datamigrae/baseinfo#mount)，并保留真实应用签名。已经使用旧链接方式的用户可查看[经典模式](/docs/classic-mode#transition)。
 
-微信 4.1.15（官方 Developer ID 签名，`Tencent Mobile International Limited (5A4RE8SF68)`）——同样是沙盒应用，**未被重签名**：
+## 结论的范围 {#limits}
 
-```xml
-<key>com.apple.security.app-sandbox</key><true/>
-<key>com.apple.security.application-groups</key><array><string>5A4RE8SF68.com.tencent.xinWeChat</string></array>
-<key>com.apple.security.files.bookmarks.app-scope</key><true/>
-<key>com.apple.security.files.downloads.read-write</key><true/>
-<key>com.apple.security.files.user-selected.read-write</key><true/>
-<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
-<array><string>com.tencent.xinWeChat-spks</string><string>com.tencent.xinWeChat-spki</string></array>
-<key>com.apple.security.temporary-exception.sbpl</key>
-<array><string>(allow network-outbound (literal "/private/var/run/usbmuxd"))</string></array>
-```
-
-两个应用都**没有**任何覆盖任意路径的临时例外：
-
-- `files.user-selected.*` 只对用户在 Open/Save 面板里亲自选中的文件生效，不覆盖固定路径；
-- `files.downloads.read-write` 只覆盖 `~/Downloads`；
-- `temporary-exception.sbpl` 只开放了一个 **network-outbound** 字面量，不涉及文件系统。
-
-## 结果
-
-### 便签（符号链接重定向 `Data/Library/Stickies`）
-
-| 场景 | 符号链接目标 | 应用能否启动 | 能否读到数据 | 沙盒 deny 日志 | 应用是否重建空目录 |
-|------|--------------|:---:|:---:|:---:|:---:|
-| 主实验 | `/Volumes/<external-drive>/sandbox-test/...`（外部卷） | 能 | **否** | 有 | 否 |
-| C1 | `~/Desktop/sandbox-test/...`（内置卷、容器外） | 能 | **否** | 有 | 否 |
-| C2 | 容器内 `Data/tmp/relocated/...` | 能 | 能 | 无 | — |
-| C3 | 无符号链接（原目录） | 能 | 能 | 无 | — |
-
-可观测指标用的是便签的**窗口数量与标题**：原目录里有 2 张便签，能读到时会恢复成 2 个窗口并带真实标题，读不到时只剩 1 个空白「未命名」窗口。
-
-```
-场景                        窗口数  窗口标题
-主实验（/Volumes）            1     未命名              ← 读不到
-C1（~/Desktop）               0     —                   ← 读不到
-C2（容器内）                  2     制作便条！… / 自定便条很简单。…
-C3（阳性对照）                2     制作便条！… / 自定便条很简单。…
-```
-
-三次「符号链接被拒」的场景里，符号链接本身都**完好保留**，应用也没有在本地重建同名目录——它只是读不到、然后按「没有任何便签」继续跑。
-
-### 微信（符号链接重定向 `Data/Documents/xwechat_files/wxid_...`）
-
-| 场景 | 应用签名 | 数据位置 | 应用能否启动 | 能否读到数据 | 日志 |
-|------|----------|----------|:---:|:---:|------|
-| W1 | Ad-hoc 重签名 | 外部卷（符号链接） | 否（约 0.9 s 退出） | 否 | TCC App Data 拒绝 |
-| W2 | 官方签名 | 外部卷（符号链接） | 能 | **否** | 沙盒 `file-read-data` 拒绝 + UI 报错 |
-| W3 | 官方签名 | 本地（阳性对照） | 能 | 能 | 无拒绝 |
-| W4 | Ad-hoc 重签名 | 本地 | 否（秒退） | 否 | TCC App Data 拒绝 |
-
-## 决定性日志原文
-
-### 便签 · 主实验（外置卷）
-
-```
-2026-09-18 06:19:41.380 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-read-data /Volumes/<external-drive>/sandbox-test/com.apple.Stickies/Library-Stickies/.SavedStickiesState
-2026-09-18 06:19:41.468 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-read-data /Volumes/<external-drive>/sandbox-test/com.apple.Stickies/Library-Stickies
-2026-09-18 06:19:43.485 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-write-unlink /Volumes/<external-drive>/sandbox-test/com.apple.Stickies/Library-Stickies/.SavedStickiesState
-```
-
-### 便签 · C1（主目录内的容器外路径）
-
-```
-2026-09-18 06:20:08.519 E  kernel[0:6024f] (Sandbox) Sandbox: Stickies(42084) deny(1) file-read-data /Users/<user>/Desktop/sandbox-test/com.apple.Stickies-Library-Stickies/.SavedStickiesState
-2026-09-18 06:20:08.599 E  kernel[0:6024f] (Sandbox) Sandbox: Stickies(42084) deny(1) file-read-data /Users/<user>/Desktop/sandbox-test/com.apple.Stickies-Library-Stickies
-2026-09-18 06:20:08.599 E  kernel[0:6024f] (Sandbox) Sandbox: Stickies(42084) deny(1) file-write-create /Users/<user>/Desktop/sandbox-test/com.apple.Stickies-Library-Stickies/DB5CDB21-9A90-438C-ACCB-614F1F0018DE.rtfd
-```
-
-C1 与主实验的拒绝形式**完全一致**，说明关键在于「路径在容器之外」，而不是「路径在 `/Volumes`」。
-
-### 微信 · W2（官方签名 + 外置卷）
-
-界面明确报错：
-
-> ⚠️ 存储权限异常
-> 存储位置不能使用，WeChat 将无法使用，请检查此文件夹是否可用。
-
-对应的沙盒日志：
-
-```
-2026-09-18 06:25:26.194 E  kernel[0:5f65e] (Sandbox) WeChat(43498) deny(1) file-read-data /Volumes/<external-drive>/appdisks/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-id>/db_storage/contact/contact.db
-```
-
-微信在**未重签名**的情况下被沙盒拒绝读取自己的通讯录数据库。此时它已经成功启动、显示出账号头像与昵称（这些来自容器内 `all_users/` 的本地文件），但一旦真正去读账号数据目录就失败。
-
-### 微信 · W3（官方签名 + 本地数据，阳性对照）
-
-同一份数据放回容器本地后，微信正常打开全部数据库：
-
-```
-WeChat 46541 <user>  101r  REG  1,14  8450048  99926627 /Users/<user>/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-id>/db_storage/contact/contact.db
-WeChat 46541 <user>   99u  REG  1,14  4194304  99926632 /Users/<user>/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-id>/db_storage/contact/contact.db-wal
-```
-
-聊天列表完整显示，历史记录可读，无任何 `deny`。
-
-### 微信 · W1 / W4（Ad-hoc 重签名）
-
-```
-Failed to match existing code requirement for subject com.tencent.xinWeChat and service kTCCServiceSystemPolicyAppDataDetailed
-sandboxd rejected approval request from WeChat for kTCCServiceSystemPolicyAppData (/Users/<user>/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/net/config.ini): denied
-```
-
-W4 中数据**完全在本地**，日志里也没有任何 `/Volumes` 相关的拒绝——说明重签名导致的失败与数据位置无关，是独立的一条故障链。
-
-## 结论
-
-| | 数据在本地 | 数据在外置卷（符号链接） |
-|---|---|---|
-| **官方签名（沙盒）** | ✅ 正常，聊天记录完整 | ❌ 启动正常，读取被拒（「存储权限异常」） |
-| **Ad-hoc 重签名（非沙盒）** | ❌ TCC App Data 拒绝，秒退 | ❌ TCC App Data 拒绝，秒退 |
-
-三条独立结论：
-
-1. **沙盒应用无法跟随符号链接读到容器外的数据。** 内核按解析后的真实路径判定，`/Volumes` 和 `~/Desktop` 结果相同。符号链接本身不是问题——目标落在容器内时一切正常（C2）。
-2. **重签名会独立地破坏容器归属。** 即使数据完全在本地，Ad-hoc 重签名后的应用也会被 `kTCCServiceSystemPolicyAppData` 拒绝访问自己的容器（W4）。
-3. **「只迁移，不重签名」对沙盒应用不可行。** 它不会让应用崩溃，但会让应用静默读不到数据并给出「存储位置不可用」之类的错误——比直接启动失败更难排查。
-
-### 对 AppPorts 的含义
-
-对 `~/Library/Containers/` 与 `~/Library/Group Containers/` 下的目录：
-
-- **「禁止重签名」不足以解决问题**——不重签名仍然读不到数据；
-- 符号链接迁移对沙盒应用**在机制上不成立**，与 macOS 版本无关（macOS 26 上能「用」，靠的是重签名把沙盒拆掉，而不是符号链接生效）。
-
-基于本实验，AppPorts 1.9.0 起对容器目录只提供[挂载迁移](/datamigrae/mount-migration)；后续的[挂载点实验](/research/sandbox-mountpoint)验证了该方案。
-
-### 本次实验的边界
-
-- 便签是 `/System/Applications` 下的系统应用，位于只读系统卷，AppPorts 本来也不会去迁移它。用它只是为了验证**沙盒机制本身**，结论与具体应用无关。
-- 微信测试用的是从官方渠道重新安装的 `WeChat.app`（Developer ID，未重签名），与 App Store / 官网版本行为一致。
-- 未测试 `~/Library/Group Containers/`，但其路径判定机制与 `Containers` 相同（同样在容器白名单之外）。
+这些结果只代表上述系统、应用版本、受测目录和授权状态。实验没有遍历其他应用的权限例外，也没有证明所有指向容器外的符号链接都会失败。容器内对照通过，也不能说明其中任意目录都能移动，参见[容器结构实验](/docs/research/container-structure)。
