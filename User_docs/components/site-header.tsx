@@ -2,7 +2,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
-import { GitBranch, Heart, Menu } from 'lucide-react';
+import { Heart, Menu } from 'lucide-react';
+import { GitHubIcon } from './github-icon';
 import { SearchTrigger } from 'fumadocs-ui/layouts/shared/slots/search-trigger';
 import { ThemeSwitch } from 'fumadocs-ui/layouts/shared/slots/theme-switch';
 import { Popover, PopoverContent, PopoverTrigger } from 'fumadocs-ui/components/ui/popover';
@@ -19,7 +20,7 @@ export function SiteHeader() {
   return <header className="site-header"><div className="site-header-inner">
     <Link href="/" className="site-brand"><img src="/logo.png" width="28" height="28" alt="" /><span>AppPorts</span><span className="brand-divider">文档</span></Link>
     <nav className="desktop-nav" aria-label="顶部导航">{links.map(({ label, href }) => <Link key={href} href={href} aria-current={active(href) ? 'page' : undefined}>{label}</Link>)}</nav>
-    <div className="header-actions"><Link href="/docs/sponsor" className="header-sponsor"><Heart size={15} />赞助</Link><SearchTrigger /><ThemeSwitch /><a href="https://github.com/wzh4869/AppPorts" aria-label="GitHub 仓库" className="header-github"><GitBranch size={20} /></a>
+    <div className="header-actions"><Link href="/docs/sponsor" className="header-sponsor"><Heart size={15} />赞助</Link><SearchTrigger /><ThemeSwitch /><a href="https://github.com/wzh4869/AppPorts" aria-label="GitHub 仓库" className="header-github"><GitHubIcon size={20} /></a>
       <div className="mobile-site-menu"><Popover open={open} onOpenChange={setOpen}><PopoverTrigger className="header-menu-trigger" aria-label="打开全站菜单"><Menu size={20} /></PopoverTrigger><PopoverContent className="site-menu-content" aria-label="顶部导航">{links.map(({ label, href }) => <Link key={href} href={href} onClick={() => setOpen(false)}>{label}</Link>)}</PopoverContent></Popover></div>
     </div>
   </div></header>;
