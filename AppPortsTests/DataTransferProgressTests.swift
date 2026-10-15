@@ -149,6 +149,56 @@ struct DataTransferProgressTests {
         #expect(DataTransferSession.progress == nil)
     }
 
+    @Test func nestedAsyncMeasurementsRestoreTheirParentPhase() async throws {
+        let value = try await DataTransferSession.run {
+            let session = try #require(DataTransferSession.current)
+            #expect(DataTransferSession.isMeasuring(.preparation))
+            let result = await DataTransferSession.measure(.copy) {
+                await Task.yield()
+                #expect(DataTransferSession.isMeasuring(.copy))
+                await DataTransferSession.measure(.verification) {
+                    await Task.yield()
+                    #expect(DataTransferSession.isMeasuring(.verification))
+                    #expect(DataTransferSession.current === session)
+                }
+                #expect(DataTransferSession.isMeasuring(.copy))
+                return 42
+            }
+            #expect(DataTransferSession.isMeasuring(.preparation))
+            return result
+        }
+        #expect(value == 42)
+        #expect(DataTransferSession.current == nil)
+        #expect(!DataTransferSession.Phase.allCases.contains { DataTransferSession.isMeasuring($0) })
+    }
+
+    @Test func cancelledAsyncMeasurementRestoresPhaseAndReleasesSession() async {
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            do {
+                try await DataTransferSession.run {
+                    do {
+                        try await DataTransferSession.measure(.copy) {
+                            await Task.yield()
+                            #expect(DataTransferSession.isMeasuring(.copy))
+                            try Task.checkCancellation()
+                        }
+                    } catch {
+                        #expect(DataTransferSession.isMeasuring(.preparation))
+                        throw error
+                    }
+                }
+                Issue.record("Expected cancellation")
+            } catch {
+                #expect(error is CancellationError)
+            }
+            #expect(DataTransferSession.current == nil)
+            #expect(!DataTransferSession.Phase.allCases.contains { DataTransferSession.isMeasuring($0) })
+        }
+        await task.value
+        #expect(DataTransferSession.current == nil)
+    }
+
     @Test func maintenanceCopyReportsBytesWithoutACallerCallback() async throws {
         let root = try fixture()
         let destination = root.deletingLastPathComponent().appendingPathComponent("ProgressCopy-\(UUID().uuidString)")

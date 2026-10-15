@@ -374,7 +374,10 @@ struct ContentView: View {
                 }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+        .onReceive(
+            NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+                .receive(on: RunLoop.main)
+        ) { _ in
             let latest = UserDefaults.standard.stringArray(forKey: "customLocalScanPaths") ?? []
             guard isVisible, latest != customLocalScanPaths else { return }
             customLocalScanPaths = latest

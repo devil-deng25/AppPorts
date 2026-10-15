@@ -46,7 +46,7 @@ final class DataTransferSession: @unchecked Sendable {
         let start = ProcessInfo.processInfo.systemUptime
         let parent = phase
         defer { current?.record(next, elapsed: ProcessInfo.processInfo.systemUptime - start, parent: parent) }
-        return try await $phase.withValue(next, operation: body)
+        return try await $phase.withValue(next) { try await body() }
     }
 
     private static func present(_ phase: Phase) {

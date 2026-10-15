@@ -35,6 +35,8 @@ Status: implemented
 
 `DataTransferProgressTests` 验证已知与未知复制总量、零字节文件、阶段切换、无活动提示、速率过期、遍历计数及操作隔离；临时数据真实复制、核验和清理后，阶段与内容符合预期。`OperationMaintenanceProgressTests` 使用可控任务验证前台接入后台工作时共享观察器，后续操作得到新观察器。
 
+异步阶段测量以直接等待的闭包调用 TaskLocal，沿用调用方的任务与取消状态；不为测量创建新任务。Xcode 27 回归覆盖嵌套阶段的父状态恢复、同一会话与返回值传递，以及真实任务取消后的异常传播和绑定清理。
+
 通过 `script/isolate_test_host.py` 创建独立测试宿主，再用 `xcodebuild test-without-building` 运行相关目录迁移、应用事务、复制、挂载恢复、准备恢复、同步和资源叉测试。回滚用例将故障样本从已经支持的 FIFO 改成目录外硬链接，继续验证原有所有权回滚断言；修正后的挂载迁移套件通过。
 
 `LocalizationAuditTests` 通过；23 条新文案覆盖全部 22 种语言，原有 1273 条文案条目保持一致。`MigrationSafetyRenderTests/testRenderDataTransferProgressStages` 渲染准备、扫描、复制、校验、清理和等待的 24 个组合，覆盖中文、英文、长路径与明暗模式。Release `xcodebuild clean build` 通过。
