@@ -10,7 +10,7 @@ const links = [
   { label: '使用指南', href: '/docs/faststart' },
   { label: '更新日志', href: '/docs/changelog' },
   { label: '官网', href: 'https://appports.shimoko.com' },
-  { label: '下载 AppPorts', href: 'https://github.com/wzh4869/AppPorts/releases' },
+  { label: '下载 AppPorts', href: 'https://file.shimoko.com/AppPorts' },
 ];
 export function SiteHeader() {
   const pathname = usePathname();
