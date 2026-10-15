@@ -13,7 +13,8 @@ const input = path.join(root, 'docs');
 const output = path.join(root, '.content/docs');
 const parser = unified().use(remarkParse).use(remarkGfm);
 const writer = unified().use(remarkStringify).use(remarkGfm).use(remarkMdx);
-const locales = new Set(['en', 'de', 'es', 'fr', 'ja', 'ko', 'zh-Hant']);
+const languageLabels = { en: 'English', 'zh-Hant': '繁體中文', ja: '日本語', ko: '한국어', de: 'Deutsch', fr: 'Français', es: 'Español' };
+const locales = new Set(Object.keys(languageLabels));
 export const navigation = {
   '': { title: 'AppPorts 文档', pages: ['---指南---', 'AppPorts', 'faststart', 'core', 'badges', 'datamigrae', 'migration-strategy', 'settings', 'storage-guide', 'why-apfs', 'macos-27', 'limitations', 'troubleshooting', 'faq', 'logging', 'research', 'changelog', 'sponsor', 'contributing', 'licenses', 'privacy'] },
   datamigrae: { title: '数据迁移', pages: ['baseinfo', 'tools', 'operation', 'mount-migration', 'resign', 'container-identity'] },
@@ -148,6 +149,10 @@ if (process.argv[1] === import.meta.filename) {
     await writeFile(path.join(output, folder, 'meta.json'), JSON.stringify(meta, null, 2));
   }
   await writeFile(path.join(root, '.content/manifest.json'), JSON.stringify(manifest, null, 2));
+  const languages = await Promise.all(Object.entries(languageLabels).map(async ([lang, label]) => ({
+    lang, label, pages: (await walk(path.join(input, lang))).map(file => file.replace(/\.md$/, '')),
+  })));
+  await writeFile(path.join(root, '.content/languages.json'), JSON.stringify(languages, null, 2));
   await mkdir(path.join(root, 'public'), { recursive: true });
   await cp(path.join(input, 'public'), path.join(root, 'public'), { recursive: true });
   await cp(path.join(root, '../sponsors.json'), path.join(root, 'public/sponsors.json'));
