@@ -26,7 +26,7 @@ outline: deep
 |------|-----|
 | 系统 | macOS 27.0 (26A428)，Darwin 27.0.0，arm64 (T8132) |
 | SIP | enabled |
-| 外部卷 | `/Volumes/hano` — `apfs, local, nodev, nosuid, journaled, noowners` |
+| 外部卷 | `/Volumes/<external-drive>` — `apfs, local, nodev, nosuid, journaled, noowners` |
 | 测试应用 A | 便签 Stickies — `/System/Applications/Stickies.app`，`com.apple.Stickies` |
 | 测试应用 B | 微信 WeChat 4.1.15 (270099) — 开发者签名，非重签名 |
 | 方法 | 符号链接重定向 + `open -a` 启动 + `log stream` 抓沙盒判定 |
@@ -69,7 +69,7 @@ outline: deep
 
 | 场景 | 符号链接目标 | 应用能否启动 | 能否读到数据 | 沙盒 deny 日志 | 应用是否重建空目录 |
 |------|--------------|:---:|:---:|:---:|:---:|
-| 主实验 | `/Volumes/hano/sandbox-test/...`（外部卷） | 能 | **否** | 有 | 否 |
+| 主实验 | `/Volumes/<external-drive>/sandbox-test/...`（外部卷） | 能 | **否** | 有 | 否 |
 | C1 | `~/Desktop/sandbox-test/...`（内置卷、容器外） | 能 | **否** | 有 | 否 |
 | C2 | 容器内 `Data/tmp/relocated/...` | 能 | 能 | 无 | — |
 | C3 | 无符号链接（原目录） | 能 | 能 | 无 | — |
@@ -100,9 +100,9 @@ C3（阳性对照）                2     制作便条！… / 自定便条很�
 ### 便签 · 主实验（外置卷）
 
 ```
-2026-09-18 06:19:41.380 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-read-data /Volumes/hano/sandbox-test/com.apple.Stickies/Library-Stickies/.SavedStickiesState
-2026-09-18 06:19:41.468 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-read-data /Volumes/hano/sandbox-test/com.apple.Stickies/Library-Stickies
-2026-09-18 06:19:43.485 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-write-unlink /Volumes/hano/sandbox-test/com.apple.Stickies/Library-Stickies/.SavedStickiesState
+2026-09-18 06:19:41.380 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-read-data /Volumes/<external-drive>/sandbox-test/com.apple.Stickies/Library-Stickies/.SavedStickiesState
+2026-09-18 06:19:41.468 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-read-data /Volumes/<external-drive>/sandbox-test/com.apple.Stickies/Library-Stickies
+2026-09-18 06:19:43.485 E  kernel[0:5f489] (Sandbox) Sandbox: Stickies(41548) deny(1) file-write-unlink /Volumes/<external-drive>/sandbox-test/com.apple.Stickies/Library-Stickies/.SavedStickiesState
 ```
 
 ### 便签 · C1（主目录内的容器外路径）
@@ -125,7 +125,7 @@ C1 与主实验的拒绝形式**完全一致**，说明关键在于「路径在�
 对应的沙盒日志：
 
 ```
-2026-09-18 06:25:26.194 E  kernel[0:5f65e] (Sandbox) WeChat(43498) deny(1) file-read-data /Volumes/hano/appdisks/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_1zxh3e4ctfeh22_9c44/db_storage/contact/contact.db
+2026-09-18 06:25:26.194 E  kernel[0:5f65e] (Sandbox) WeChat(43498) deny(1) file-read-data /Volumes/<external-drive>/appdisks/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-id>/db_storage/contact/contact.db
 ```
 
 微信在**未重签名**的情况下被沙盒拒绝读取自己的通讯录数据库。此时它已经成功启动、显示出账号头像与昵称（这些来自容器内 `all_users/` 的本地文件），但一旦真正去读账号数据目录就失败。
@@ -135,8 +135,8 @@ C1 与主实验的拒绝形式**完全一致**，说明关键在于「路径在�
 同一份数据放回容器本地后，微信正常打开全部数据库：
 
 ```
-WeChat 46541 wangheng  101r  REG  1,14  8450048  99926627 /Users/<user>/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_1zxh3e4ctfeh22_9c44/db_storage/contact/contact.db
-WeChat 46541 wangheng   99u  REG  1,14  4194304  99926632 /Users/<user>/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_1zxh3e4ctfeh22_9c44/db_storage/contact/contact.db-wal
+WeChat 46541 <user>  101r  REG  1,14  8450048  99926627 /Users/<user>/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-id>/db_storage/contact/contact.db
+WeChat 46541 <user>   99u  REG  1,14  4194304  99926632 /Users/<user>/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-id>/db_storage/contact/contact.db-wal
 ```
 
 聊天列表完整显示，历史记录可读，无任何 `deny`。

@@ -24,7 +24,7 @@ outline: deep
 | 项目 | 值 |
 |------|-----|
 | 系统 | macOS 27.0 (26A428)，Darwin 27.0.0，arm64 (T8132) |
-| 外置卷 | `/Volumes/hano` — `apfs, local, nodev, nosuid, journaled, noowners`（APFS，容器 `disk7`） |
+| 外置卷 | `/Volumes/<external-drive>` — `apfs, local, nodev, nosuid, journaled, noowners`（APFS，容器 `disk7`） |
 | 测试卷 | `diskutil apfs addVolume disk7 APFS ...` 新建的临时卷（无需 root） |
 | 测试应用 A | 便签 Stickies — `/System/Applications/Stickies.app`（平台应用） |
 | 测试应用 B | 微信 WeChat 4.1.15 — 官方 Developer ID 签名，**未重签名** |

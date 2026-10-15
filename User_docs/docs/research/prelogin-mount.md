@@ -24,8 +24,8 @@ outline: deep
 |------|-----|
 | 系统 | macOS 27.0 (26A428)，Darwin 27.0.0，arm64 (T8132) |
 | FileVault | **已开启**（`fdesetup status` → `FileVault is On.`；Data 卷 `FileVault: Yes (Unlocked)`） |
-| 外置盘 | `/Volumes/hano` — APFS 容器 `disk7`（未加密） |
-| 容器卷 1 | `disk7s2` / `BEAF241C-…` → `…/Data/Documents/xwechat_files/wxid_1zxh3e4ctfeh22_9c44` |
+| 外置盘 | `/Volumes/<external-drive>` — APFS 容器 `disk7`（未加密） |
+| 容器卷 1 | `disk7s2` / `BEAF241C-…` → `…/Data/Documents/xwechat_files/<account-id>` |
 | 容器卷 2 | `disk7s3` / `FD3DDDE6-…` → `…/Data/Library/Application Support/com.tencent.xinWeChat` |
 | TCC 现有授权 | `com.shimoko.AppPorts` → `kTCCServiceSystemPolicyAllFiles`（FDA，已允许） |
 | 全程 | 没有执行任何 `codesign --sign`，没有改动挂载记录 |
@@ -39,7 +39,7 @@ outline: deep
 [探测日志] === 触发 2026-09-22 02:45:09 ===
 [探测日志] uid=0  launchctl-manager=System
 [探测日志] --- 目标路径可达性 ---
-[探测日志] drwxr-xr-x@ 2 wangheng  staff  64 Sep 22 02:44 …/ap-probe-target
+[探测日志] drwxr-xr-x@ 2 <user>  staff  64 Sep 22 02:44 …/ap-probe-target
 [探测日志] --- 执行 diskutil mount -mountPoint ---
 [探测日志] Volume on disk5s1 failed to mount
 [探测日志] diskutil-exit=1
@@ -53,8 +53,8 @@ outline: deep
 2026-09-22 02:45:10.080 Df tccd … one instance of XPC forwardMessage … (service=kTCCServiceSystemPolicyAppDataDetailed, requestor=com.apple.sandboxd, target_pid=9204, target_id=com.apple.sh, auid=0)
 2026-09-22 02:45:10.082 Df sandboxd[429:190b1] [com.apple.sandbox:sandcastle] checking kTCCServiceSystemPolicyAppDataDetailed on path "<private>", user interaction not allowed
 2026-09-22 02:45:10.082 Df sandboxd[429:190b1] [com.apple.sandbox:sandcastle] TCC denied kTCCServiceSystemPolicyAppDataDetailed for <private>
-2026-09-22 02:45:10.082 E  kernel[0:18c57] (Sandbox) System Policy: diskutil(9215) deny(1) file-mount /Users/wangheng/Library/Containers/com.apple.TextEdit/Data/ap-probe-target
-2026-09-22 02:45:10.165 E  kernel[0:1943d] (Sandbox) System Policy: ls(9223) deny(1) file-read-data /Users/wangheng/Library/Containers/com.apple.TextEdit/Data/ap-probe-target
+2026-09-22 02:45:10.082 E  kernel[0:18c57] (Sandbox) System Policy: diskutil(9215) deny(1) file-mount /Users/<user>/Library/Containers/com.apple.TextEdit/Data/ap-probe-target
+2026-09-22 02:45:10.165 E  kernel[0:1943d] (Sandbox) System Policy: ls(9223) deny(1) file-read-data /Users/<user>/Library/Containers/com.apple.TextEdit/Data/ap-probe-target
 ```
 
 注意 `auid=0`（root）也一样被拒，而且 `user interaction not allowed` —— 守护进程没有会话，系统连问都不问，直接拒。
@@ -64,9 +64,9 @@ outline: deep
 同样的 root 身份，但由**用户会话里的终端**提权执行：
 
 ```console
-$ sudo diskutil mount -mountPoint /Users/wangheng/Library/Containers/com.apple.TextEdit/Data/ap-probe-target /dev/disk5s1
+$ sudo diskutil mount -mountPoint /Users/<user>/Library/Containers/com.apple.TextEdit/Data/ap-probe-target /dev/disk5s1
 Volume APProbe on /dev/disk5s1 mounted        # ← 成功
-$ sudo ls -la /Users/wangheng/Library/Containers/com.apple.TextEdit/Data/ap-probe-target
+$ sudo ls -la /Users/<user>/Library/Containers/com.apple.TextEdit/Data/ap-probe-target
 total 0                                        # ← 能读
 ```
 
@@ -90,7 +90,7 @@ $ diskutil apfs list | grep -A2 "disk2s5"
 |   |   FileVault:                 Yes (Unlocked)      # ← 开机时是锁着的，"Unlocked" 是登录后
 ```
 
-Data 卷上才存着 `/Users/wangheng`。登录前它没解锁，`~/Library/Containers/...` 不存在，**任何进程（root 也好、守护进程也好）都无法把卷挂到一条还不存在的路径上**。所以 A 方案的时间下限就是「用户解锁那一刻」，不是「开机那一刻」。
+Data 卷上才存着 `/Users/<user>`。登录前它没解锁，`~/Library/Containers/...` 不存在，**任何进程（root 也好、守护进程也好）都无法把卷挂到一条还不存在的路径上**。所以 A 方案的时间下限就是「用户解锁那一刻」，不是「开机那一刻」。
 
 ## 探测 4：守护进程只做「喊人」是可行的
 
@@ -107,7 +107,7 @@ AppPorts 自己的日志里立刻出现一次代理运行：
 
 ```text
 [2026-09-22 02:46:12] [INFO] [session:CA65AB0F] [pid:9519] 容器卷自动挂载代理启动
-[2026-09-22 02:46:12] [INFO] [session:CA65AB0F] [pid:9519] 自动挂载代理结果   mount_point: …/wxid_1zxh3e4ctfeh22_9c44   state: alreadyMounted
+[2026-09-22 02:46:12] [INFO] [session:CA65AB0F] [pid:9519] 自动挂载代理结果   mount_point: …/<account-id>   state: alreadyMounted
 [2026-09-22 02:46:12] [INFO] [session:CA65AB0F] [pid:9519] 自动挂载代理结果   mount_point: …/Application Support/com.tencent.xinWeChat   state: alreadyMounted
 [2026-09-22 02:46:12] [INFO] [session:CA65AB0F] [pid:9519] 容器卷自动挂载代理退出
 ```
@@ -252,7 +252,7 @@ event triggers = {
 }
 ```
 
-`stream = com.apple.fsevents.matching` 意味着 `/Volumes` **子树里**任何文件变动都会触发代理 —— 包括外置盘 `/Volumes/hano` 上任何一次写入。实测：一段 5 分钟里代理被拉起 4 次（06:44:41、06:45:29、06:48:03、06:48:23），而同一时间用 kqueue 监听 `/Volumes` 目录本身是 **0 次变更**；另一段 4 分钟里两边都是 0。这些空跑全部是 `alreadyMounted` 直接返回，不调 `diskutil`、不动磁盘。空跑本身留着不管 —— 「插盘后自动重挂」正靠它 —— 但日志做了压缩：**一轮空跑只写 3 行**
+`stream = com.apple.fsevents.matching` 意味着 `/Volumes` **子树里**任何文件变动都会触发代理 —— 包括外置盘 `/Volumes/<external-drive>` 上任何一次写入。实测：一段 5 分钟里代理被拉起 4 次（06:44:41、06:45:29、06:48:03、06:48:23），而同一时间用 kqueue 监听 `/Volumes` 目录本身是 **0 次变更**；另一段 4 分钟里两边都是 0。这些空跑全部是 `alreadyMounted` 直接返回，不调 `diskutil`、不动磁盘。空跑本身留着不管 —— 「插盘后自动重挂」正靠它 —— 但日志做了压缩：**一轮空跑只写 3 行**
 
 ```
 容器卷自动挂载代理启动
@@ -284,7 +284,7 @@ Volume APProbeVol on /dev/disk7s1 mounted          # exit=0
 $ diskutil info -plist /dev/disk7s1 | plutil -extract MountPoint raw -
 /Volumes/APProbeVol                               # 挂载点没变
 $ mount | grep APProbeVol
-/dev/disk7s1 on /Volumes/APProbeVol (apfs, local, nodev, nosuid, journaled, noowners, mounted by wangheng)
+/dev/disk7s1 on /Volumes/APProbeVol (apfs, local, nodev, nosuid, journaled, noowners, mounted by <user>)
 ```
 
 顺带确认了一件事：校验逻辑本身没问题，判的是实话 —— 它发现了卷不在目标路径上。缺的是**发现之后要接着重试**，而不是收工。
