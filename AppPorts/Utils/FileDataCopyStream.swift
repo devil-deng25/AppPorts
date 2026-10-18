@@ -20,13 +20,20 @@ struct FileDataCopyStream {
     private var finished = false
     private(set) var usesExtentFallback = false
 
+    /// A transparently compressed file (UF_COMPRESSED) stores a compressed
+    /// data stream, and SEEK_DATA/SEEK_HOLE describe those physical extents.
+    /// Reading them positionally hands back compressed bytes, so the logical
+    /// content never arrives and verification fails. Such files take the plain
+    /// sequential path, which decodes on read like any ordinary read(2).
     init(from source: Int32, to destination: Int32, size: Int64, path: String,
-         extentSeek: @escaping ExtentSeek = { lseek($0, $1, $2) }) {
+         extentSeek: @escaping ExtentSeek = { lseek($0, $1, $2) },
+         isCompressed: Bool = false) {
         self.source = source
         self.destination = destination
         self.size = size
         self.path = path
         self.extentSeek = extentSeek
+        usesExtentFallback = isCompressed
         buffer = [UInt8](repeating: 0, count: max(1, min(Self.bufferByteCount, Int(clamping: size))))
     }
 

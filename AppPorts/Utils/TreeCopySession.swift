@@ -755,6 +755,9 @@ actor TreeCopySession {
         try assertStable(before, try status(fd), path: path)
         DataTransferSession.current?.didReadContent(bytes: (kind == .file ? before.st_size : 0) + (resourceFork?.size ?? 0))
         return TreeCopySnapshot.Entry(path: path, kind: kind, identity: identity(before), mode: before.st_mode & 0o7777,
+                                      // `UF_COMPRESSED` is storage detail, not content: the
+                                      // destination is written uncompressed, so replaying it
+                                      // would both fail to apply and break verification.
                                       uid: before.st_uid, gid: before.st_gid, flags: before.st_flags & UInt32(UF_HIDDEN | UF_NODUMP),
                                       birthTime: timestamp(before.st_birthtimespec), modificationTime: timestamp(before.st_mtimespec),
                                       extendedAttributes: attributes, resourceFork: resourceFork, acl: acl, size: kind == .file ? before.st_size : 0,
@@ -861,7 +864,12 @@ actor TreeCopySession {
     nonisolated private static func copyData(from source: Int32, to destination: Int32, size: Int64, path: String,
                                            extentSeek: @escaping ExtentSeek,
                                            progress: @Sendable (Int64) async -> Void) async throws {
-        var stream = FileDataCopyStream(from: source, to: destination, size: size, path: path, extentSeek: extentSeek)
+        // Pass the source's compression state so the stream decodes instead of
+        // copying physical extents (see FileDataCopyStream.init).
+        var info = stat()
+        let compressed = fstat(source, &info) == 0 && info.st_flags & UInt32(UF_COMPRESSED) != 0
+        var stream = FileDataCopyStream(from: source, to: destination, size: size, path: path,
+                                        extentSeek: extentSeek, isCompressed: compressed)
         while let offset = try stream.copyNextChunk() {
             // Preserve the verified data copier's existing progress behavior:
             // fallback files yield between chunks; native extents report once
@@ -1078,9 +1086,13 @@ actor TreeCopySession {
     nonisolated private static func validateFlags(_ value: stat, path: String) throws {
         // Validate before opening: opening a dataless item can hydrate it, and
         // opening an unsupported compression representation can alter flags.
-        // Compressed files fail closed until logical resource-fork handling is
-        // independently verified. Physical compression is not copied blindly.
-        let supported = UInt32(UF_HIDDEN | UF_NODUMP)
+        // `UF_COMPRESSED` is accepted: macOS compresses installed files on its
+        // own (App Store executables, idle binaries), and a decmpfs stream is
+        // decoded by an ordinary read. The data stream below reads such files
+        // sequentially instead of trusting physical extents, and the flag is not
+        // replayed, so the copy is stored as its logical bytes. Every other flag
+        // still fails closed.
+        let supported = UInt32(UF_HIDDEN | UF_NODUMP | UF_COMPRESSED)
         guard value.st_flags & ~supported == 0 else { throw TreeCopyError.unsupportedMetadata(path) }
     }
     nonisolated private static func contains(_ root: String, _ path: String) -> Bool { path == root || path.hasPrefix(root == "/" ? "/" : root + "/") }
