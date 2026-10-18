@@ -656,10 +656,28 @@ struct AppMigrationService {
             guard case .terminal(let reason) = retryDisposition(for: record), !record.isSwitchComplete else { continue }
             do {
                 guard try transferStore.archive(record.operationID) != nil else { continue }
+                // The diagnostic package deliberately ships no record files, so
+                // the facts that explain *why* the record could not advance have
+                // to travel in the log. Without them the report only carries the
+                // conclusion ("manifest missing") and not the evidence.
                 AppLogger.shared.logContext("应用位置记录已自动收束，保留所有副本",
                     details: [("operation_id", record.operationID.uuidString), ("app", record.appName),
                               ("direction", record.direction.rawValue), ("phase", record.phase.rawValue),
-                              ("reason", reason), ("retained", record.unclaimedPaths.joined(separator: "\n"))],
+                              ("reason", reason),
+                              ("switch_complete", String(record.isSwitchComplete)),
+                              ("has_source_baseline", String(record.hasSourceBaseline)),
+                              ("has_candidate_baseline", String(record.hasCandidateBaseline)),
+                              ("has_existing_baseline", String(record.hasExistingDestinationBaseline)),
+                              ("existing_destination", String(record.existingDestinationIdentity != nil)),
+                              ("cleanup_items", "total=\(record.cleanupItems.count) "
+                                  + "incomplete=\(record.cleanupItems.filter { !$0.completed }.count)"),
+                              ("legacy_portals", "total=\(record.legacyPortals.count) "
+                                  + "unretired=\(record.legacyPortals.filter { !$0.retired }.count)"),
+                              ("signature_facts_committed", String(record.signatureFactsCommitted)),
+                              ("destination_protected", String(record.destinationProtected)),
+                              ("unclaimed_paths", String(record.unclaimedPaths.count)),
+                              ("source_path", record.sourcePath),
+                              ("destination_path", record.activeDestinationPath)],
                     level: "WARN")
                 notes.append(record.appName + "：" + reason)
             } catch {
