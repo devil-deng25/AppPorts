@@ -853,6 +853,7 @@ struct ContentView: View {
             }
             .buttonStyle(.borderless)
             .disabled(operationState.isBusy || externalDriveURL == nil)
+
         }
 
         // App Store Settings Button（始终显示）
