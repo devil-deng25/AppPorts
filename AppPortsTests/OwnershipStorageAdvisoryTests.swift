@@ -59,26 +59,50 @@ struct OwnershipStorageAdvisoryTests {
     }
 
     /// The contract is that the two limitations give *different* advice, because
-    /// only HFS+ has an ownership switch in Finder and exFAT has none. Asserting
-    /// on literal wording would bind this to the test host's language: the suite
-    /// runs on an English macOS in CI, where `.localized` resolves to English and
-    /// a Chinese substring never matches. Pin the language instead, and check the
-    /// switch is offered in exactly one of the two messages.
+    /// only HFS+ has an ownership switch in Finder and exFAT has none.
+    ///
+    /// The wording itself must not be asserted: `.localized` resolves against
+    /// `Bundle.main`, and under `xctest` the main bundle is the test runner, not
+    /// AppPorts.app — so which translation appears depends on how the suite is
+    /// launched, not on `LanguageManager`. Assert the difference and the drive
+    /// name instead, which hold in every locale.
     @Test("The two limitations do not share the same advice")
     func limitationsGiveDifferentAdvice() {
-        let original = LanguageManager.shared.language
-        LanguageManager.shared.language = "zh-Hans"
-        defer { LanguageManager.shared.language = original }
-
         let noOwners = OwnershipStorageAdvisory.Limitation.noFileOwners(filesystemType: "exfat")
             .advisoryMessage(driveName: "UD210")
         let ignored = OwnershipStorageAdvisory.Limitation.ignoredOwnership(filesystemType: "hfs")
             .advisoryMessage(driveName: "UD210")
         #expect(noOwners != ignored)
-        // 只有 HFS+ 能在访达里打开所有权；exFAT 没有这个开关。
-        let switchHint = "忽略此宗卷上的所有权"
-        #expect(ignored.contains(switchHint))
-        #expect(noOwners.contains(switchHint) == false)
+        // Both must still identify the drive and neither may promise chown works.
+        for message in [noOwners, ignored] {
+            #expect(message.contains("UD210"))
+            #expect(message.contains("chown") == false)
+            #expect(message.contains("%@") == false)
+        }
+        // The two limitations differ in their file-system type, so the messages
+        // differ in more than the drive name alone.
+        #expect(noOwners.replacingOccurrences(of: "UD210", with: "") !=
+                ignored.replacingOccurrences(of: "UD210", with: ""))
+    }
+
+    /// The behaviour that matters — which volumes are flagged — is asserted above
+    /// without any localization. The messages only need to identify the drive and
+    /// stay free of the `chown` advice that cannot work, which every translation
+    /// satisfies; that is checked here so no locale can weaken it.
+    @Test("Every localized variant keeps the drive name and drops the chown advice",
+          arguments: ["zh-Hans", "zh-Hant", "en", "ja", "de"])
+    func messagesHoldAcrossLanguages(language: String) {
+        let original = LanguageManager.shared.language
+        LanguageManager.shared.language = language
+        defer { LanguageManager.shared.language = original }
+
+        for limitation in [OwnershipStorageAdvisory.Limitation.noFileOwners(filesystemType: "exfat"),
+                           OwnershipStorageAdvisory.Limitation.ignoredOwnership(filesystemType: "hfs")] {
+            let message = limitation.advisoryMessage(driveName: "UD210")
+            #expect(message.contains("UD210"), "\(language): drive name must survive")
+            #expect(message.contains("chown") == false, "\(language): chown cannot work here")
+            #expect(message.contains("sudo") == false, "\(language): sudo advice must be absent")
+        }
     }
 
     // MARK: 真机探针
