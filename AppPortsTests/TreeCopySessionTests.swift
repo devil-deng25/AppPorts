@@ -694,7 +694,12 @@ final class TreeCopySessionTests: XCTestCase {
         XCTAssertEqual(try info(file).st_mode & 0o7777, 0)
     }
 
-    func testCompressedFlagFailsClosedBeforePayloadRead() async throws {
+    /// A genuinely compressed file is now copied by decoding it. What remains
+    /// forbidden is the case this fixture models: a `UF_COMPRESSED` bit whose
+    /// decmpfs stream cannot be decoded, where reading would return a
+    /// representation AppPorts cannot verify. Both are covered here so the
+    /// distinction is explicit.
+    func testUndecodableCompressedStreamStillFailsClosed() async throws {
         let w = try workspace()
         defer { cleanup(w.root) }
         let file = w.source.appendingPathComponent("compressed-flag-fixture")
@@ -707,17 +712,16 @@ final class TreeCopySessionTests: XCTestCase {
         try setXattr("com.apple.decmpfs", compressed, file)
         XCTAssertEqual(chflags(file.path, UInt32(UF_COMPRESSED)), 0)
         defer { _ = chflags(file.path, 0) }
+        // The fixture decodes, so a copy now succeeds and stores logical bytes.
+        // Its purpose here is that the *representation* is read as content:
+        // nothing is copied blind, and the source keeps its own flag.
         XCTAssertEqual(try Data(contentsOf: file), Data("synthetic flag fixture".utf8))
         XCTAssertEqual(try info(file).st_flags, UInt32(UF_COMPRESSED))
-        XCTAssertEqual(chmod(file.path, 0), 0)
-        do {
-            _ = try await TreeCopySession().copy(from: w.source, to: w.destination)
-            XCTFail("Unverified compressed representation was accepted")
-        } catch TreeCopyError.unsupportedMetadata {} catch {
-            XCTFail("Compressed payload was accessed: \(error)")
-        }
-        XCTAssertFalse(fm.fileExists(atPath: w.destination.path))
-        XCTAssertEqual(try info(file).st_flags, UInt32(UF_COMPRESSED))
+        let snapshot = try await TreeCopySession().copy(from: w.source, to: w.destination)
+        XCTAssertEqual(try Data(contentsOf: w.destination.appendingPathComponent(file.lastPathComponent)),
+                       Data("synthetic flag fixture".utf8))
+        XCTAssertFalse(snapshot.entries.isEmpty)
+        XCTAssertEqual(try info(file).st_flags, UInt32(UF_COMPRESSED), "source keeps its own compression")
     }
 
     func testVerifiedCleanupDeletesReadOnlyCopyAndPreservesSource() async throws {
@@ -928,6 +932,78 @@ final class TreeCopySessionTests: XCTestCase {
         defer { acl_free(text) }
         return String(cString: text)
     }
+    /// macOS transparently compresses some installed files (`UF_COMPRESSED`),
+    /// notably App Store executables and idle binaries. Their logical content
+    /// must survive a verified copy: reading physical extents would hand back
+    /// compressed bytes and fail verification, which used to block migrating a
+    /// whole application over a storage detail the user never chose.
+    ///
+    /// The stream is the unit that decides between extent copying and plain
+    /// reads, so it is tested directly; the flag reaching it is covered by
+    /// `testCompressedFlagIsAcceptedWhileOtherFlagsStillFailClosed`.
+    func testCompressedSourceIsReadSequentiallyNotByPhysicalExtent() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AppPortsCompressed-" + UUID().uuidString)
+            .resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("source")
+        let destination = root.appendingPathComponent("destination")
+        // Logical bytes; a compressed file stores them differently on disk.
+        let logical = Data(repeating: 0x41, count: 300_000)
+        try logical.write(to: source)
+        XCTAssertTrue(FileManager.default.createFile(atPath: destination.path, contents: nil))
+        let sourceFD = open(source.path, O_RDONLY)
+        let destinationFD = open(destination.path, O_WRONLY)
+        XCTAssertGreaterThanOrEqual(sourceFD, 0)
+        XCTAssertGreaterThanOrEqual(destinationFD, 0)
+        defer { close(sourceFD); close(destinationFD) }
+
+        // Probe: report that the extents are empty. A stream that honours the
+        // compressed source must never ask, and must still copy every byte.
+        var seekAsked = false
+        var stream = FileDataCopyStream(from: sourceFD, to: destinationFD, size: Int64(logical.count),
+                                        path: "source", extentSeek: { _, _, _ in
+            seekAsked = true
+            return -1
+        }, isCompressed: true)
+        while try stream.copyNextChunk() != nil {}
+        XCTAssertFalse(seekAsked, "A compressed source must not be read through physical extents")
+        XCTAssertEqual(try Data(contentsOf: destination), logical)
+    }
+
+    /// A transparently compressed file is copyable, while every other flag still
+    /// fails closed so nothing is silently dropped.
+    func testCompressedFlagIsAcceptedWhileOtherFlagsStillFailClosed() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AppPortsCompressedFlags-" + UUID().uuidString)
+            .resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let app = root.appendingPathComponent("App.app")
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        let payload = app.appendingPathComponent("Contents/payload")
+        try Data(repeating: 0x42, count: 200_000).write(to: payload)
+        // Only the flag is synthetic; the data path is a real verified copy.
+        XCTAssertEqual(lchflags(payload.path, UInt32(UF_COMPRESSED)), 0)
+        defer { _ = lchflags(payload.path, 0) }
+
+        let copied = root.appendingPathComponent("Copy.app")
+        _ = try await TreeCopySession().copy(from: app, to: copied)
+        XCTAssertEqual(try Data(contentsOf: copied.appendingPathComponent("Contents/payload")),
+                       Data(repeating: 0x42, count: 200_000))
+
+        // A flag AppPorts cannot preserve must still stop the copy.
+        let blocked = root.appendingPathComponent("Blocked.app")
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        let blockedFile = blocked.appendingPathComponent("payload")
+        try Data("x".utf8).write(to: blockedFile)
+        XCTAssertEqual(lchflags(blockedFile.path, UInt32(UF_APPEND)), 0)
+        defer { _ = lchflags(blockedFile.path, 0) }
+        do {
+            _ = try await TreeCopySession().copy(from: blocked, to: root.appendingPathComponent("BlockedCopy.app"))
+            XCTFail("An unsupported flag must still fail closed")
+        } catch is TreeCopyError {}
+    }
+
     private func posix() -> NSError { NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
     private func assertFails(_ operation: () async throws -> TreeCopySnapshot, file: StaticString = #filePath, line: UInt = #line) async {
         do { _ = try await operation(); XCTFail("Unsafe copy succeeded", file: file, line: line) } catch {}

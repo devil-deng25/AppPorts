@@ -2150,6 +2150,179 @@ final class AppTransferTransactionTests: XCTestCase {
         try Data(payload.utf8).write(to: url.appendingPathComponent("Contents/Resources/payload"))
     }
 
+    // MARK: - Issue #77: v1.9.0 `chflags -R uchg` protection
+
+    /// 1.9.0 locked the external copy of a self-updating app and recorded nothing.
+    /// Build exactly that end state: whole tree immutable, local portal intact,
+    /// no 1.9.1 provenance record.
+    private func installV1_9_0LockedState(in workspace: Workspace, local: URL, external: URL) async throws {
+        try makeApp(local, payload: "wechat-payload", identifier: "com.tencent.xinWeChat", sparkle: true)
+        let moved = try await workspace.service().moveAndLink(appToMove: item(local), destinationURL: external,
+            isRunning: false, progressHandler: nil)
+        XCTAssertTrue(moved.isComplete, moved.pendingMessage ?? "")
+        for url in try SignatureSnapshot.items(in: external) {
+            _ = lchflags(url.path, try SignatureSnapshot.info(at: url).st_flags & ~UInt32(UF_IMMUTABLE))
+        }
+        let protectionDirectory = workspace.store.directoryURL.appendingPathComponent("update-protection")
+        if FileManager.default.fileExists(atPath: protectionDirectory.path) {
+            try FileManager.default.removeItem(at: protectionDirectory)
+        }
+        for url in try SignatureSnapshot.items(in: external) {
+            let flags = try SignatureSnapshot.info(at: url).st_flags | UInt32(UF_IMMUTABLE)
+            XCTAssertEqual(lchflags(url.path, flags), 0)
+        }
+        XCTAssertNil(try AppUpdateProtectionStore(transferStore: workspace.store).captureForExchange(at: external))
+    }
+
+    private func immutablePaths(in root: URL) throws -> [String] {
+        try SignatureSnapshot.items(in: root).filter {
+            try SignatureSnapshot.info(at: $0).st_flags & UInt32(UF_IMMUTABLE) != 0
+        }.map(\.path)
+    }
+
+    func testV1_9_0LockedRestoreAdoptsProvenanceAndCompletesWithoutJournal() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let local = w.local.appendingPathComponent("WeChat.app")
+        let external = w.external.appendingPathComponent("WeChat.app")
+        try await installV1_9_0LockedState(in: w, local: local, external: external)
+        XCTAssertGreaterThan(try immutablePaths(in: external).count, 1)
+
+        let restored = try await w.service().moveBack(app: item(external), localDestinationURL: local, progressHandler: nil)
+        XCTAssertTrue(restored.transferResult.isComplete, restored.warnings.joined(separator: "\n"))
+        XCTAssertEqual(try payload(local), "wechat-payload")
+        XCTAssertFalse(try AppTransferStore.exists(external))
+        XCTAssertTrue(try w.store.records().isEmpty)
+        // Adoption leaves no record behind, and the restored copy keeps no lock.
+        XCTAssertTrue(try AppUpdateProtectionStore(transferStore: w.store).inventory().records.isEmpty)
+        XCTAssertTrue(try immutablePaths(in: local).isEmpty)
+    }
+
+    /// The update lock is AppPorts' own protection, and older versions wrote it
+    /// with `chflags -R uchg` without recording anything. Any attempt to prove
+    /// which bits are "ours" blocks real restores: an app that was updated or
+    /// repaired after being locked keeps some flags and loses others, so a tree
+    /// can end up locked only at its root or only in places. A move therefore
+    /// clears the immutable bit over the whole tree, whatever shape it has.
+    func testEveryLockShapeIsClearedOnRestore() async throws {
+        for shape in ["wholeTree", "rootOnly", "nestedOnly", "partial"] {
+            let w = try Workspace(); defer { w.cleanup() }
+            let local = w.local.appendingPathComponent("WeChat.app")
+            let external = w.external.appendingPathComponent("WeChat.app")
+            try await installV1_9_0LockedState(in: w, local: local, external: external)
+            let items = try SignatureSnapshot.items(in: external)
+            switch shape {
+            case "rootOnly":
+                for url in items { _ = lchflags(url.path, try SignatureSnapshot.info(at: url).st_flags & ~UInt32(UF_IMMUTABLE)) }
+                _ = lchflags(external.path, try SignatureSnapshot.info(at: external).st_flags | UInt32(UF_IMMUTABLE))
+            case "nestedOnly":
+                _ = lchflags(external.path, try SignatureSnapshot.info(at: external).st_flags & ~UInt32(UF_IMMUTABLE))
+            case "partial":
+                for url in items { _ = lchflags(url.path, try SignatureSnapshot.info(at: url).st_flags & ~UInt32(UF_IMMUTABLE)) }
+                for url in [external, external.appendingPathComponent("Contents")] {
+                    _ = lchflags(url.path, try SignatureSnapshot.info(at: url).st_flags | UInt32(UF_IMMUTABLE))
+                }
+            default: break
+            }
+            XCTAssertGreaterThan(try immutablePaths(in: external).count, 0, "fixture must be locked: \(shape)")
+
+            do {
+                let restored = try await w.service().moveBack(app: item(external), localDestinationURL: local, progressHandler: nil)
+                XCTAssertTrue(restored.transferResult.isComplete, "\(shape): \(restored.warnings)")
+                XCTAssertEqual(try payload(local), "wechat-payload", shape)
+                XCTAssertFalse(try AppTransferStore.exists(external), "\(shape): external copy removed")
+                XCTAssertTrue(try immutablePaths(in: local).isEmpty, "\(shape): restored copy carries no lock")
+            } catch {
+                XCTFail("\(shape): a locked tree must restore, not be refused: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Flags other than the immutable bit are still never attributed to AppPorts,
+    /// so the verified copier keeps failing closed instead of silently dropping
+    /// them during a move.
+    func testNonImmutableFlagsStillFailClosed() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let local = w.local.appendingPathComponent("WeChat.app")
+        let external = w.external.appendingPathComponent("WeChat.app")
+        try await installV1_9_0LockedState(in: w, local: local, external: external)
+        let appFlags = try SignatureSnapshot.info(at: external).st_flags | UInt32(UF_APPEND)
+        XCTAssertEqual(lchflags(external.path, appFlags), 0)
+        let before = try SignatureSnapshot.fingerprint(of: external)
+        do {
+            _ = try await w.service().moveBack(app: item(external), localDestinationURL: local, progressHandler: nil)
+            XCTFail("A non-immutable flag must not be cleared or copied blindly")
+        } catch {
+            XCTAssertTrue(true)
+        }
+        XCTAssertEqual(try SignatureSnapshot.fingerprint(of: external), before, "tree untouched")
+    }
+
+    func testAdoptedLegacyLockIsReappliedBySearchExclusion() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let local = w.local.appendingPathComponent("WeChat.app")
+        let external = w.external.appendingPathComponent("WeChat.app")
+        try await installV1_9_0LockedState(in: w, local: local, external: external)
+        let search = AppSearchRecordStore(fileURL: w.root.appendingPathComponent("search.json"))
+        let service = AppMigrationService(dockShortcutUpdater: { _, _ in 0 }, transferStore: w.store,
+            signatureFactStore: w.facts, runningApplications: { [] })
+        try AppPortalMaintenance.rememberEntries(at: local, explicitOperation: true, store: search)
+        let result = try await service.excludeFromSearch(app: item(external, status: AppStatus.linked),
+            externalRoot: w.external, localEntries: [local], store: search)
+        XCTAssertFalse(try AppTransferStore.exists(external))
+        XCTAssertGreaterThan(try immutablePaths(in: result.destination).count, 1)
+    }
+
+    func testJournalWithoutManifestsIsRetiredAutomatically() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let local = w.local.appendingPathComponent("WeChat.app")
+        let external = w.external.appendingPathComponent("WeChat.app")
+        try makeApp(local, payload: "original")
+        _ = try await w.service().moveAndLink(appToMove: item(local), destinationURL: external,
+            isRunning: false, progressHandler: nil)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .copied { throw Interrupted() } })
+                .moveBack(app: item(external), localDestinationURL: local, progressHandler: nil)
+            XCTFail("Expected the interrupted restore")
+        } catch is Interrupted {}
+        let pending = try XCTUnwrap(w.store.records().first)
+        // Reproduce the old remove() order: manifests gone, record left behind.
+        for name in try FileManager.default.contentsOfDirectory(atPath: w.store.directoryURL.path) where name.hasSuffix(".manifest") {
+            try FileManager.default.removeItem(at: w.store.directoryURL.appendingPathComponent(name))
+        }
+        guard case .terminal = w.service().retryDisposition(for: pending) else {
+            return XCTFail("A record without manifests can never advance again")
+        }
+        // Maintenance closes it out by itself; nothing is deleted.
+        XCTAssertEqual(w.service().retireUnrecoverableTransfers().count, 1)
+        XCTAssertTrue(try w.store.records().isEmpty)
+        XCTAssertTrue(try AppTransferStore.exists(external), "the external copy is kept")
+        // The path is free again, so the restore can simply be retried.
+        let restored = try await w.service().moveBack(app: item(external), localDestinationURL: local, progressHandler: nil)
+        XCTAssertTrue(restored.transferResult.isComplete, restored.warnings.joined(separator: "\n"))
+        XCTAssertEqual(try payload(local), "original")
+    }
+
+    func testProtectionRecordsWrittenBeforeProvenanceStillDecodeAsManaged() throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let protection = AppUpdateProtectionStore(transferStore: w.store)
+        let app = w.local.appendingPathComponent("Plain.app")
+        try makeApp(app)
+        try protection.protect(app)
+        let record = try XCTUnwrap(protection.captureForExchange(at: app))
+        XCTAssertEqual(record.origin, .managed)
+        XCTAssertNil(record.adoptedLegacyLock)
+
+        // Rewrite the same record without the field, exactly as 1.9.1 wrote it.
+        let url = w.store.directoryURL.appendingPathComponent("update-protection")
+            .appendingPathComponent(record.id.uuidString + ".plist")
+        var object = try XCTUnwrap(PropertyListSerialization.propertyList(from: try Data(contentsOf: url), format: nil) as? [String: Any])
+        object["adoptedLegacyLock"] = nil
+        try PropertyListSerialization.data(fromPropertyList: object, format: .binary, options: 0).write(to: url)
+        let inventory = try protection.inventory()
+        XCTAssertTrue(inventory.issues.isEmpty)
+        XCTAssertEqual(inventory.records.first?.origin, .managed)
+    }
+
     private func assertNoStages(_ workspace: Workspace, file: StaticString = #filePath, line: UInt = #line) throws {
         for directory in [workspace.local, workspace.external] {
             let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
