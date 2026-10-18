@@ -44,3 +44,7 @@ Tools/StubLauncher/launcher
 .omo/
 .mimocode/plans/1782222306653-lucky-otter.md
 .superpowers
+RELEASE_NOTES_1.9.0.md
+__pycache__/manage_translations.cpython-314.pyc
+design/UI-VI-GUIDELINES.md
+.codex/config.toml
