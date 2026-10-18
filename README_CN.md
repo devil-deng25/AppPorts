@@ -7,7 +7,7 @@
 应用和数据迁往外置硬盘，熟悉的打开方式依然在。
 
 
-[English](README.md)｜[简体中文](README_CN.md)｜[官方网站](https://appports.shimoko.com/)｜[使用文档](https://docs-appports.shimoko.com/)｜[DeepWiki](https://deepwiki.com/wzh4869/AppPorts)
+[English](README.md)｜[简体中文](README_CN.md)｜[官方网站](https://appports.shimoko.com/)｜[使用文档](https://docs-appports.shimoko.com/)｜[DeepWiki](https://deepwiki.com/wzh4869/AppPorts) 
 
 <a href="https://github.com/wzh4869/AppPorts/releases"><img src="https://img.shields.io/github/v/release/wzh4869/AppPorts?style=flat-square&label=release&color=blue" alt="Release"></a>
 <a href="https://github.com/wzh4869/AppPorts/stargazers"><img src="https://img.shields.io/github/stars/wzh4869/AppPorts?style=flat-square&color=yellow" alt="Stars"></a>
@@ -151,6 +151,9 @@ git clone https://github.com/wzh4869/AppPorts.git
 ```
 使用 **Xcode** 打开项目，编译并运行。
 
+## 👥 交流群
+[QQ群 (384270587)](https://qm.qq.com/q/BhhRJ2rDz4)   
+*If you're outside mainland China and would like to see an AppPorts group, feel free to open an issue. I haven't set one up yet simply because I don't know enough people outside mainland China—so I'd love to hear from you!*
 ## 🤝 贡献
 
 欢迎提交 Issue 或 Pull Request！
@@ -176,7 +179,6 @@ AppPorts 完全免费、开源、无广告，项目由个人在业余时间维�
 - **zed**
 - **VC**
 - **符华**
- 
 ## 🔗 进阶存储管理
 
 * [LazyMount-Mac](https://github.com/yuanweize/LazyMount-Mac)：轻松扩展 Mac 存储空间 —— 开机自动挂载 SMB 共享与云存储，无需任何手动操作。
