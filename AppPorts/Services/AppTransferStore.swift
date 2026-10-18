@@ -151,16 +151,49 @@ final class AppTransferStore: @unchecked Sendable {
     func remove(_ id: UUID) throws {
         lock.lock(); defer { lock.unlock() }
         try recheckWriterAdmission()
-        // Delete manifests first. A record is only removed after all effects
-        // have completed; a retry of its final bookkeeping does not need them.
-        for url in try FileManager.default.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
-        where url.lastPathComponent.hasPrefix(id.uuidString + "-") && url.pathExtension == "manifest" {
-            try FileManager.default.removeItem(at: url)
-        }
+        // The record is the authority. Removing it first makes a retry of this
+        // bookkeeping harmless: leftover manifests are ignored by every reader,
+        // while a record that outlived its manifests could never be verified or
+        // completed again and would keep blocking its paths forever.
         let url = recordURL(id)
         if try Self.exists(url) { try FileManager.default.removeItem(at: url) }
+        try removeManifests(id)
         try DurableFileIO.syncDirectory(at: directoryURL)
         NotificationCenter.default.post(name: .appPortsRecordsDidChange, object: nil)
+    }
+
+    /// Archive only bookkeeping: the journal and its manifests leave the live
+    /// directory, so the operation stops owning its paths. Applications,
+    /// retained copies and staging objects are deliberately left untouched and
+    /// remain the user's to inspect. Callers decide when work is unrecoverable.
+    @discardableResult
+    func archive(_ id: UUID) throws -> URL? {
+        lock.lock(); defer { lock.unlock() }
+        try recheckWriterAdmission()
+        let recordURL = recordURL(id)
+        let recordExists = try Self.exists(recordURL)
+        let manifests = try manifestURLs(id)
+        guard recordExists || !manifests.isEmpty else { return nil }
+        let archive = directoryURL.appendingPathComponent("archived", isDirectory: true)
+        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        for url in [recordURL] + manifests where try Self.exists(url) {
+            try FileManager.default.moveItem(at: url, to: archive.appendingPathComponent(url.lastPathComponent))
+        }
+        try DurableFileIO.syncDirectory(at: archive)
+        try DurableFileIO.syncDirectory(at: directoryURL)
+        NotificationCenter.default.post(name: .appPortsRecordsDidChange, object: nil)
+        return archive
+    }
+
+    private func manifestURLs(_ id: UUID) throws -> [URL] {
+        guard try Self.exists(directoryURL) else { return [] }
+        return try FileManager.default.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix(id.uuidString + "-") && $0.pathExtension == "manifest" }
+            .sorted { $0.path < $1.path }
+    }
+
+    private func removeManifests(_ id: UUID) throws {
+        for url in try manifestURLs(id) { try FileManager.default.removeItem(at: url) }
     }
 
     private func prepareDirectory() throws {
@@ -202,6 +235,29 @@ struct AppUpdateProtectionRelocation: Codable, Equatable, Sendable {
     let path: String
     let identity: DataPathIdentity
     let entries: [Entry]
+    /// Old records written before 1.9.1 decode without this field and mean
+    /// `.managed`. Only adoption of a v1.9.0 `chflags -R uchg` tree sets it.
+    var adoptedLegacyLock: Bool? = nil
+
+    /// Why AppPorts believes it may revoke the immutable bits listed above.
+    var origin: AppUpdateProtectionOrigin { adoptedLegacyLock == true ? .adoptedV1_9_0 : .managed }
+}
+
+/// `managed` records name bits AppPorts set itself. `adoptedV1_9_0` records name
+/// bits v1.9.0 set with `chflags -R uchg` and never recorded; the transfer still
+/// only ever clears the immutable bit, never other flags.
+enum AppUpdateProtectionOrigin: Equatable, Sendable {
+    case managed
+    case adoptedV1_9_0
+}
+
+/// What the caller knows about the object it is about to move. Kept only for
+/// logging: locking is AppPorts' own bookkeeping, so a move always clears it.
+struct AppUpdateProtectionAdoption: Sendable {
+    /// A local entry AppPorts created still resolves to this exact object.
+    let managedLocalEntry: URL?
+    /// The incoming source is provably the same application.
+    let sameApplicationSource: URL?
 }
 
 struct AppUpdateProtectionRecordIssue: Identifiable, Sendable {
@@ -369,6 +425,52 @@ final class AppUpdateProtectionStore {
         guard let record = try matchingRecord(root) else { return false }
         try setProtection(false, record: record, root: root)
         return true
+    }
+
+    /// The update lock is AppPorts' own protection, and 1.9.0 wrote it with
+    /// `chflags -R uchg` without recording anything. Every attempt to tell those
+    /// bits from a user's own lock ends up blocking ordinary restores, because a
+    /// bundle that was updated or repaired after 1.9.0 locked it keeps some flags
+    /// and loses others. So a move clears the immutable bit over the whole tree
+    /// and records exactly what it found first.
+    ///
+    /// The record still matters: it is written before any flag changes, so an
+    /// interruption can reapply the same bits, and cancellation restores them.
+    /// Only `UF_IMMUTABLE` is ever cleared — no other flag is touched.
+    @discardableResult
+    func adoptLegacyLock(_ root: URL, evidence: AppUpdateProtectionAdoption) throws -> AppUpdateProtectionRelocation? {
+        try WriterAdmission.recheck(dataDirectory: writerDataDirectory)
+        if let existing = try matchingRecord(root) { return existing }
+        guard !FileCopier.isNetworkVolume(at: root) else { return nil }
+        // Record every locked node; an unlocked tree produces none and needs no
+        // record at all.
+        let identity = try DataPathIdentity.capture(root)
+        let entries = try unlockableEntries(at: root)
+        guard !entries.isEmpty else { return nil }
+        let record = Record(id: UUID(), path: root.standardizedFileURL.path, identity: identity,
+                            entries: entries, adoptedLegacyLock: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try DurableFileIO.write(try PropertyListEncoder().encode(record), to: recordURL(record))
+        AppLogger.shared.logContext("已记录迁移前的应用更新保护",
+            details: [("path", record.path), ("entry_count", String(entries.count)),
+                      ("local_entry", evidence.managedLocalEntry?.path ?? "-")], level: "WARN")
+        return record
+    }
+
+    /// Every node carrying `UF_IMMUTABLE`, whatever the rest of the tree looks
+    /// like. Flags other than the immutable bit are never attributed, so they are
+    /// simply left alone; the verified copier still fails closed on them.
+    private func unlockableEntries(at root: URL) throws -> [Entry] {
+        let rootPath = root.standardizedFileURL.path
+        var entries: [Entry] = []
+        for url in try SignatureSnapshot.items(in: root) {
+            let info = try SignatureSnapshot.info(at: url)
+            guard info.st_flags & UInt32(UF_IMMUTABLE) != 0 else { continue }
+            let relative = url.standardizedFileURL.path == rootPath ? ""
+                : String(url.path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            entries.append(Entry(relativePath: relative, identity: try DataPathIdentity.capture(url)))
+        }
+        return entries
     }
 
     func resume(_ root: URL, requiringRecord: Bool = false) throws {

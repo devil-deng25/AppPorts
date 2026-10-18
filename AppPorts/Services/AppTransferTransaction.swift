@@ -94,6 +94,9 @@ final class AppTransferTransaction {
             if pending.sourcePath == source.path && pending.destinationPath == destination.path {
                 if !pending.isSwitchComplete
                     || (pending.successorActivation == nil && (try? observeActivation(pending)) == true) {
+                    // A resume would fail on its first manifest read with a raw
+                    // file error; report the actionable reason instead.
+                    try AppTransferJournalIntegrity.requireVerifiedManifests(for: pending, store: store)
                     return try await resume(pending.operationID, progress: progress)
                 }
             }
@@ -183,7 +186,27 @@ final class AppTransferTransaction {
         let journal = Journal(record, store: store)
         do {
             try checkpoint(.intentSaved, journal)
+            // Suspend only the protection bits first: a locked tree cannot be
+            // walked for a baseline, so this must precede every read. The tokens
+            // for it are already durable in the record.
             try suspendPreparationProtection(journal)
+            // With flags suspended, everything that reads the tree happens now.
+            // The replaced target's baseline in particular must be durable before
+            // any content moves: a resume cannot tell its authorized contents from
+            // later writes to the same inode, so it would have to refuse, and
+            // refusing with a copy already in flight strands both sides.
+            if existing {
+                do {
+                    try store.writeBaseline(try captureBaseline(destination), named: "existing", operationID: id)
+                } catch {
+                    // Nothing was copied yet: end this intent instead of leaving a
+                    // record whose only outcome is the refusal on the next attempt.
+                    throw Self.failure("无法记录替换目标的初始状态，本次操作尚未开始，未改动任何一方：".localized
+                        + error.localizedDescription, at: destination)
+                }
+                journal.record.hasExistingDestinationBaseline = true
+                try journal.save()
+            }
             for relative in record.applicationPaths {
                 let url = relative.isEmpty ? source : source.appendingPathComponent(relative)
                 let valid = try signatureIsValid(at: url)
@@ -191,10 +214,6 @@ final class AppTransferTransaction {
                     journal.record.signatureRelocations.append(.init(relativePath: relative, relocation: relocation))
                 }
                 journal.record.signatureChecks[relative] = valid
-            }
-            if existing {
-                try store.writeBaseline(try captureBaseline(destination), named: "existing", operationID: id)
-                journal.record.hasExistingDestinationBaseline = true
             }
             try journal.save()
             return try await continueTransfer(journal, progress: progress)
@@ -253,6 +272,7 @@ final class AppTransferTransaction {
 
     func resume(_ id: UUID, progress: FileCopier.ProgressHandler?) async throws -> AppTransferResult {
         let journal = Journal(try store.record(id), store: store)
+        try AppTransferJournalIntegrity.requireVerifiedManifests(for: journal.record, store: store)
         if journal.record.phase == .cancelled { return try reconcileCancelled(journal) }
         do { return try await continueTransfer(journal, progress: progress) }
         catch { return try handle(error, journal: journal) }
@@ -451,6 +471,7 @@ final class AppTransferTransaction {
     }
 
     private func captureProtectionRecovery(for record: AppTransferRecord) throws -> AppTransferProtectionRecovery {
+        try adoptLegacyLockIfNeeded(for: record)
         let source = URL(fileURLWithPath: record.sourcePath)
         try requireIdentity(record.sourceIdentity, at: source)
         let sourceToken = try protection.captureForExchange(at: source)
@@ -467,8 +488,36 @@ final class AppTransferTransaction {
         return recovery
     }
 
+    /// v1.9.0 locked external copies with `chflags -R uchg` and recorded nothing,
+    /// so 1.9.1 saw those bits as somebody else's and the verified copier failed
+    /// closed on them. Only a restore needs this: a migration reads the local app,
+    /// which AppPorts never locks. Record the whole tree's immutable bits first,
+    /// then clear them through the normal suspension path.
+    private func adoptLegacyLockIfNeeded(for record: AppTransferRecord) throws {
+        guard record.direction == .restore else { return }
+        let source = URL(fileURLWithPath: record.sourcePath)
+        // The root is not a reliable indicator: an app that was updated after
+        // being locked can have an unlocked root with locked children. Record the
+        // whole tree whenever anything in it is still locked.
+        let destination = URL(fileURLWithPath: record.destinationPath)
+        _ = try protection.adoptLegacyLock(source, evidence: .init(
+            managedLocalEntry: portalMatches(destination, source) ? destination : nil,
+            sameApplicationSource: nil))
+    }
+
     private func protectionRecovery(_ journal: Journal) throws -> AppTransferProtectionRecovery {
-        if let recovery = journal.record.protectionRecovery {
+        if var recovery = journal.record.protectionRecovery {
+            // A journal written by the first attempt at a v1.9.0-locked tree
+            // recorded empty tokens. Adopt now instead of leaving the resume
+            // path to fail at the same flag check forever.
+            let source = URL(fileURLWithPath: journal.record.sourcePath)
+            let locked = (try? SignatureSnapshot.info(at: source).st_flags & UInt32(UF_IMMUTABLE)) ?? 0 != 0
+            if recovery.source == nil, locked {
+                try adoptLegacyLockIfNeeded(for: journal.record)
+                recovery = try captureProtectionRecovery(for: journal.record)
+                journal.record.protectionRecovery = recovery
+                try journal.save()
+            }
             try validateProtectionRecovery(recovery, for: journal.record)
             return recovery
         }

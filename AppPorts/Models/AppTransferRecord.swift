@@ -108,6 +108,29 @@ struct AppTransferRecord: Codable, Identifiable, Sendable {
     }
 }
 
+/// Resume verifies against recorded manifests. A journal whose manifest was lost
+/// (v1.9.1 removed manifests before its record) can never be verified again, so
+/// every caller must hear that instead of a raw file error. Reported as one
+/// actionable message; the caller decides whether to retry or end the record.
+enum AppTransferJournalIntegrity {
+    static func missingManifests(for record: AppTransferRecord, store: AppTransferStore) -> Bool {
+        var required = record.hasCandidateBaseline ? ["candidate"] : []
+        if record.hasSourceBaseline { required.append("source") }
+        if record.hasExistingDestinationBaseline { required.append("existing") }
+        for item in record.cleanupItems where !item.completed { required.append(item.baselineName) }
+        // Legacy portals embed their baseline in the record itself, so they never
+        // require a manifest file and must not be reported as missing here.
+        return Set(required).contains { (try? store.baseline($0, operationID: record.operationID)) == nil }
+    }
+
+    static func requireVerifiedManifests(for record: AppTransferRecord, store: AppTransferStore) throws {
+        guard missingManifests(for: record, store: store) else { return }
+        throw AppTransferTransaction.failure("这条记录缺少校验清单，无法再次验证副本。".localized
+            + "\n" + "已保留的内容需要你确认；可以结束这条记录并保留所有副本，再重新发起操作。".localized,
+            at: URL(fileURLWithPath: record.activeDestinationPath))
+    }
+}
+
 struct AppTransferActivation: Codable, Equatable, Sendable {
     let operationID: UUID
     let path: String
