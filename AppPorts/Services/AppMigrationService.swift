@@ -114,6 +114,15 @@ struct AppMigrationService {
         return operationLock
     }
 
+    /// The object at a path is still the recorded filesystem object. Used after
+    /// adoption, where reading and rewriting protection facts must not span a
+    /// replacement or a remount.
+    private func requireIdentity(_ expected: DataPathIdentity, at url: URL) throws {
+        guard try expected.matchesFilesystemObject(DataPathIdentity.capture(url)) else {
+            throw AppTransferTransaction.failure("路径对应的对象或磁盘已改变，已保留内容。".localized, at: url)
+        }
+    }
+
     private func recheckWriterAdmission() throws {
         if let writerAdmissionCheck { try writerAdmissionCheck() }
         else { try transferStore.recheckWriterAdmission() }
@@ -256,12 +265,16 @@ struct AppMigrationService {
             throw Exclusion.failure("无法确认真实应用身份，未更改存储位置。".localized)
         }
         let protection = AppUpdateProtectionStore(transferStore: transferStore)
+        // The lock is AppPorts' own, and older versions never recorded it. Record
+        // what is locked here so the relocation can suspend and restore exactly
+        // those bits; a tree with no lock simply has nothing to record.
+        let identityBeforeAdoption = try DataPathIdentity.capture(source)
+        _ = try protection.adoptLegacyLock(source, evidence: .init(
+            managedLocalEntry: localURLs.sorted(by: { $0.path < $1.path })
+                .first { localPortalKind(at: $0, linkedTo: source) != nil },
+            sameApplicationSource: nil))
+        try requireIdentity(identityBeforeAdoption, at: source)
         let protectionRelocation = try protection.captureForExchange(at: source)
-        let sourceFlags = try SignatureSnapshot.info(at: source).st_flags
-        if sourceFlags & UInt32(UF_IMMUTABLE) != 0,
-           protectionRelocation?.entries.contains(where: { $0.relativePath.isEmpty }) != true {
-            throw AppTransferTransaction.failure("应用更新保护来源无法确认。".localized, at: source)
-        }
         let signatureRelocation = try signatureFactStore.captureRelocation(from: source, transferStore: transferStore)
         var portals: [Exclusion.Journal.Portal] = []
         var kinds: [URL: LocalPortalKind] = [:]
@@ -503,6 +516,12 @@ struct AppMigrationService {
         } else { confirmedReplacement = nil }
         let mayReplace = externalTargetReplacementReason(for: appToMove, destinationURL: destinationURL) != nil
             || confirmedReplacement != nil
+        // Re-migrating over a v1.9.0-locked external copy needs the same adoption
+        // as a restore: without a provenance record the replacement's copy step
+        // fails closed on the very lock this app already carries.
+        if confirmedReplacement != nil {
+            try adoptLegacyLockOnReplacement(of: appToMove.path, at: destinationURL)
+        }
         let kind: LocalPortalKind = portalCreationOverride != nil ? .wholeAppSymlink
             : appToMove.usesFolderOperation ? .folderMirror : preferredPortalKind(for: appToMove.path)
         let result = try await transferTransaction().start(app: appToMove, destination: destinationURL, direction: .migrate,
@@ -513,6 +532,18 @@ struct AppMigrationService {
             else { refreshLaunchServices(for: appToMove.path) }
         }
         return result
+    }
+
+    /// A retained external copy still carries AppPorts' update lock and is about
+    /// to be replaced by a verified copy of the same application. Record what is
+    /// locked so the replacement's removal step can proceed.
+    private func adoptLegacyLockOnReplacement(of sourceURL: URL, at destinationURL: URL) throws {
+        guard (try? SignatureSnapshot.info(at: destinationURL).st_flags & UInt32(UF_IMMUTABLE)) ?? 0 != 0 else { return }
+        let protection = AppUpdateProtectionStore(transferStore: transferStore)
+        let identity = try DataPathIdentity.capture(destinationURL)
+        _ = try protection.adoptLegacyLock(destinationURL, evidence: .init(managedLocalEntry: nil,
+            sameApplicationSource: sourceURL))
+        try requireIdentity(identity, at: destinationURL)
     }
 
     private func needsUpdateProtection(_ app: AppItem) -> Bool {
@@ -560,6 +591,84 @@ struct AppMigrationService {
         }
         defer { operationLock.release() }
         return try transferTransaction().cancel(operationID)
+    }
+
+    /// What maintenance should do with one journal. A record that can still
+    /// advance is retried; one whose facts already contradict the disk cannot
+    /// advance, so it is retired automatically.
+    enum TransferRetryDisposition: Sendable {
+        case retry
+        /// Retrying cannot change the outcome. The caller retires the record
+        /// itself — it is never handed to the user as a task.
+        case terminal(String)
+
+        var isTerminal: Bool {
+            if case .terminal = self { return true }
+            return false
+        }
+    }
+
+    /// Decide from disk facts, never from the last error text. This is the whole
+    /// triage: everything that can still progress is retried forever (that is
+    /// what maintenance is for), and anything that provably cannot is closed out
+    /// by `retireUnrecoverableTransfers()`. The user is not part of this loop —
+    /// both outcomes are AppPorts' own bookkeeping, and neither one needs a
+    /// judgement only the user could make.
+    func retryDisposition(for record: AppTransferRecord) -> TransferRetryDisposition {
+        if record.phase == .cancelled {
+            return .terminal("本次尝试已结束，保留的材料已列出。")
+        }
+        // Every resume path re-verifies against a manifest. A record whose
+        // manifest is gone can never complete (a v1.9.1 remove() deleted the
+        // manifests before the record itself), so retrying only hides that.
+        if AppTransferJournalIntegrity.missingManifests(for: record, store: transferStore) {
+            return .terminal("校验清单缺失，记录无法再次验证。")
+        }
+        guard !record.isSwitchComplete else { return .retry }
+        let source = URL(fileURLWithPath: record.sourcePath)
+        let parent = source.deletingLastPathComponent()
+        // A missing object only settles the question when its parent still
+        // exists; a missing parent may just mean the disk is unplugged.
+        guard let object = try? DataPathIdentity.capture(source) else {
+            guard (try? SignatureSnapshot.info(at: parent)) != nil else { return .retry }
+            return .terminal("记录中的外部应用已不在原位。")
+        }
+        guard object.matchesFilesystemObject(record.sourceIdentity) else {
+            return .terminal("记录中的外部应用已被替换。")
+        }
+        return .retry
+    }
+
+    /// Close out journals that can no longer advance, so they stop blocking their
+    /// paths. Only bookkeeping moves: the record and its manifests are archived
+    /// under `app-transfers/archived/`, while every application, retained copy
+    /// and staging object stays exactly where it is. That is the same outcome a
+    /// user would reach by hand, minus the hand — nothing is deleted that
+    /// AppPorts did not create, and nothing is decided that could go either way.
+    ///
+    /// A committed transfer is never retired: its remaining work is deleting a
+    /// copy under its own verified manifest, and retrying performs that safely.
+    @discardableResult
+    func retireUnrecoverableTransfers() -> [String] {
+        guard let inventory = try? pendingTransferInspection() else { return [] }
+        var notes: [String] = []
+        for record in inventory.records {
+            guard case .terminal(let reason) = retryDisposition(for: record), !record.isSwitchComplete else { continue }
+            do {
+                guard try transferStore.archive(record.operationID) != nil else { continue }
+                AppLogger.shared.logContext("应用位置记录已自动收束，保留所有副本",
+                    details: [("operation_id", record.operationID.uuidString), ("app", record.appName),
+                              ("direction", record.direction.rawValue), ("phase", record.phase.rawValue),
+                              ("reason", reason), ("retained", record.unclaimedPaths.joined(separator: "\n"))],
+                    level: "WARN")
+                notes.append(record.appName + "：" + reason)
+            } catch {
+                AppLogger.shared.logError("无法收束应用位置记录，保留记录", error: error,
+                    relatedURLs: [("record", transferStore.directoryURL.appendingPathComponent(
+                        record.operationID.uuidString + ".plist"))])
+            }
+        }
+        return notes
     }
 
     private func transferTransaction(retrying: Bool = false) -> AppTransferTransaction {

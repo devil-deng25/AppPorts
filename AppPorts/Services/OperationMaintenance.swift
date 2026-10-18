@@ -43,12 +43,18 @@ actor OperationMaintenance {
         do {
             let inventory = try applications.pendingTransferInspection()
             warnings += inventory.issues.map(\.message)
+            // Retry everything that can still advance, then close out whatever
+            // provably cannot. Both are AppPorts' own bookkeeping: a stuck record
+            // keeps its paths blocked, so leaving it for the user would hand them
+            // a state they cannot act on and an app they cannot operate.
             for record in inventory.records {
+                guard !applications.retryDisposition(for: record).isTerminal else { continue }
                 do {
                     let result = try await applications.retryTransfer(operationID: record.operationID)
                     if let message = result.pendingMessage { warnings.append(message) }
                 } catch { warnings.append(record.appName + ": " + error.localizedDescription) }
             }
+            warnings += applications.retireUnrecoverableTransfers()
         } catch { warnings.append(error.localizedDescription) }
         // Signature work acquires its own locks, after data/app locks release.
         warnings += await CodeSigner().performAutomaticMaintenance()
