@@ -56,6 +56,8 @@ struct CustomDirsView: View {
     @State private var showProgress = false
     @State private var progressTitle = ""
     @State private var transferProgress = DataTransferProgress()
+    /// 目标盘存不住文件所有者时的确认框；没有提示就保持 nil，不打扰用户。
+    @State private var ownershipAdvisoryRequest: WarningSheetRequest?
 
     private var localEntries: [CustomDirEntry] {
         pairs.map(\.local)
@@ -155,6 +157,7 @@ struct CustomDirsView: View {
         } message: {
             Text(completionWarning)
         }
+        .warningSheet($ownershipAdvisoryRequest)
     }
 
     private var localPane: some View {
@@ -373,6 +376,43 @@ struct CustomDirsView: View {
 
     private func migrateSelected() {
         let selectedPairs = migratablePairs
+        guard !selectedPairs.isEmpty else { return }
+        if presentOwnershipAdvisoryIfNeeded(for: selectedPairs) { return }
+        startMigration(of: selectedPairs)
+    }
+
+    /// 目标盘存不住文件所有者时先说明一次；用户确认后照常迁移，不改变能否迁移的判定。
+    /// - Returns: 是否已改为展示提示（此时不开始迁移）。
+    private func presentOwnershipAdvisoryIfNeeded(for selectedPairs: [CustomDirPair]) -> Bool {
+        let advisory = OwnershipStorageAdvisory()
+        let drives = Set(selectedPairs.compactMap { pair -> String? in
+            let destination = pair.config.externalDestinationURL
+            guard let limitation = advisory.limitation(for: destination) else { return nil }
+            let driveName = MountMigrationGuidance.driveName(for: destination.path)
+            AppLogger.shared.logContext(
+                "目录迁移目标盘不保存文件所有者",
+                details: [
+                    ("destination", destination.path),
+                    ("drive_name", driveName),
+                    ("limitation", String(describing: limitation))
+                ],
+                level: "WARN"
+            )
+            return limitation.advisoryMessage(driveName: driveName)
+        })
+        guard !drives.isEmpty else { return false }
+        ownershipAdvisoryRequest = WarningSheetRequest(
+            title: "这块磁盘不保存文件所有者".localized,
+            tint: .orange,
+            intro: drives.sorted().joined(separator: "\n\n"),
+            actions: [
+                WarningAction("继续迁移".localized, style: .preferred) { startMigration(of: selectedPairs) }
+            ]
+        )
+        return true
+    }
+
+    private func startMigration(of selectedPairs: [CustomDirPair]) {
         guard !selectedPairs.isEmpty, let operationID = beginOperation() else { return }
         operationState.startTask(for: operationID) { @MainActor in
             defer { operationState.finish(operationID) }
@@ -593,6 +633,15 @@ private struct AddCustomDirSheet: View {
         return externalBaseURL.appendingPathComponent(localURL.lastPathComponent).standardizedFileURL
     }
 
+    /// 目标盘存不住文件所有者时直接写在本页：这里点「迁移」就开始，弹窗会和
+    /// 本页的关闭动画抢显示，反而容易漏看。
+    private var ownershipNotice: String? {
+        guard let finalDestinationURL,
+              let limitation = OwnershipStorageAdvisory().limitation(for: finalDestinationURL) else { return nil }
+        let driveName = MountMigrationGuidance.driveName(for: finalDestinationURL.path)
+        return limitation.advisoryMessage(driveName: driveName)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("添加目录迁移".localized)
@@ -635,6 +684,22 @@ private struct AddCustomDirSheet: View {
                 Text(errorMessage)
                     .font(.system(size: 12))
                     .foregroundColor(.red)
+            }
+
+            if let ownershipNotice {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.orange)
+                    Text(ownershipNotice)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.08))
+                .cornerRadius(8)
             }
 
             HStack {

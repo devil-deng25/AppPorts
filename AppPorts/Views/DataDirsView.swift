@@ -1463,6 +1463,7 @@ struct DataDirsView: View {
         let sizeInfo = item.size.map { String(format: "，大小约 %@".localized, $0) } ?? ""
         let detail = String(format: "将「%@」迁移到外部存储%@。\n\n源路径：%@\n目标路径：%@\n\n校验和切换成功后自动清理旧副本。应用签名保持不变。".localized,
                             item.name, sizeInfo, item.path.path, destinationPath.path)
+        let ownershipNote = ownershipStorageNote(for: destinationPath)
         let execute = { performMigrate(item, to: destinationPath.deletingLastPathComponent(), associatedApp: associatedApp) }
         if classicModeActive, item.requiresMountMigration {
             var actions: [WarningAction] = [
@@ -1474,13 +1475,31 @@ struct DataDirsView: View {
             actions.append(WarningAction("仅迁移数据".localized, style: .preferred, handler: execute))
             migrationRiskRequest = WarningSheetRequest(
                 title: "经典模式迁移".localized, tint: .orange,
-                intro: detail + "\n\n" + "仍受沙盒限制的应用可能无法读取链接位置。迁移不会自动重签；仅搬完数据不代表应用兼容性已验证。".localized,
+                intro: detail + "\n\n" + "仍受沙盒限制的应用可能无法读取链接位置。迁移不会自动重签；仅搬完数据不代表应用兼容性已验证。".localized
+                    + ownershipNote,
                 actions: actions)
         } else {
             let warning = item.migrationWarning.map { "\n\n" + $0 } ?? ""
             confirmRequest = makeConfirmRequest(title: "迁移数据目录".localized, actionTitle: "继续".localized,
-                                               message: detail + warning, action: execute)
+                                               message: detail + warning + ownershipNote, action: execute)
         }
+    }
+
+    /// 目标盘存不住文件所有者时，在确认框里补一句说明。只提示、不阻断。
+    private func ownershipStorageNote(for destinationPath: URL) -> String {
+        let advisory = OwnershipStorageAdvisory()
+        guard let limitation = advisory.limitation(for: destinationPath) else { return "" }
+        let driveName = MountMigrationGuidance.driveName(for: destinationPath.path)
+        AppLogger.shared.logContext(
+            "迁移目标盘不保存文件所有者",
+            details: [
+                ("destination", destinationPath.path),
+                ("drive_name", driveName),
+                ("limitation", String(describing: limitation))
+            ],
+            level: "WARN"
+        )
+        return "\n\n" + limitation.advisoryMessage(driveName: driveName)
     }
 
     /// 组装一个「标题 + 正文 + 单个继续按钮」的确认弹窗。
