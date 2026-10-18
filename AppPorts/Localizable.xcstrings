@@ -177709,6 +177709,143 @@
           }
         }
       }
+    },
+    "此卷仍在忽略文件所有权，无法验证权限；已停止操作并保留原件：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This volume still ignores file ownership, so permissions cannot be verified. The operation stopped and originals were preserved: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此卷仍在忽略檔案擁有權，無法驗證權限；已停止操作並保留原件：%@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Volume ignoriert weiterhin Dateieigentümer. Berechtigungen können nicht geprüft werden. Der Vorgang wurde gestoppt, Originale bleiben erhalten: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este volumen sigue ignorando la propiedad de los archivos; no se pueden verificar los permisos. La operación se detuvo y los originales se conservaron: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce volume ignore toujours la propriété des fichiers ; les autorisations ne peuvent pas être vérifiées. L’opération s’est arrêtée et les originaux sont conservés : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este volume ainda ignora a propriedade dos arquivos; não é possível verificar as permissões. A operação foi interrompida e os originais foram preservados: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo volume ignora ancora la proprietà dei file; non è possibile verificare i permessi. L’operazione è stata interrotta e gli originali sono conservati: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このボリュームはファイルの所有権を無視しているため、アクセス権を検証できません。操作を停止し、元のデータを保持しました：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 볼륨은 파일 소유권을 무시하고 있어 권한을 검증할 수 없습니다. 작업을 중단하고 원본을 보존했습니다: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот том по-прежнему игнорирует владельцев файлов, поэтому проверить права невозможно. Операция остановлена, оригиналы сохранены: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dit volume negeert nog steeds bestandseigendom; rechten kunnen niet worden geverifieerd. De bewerking is gestopt en de originelen zijn bewaard: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ten wolumin nadal ignoruje właścicieli plików, więc nie można zweryfikować uprawnień. Operacja została zatrzymana, a oryginały zachowane: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volume ini masih mengabaikan kepemilikan berkas, sehingga izin tidak dapat diverifikasi. Operasi dihentikan dan data asli dipertahankan: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu birim hâlâ dosya sahipliğini yok sayıyor; izinler doğrulanamıyor. İşlem durduruldu ve asıllar korundu: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ổ đĩa này vẫn bỏ qua quyền sở hữu tệp nên không thể xác minh quyền truy cập. Thao tác đã dừng và bản gốc được giữ lại: %@"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ĉi tiu volumo ankoraŭ ignoras dosierposedon, do permesoj ne povas esti kontrolitaj. La operacio haltis kaj la originaloj estas konservitaj: %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "यह वॉल्यूम अब भी फ़ाइल स्वामित्व को अनदेखा करता है, इसलिए अनुमतियाँ सत्यापित नहीं की जा सकतीं। कार्रवाई रोक दी गई है और मूल डेटा सुरक्षित है: %@"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "لا يزال هذا القسم يتجاهل ملكية الملفات، لذا يتعذر التحقق من الأذونات. أُوقفت العملية وحُفظت النسخ الأصلية: %@"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "โวลุ่มนี้ยังคงละเลยความเป็นเจ้าของไฟล์ จึงตรวจสอบสิทธิ์ไม่ได้ หยุดการทำงานและเก็บต้นฉบับไว้แล้ว: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此卷仍在忽略文件所有权，无法验证权限；已停止操作并保留原件：%@"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此卷仍在忽略攵件所有权，无法验证权限；已停止操作并葆畱原件：%@"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠊⠎ ⠧⠕⠇⠥⠍⠑ ⠎⠞⠊⠇⠇ ⠊⠛⠝⠕⠗⠑⠎ ⠋⠊⠇⠑ ⠕⠺⠝⠑⠗⠎⠓⠊⠏, ⠎⠕ ⠏⠑⠗⠍⠊⠎⠎⠊⠕⠝⠎ ⠉⠁⠝⠝⠕⠞ ⠃⠑ ⠧⠑⠗⠊⠋⠊⠑⠙. ⠠⠞⠓⠑ ⠕⠏⠑⠗⠁⠞⠊⠕⠝ ⠎⠞⠕⠏⠏⠑⠙ ⠁⠝⠙ ⠕⠗⠊⠛⠊⠝⠁⠇⠎ ⠺⠑⠗⠑ ⠏⠗⠑⠎⠑⠗⠧⠑⠙: %@"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

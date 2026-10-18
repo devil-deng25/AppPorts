@@ -225,24 +225,24 @@ final class AppSearchExclusionTests: XCTestCase {
         XCTAssertTrue(try store.records().isEmpty)
     }
 
-    func testConversionPreservesUnknownUserImmutableFlagWithoutMovingApp() async throws {
+    /// The update lock is AppPorts' own protection and older versions never
+    /// recorded it, so a locked external app must convert like any other: the
+    /// bits are suspended for the move and restored at the new location. Proving
+    /// which bits are "ours" is impossible here — an app updated after being
+    /// locked keeps some flags and loses others — and refusing blocked real
+    /// conversions.
+    func testConversionCarriesAnUnrecordedLockToTheNewLocation() async throws {
         try link()
         try fm.setAttributes([.immutable: true], ofItemAtPath: external.path)
-        let before = try SignatureSnapshot.fingerprint(of: external)
-        let localBefore = try TreeCopySession.snapshot(at: local)
-        let recordsBefore = try store.records()
-        do {
-            _ = try await service().excludeFromSearch(app: item, externalRoot: externalRoot,
-                                                     localEntries: [local], store: store)
-            XCTFail("An unowned immutable root must not be temporarily unlocked")
-        } catch {
-            XCTAssertEqual((error as NSError).domain, "AppPorts.AppTransfer")
-        }
-        XCTAssertEqual(try SignatureSnapshot.fingerprint(of: external), before)
-        XCTAssertEqual(try TreeCopySession.snapshot(at: local), localBefore)
-        XCTAssertEqual(try store.records(), recordsBefore)
-        XCTAssertFalse(fm.fileExists(atPath: destination.path))
-        XCTAssertNotEqual(try SignatureSnapshot.info(at: external).st_flags & UInt32(UF_IMMUTABLE), 0)
+        let result = try await service().excludeFromSearch(app: item, externalRoot: externalRoot,
+                                                          localEntries: [local], store: store)
+        XCTAssertEqual(result.destination.standardizedFileURL.path, destination.standardizedFileURL.path)
+        XCTAssertFalse(fm.fileExists(atPath: external.path))
+        // The local entry is rebuilt to point at the new location, and the lock
+        // recorded before the move is reapplied there.
+        XCTAssertEqual(try CodeSigner.resolveAppURL(at: local).standardizedFileURL.path, destination.path)
+        XCTAssertNotEqual(try SignatureSnapshot.info(at: destination).st_flags & UInt32(UF_IMMUTABLE), 0,
+                          "the recorded lock is reapplied at the new location")
     }
 
     func testConversionPreservesBundleAndDocumentAndRetargetsExistingPortal() async throws {
