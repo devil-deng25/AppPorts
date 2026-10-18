@@ -18,6 +18,12 @@ Reconnect the original drive, check Finder or Disk Utility, unlock it if needed,
 
 Check permissions, connectivity, format and encryption under Readiness. Installation location and operation-specific space are checked when starting migration. Container mount migration currently requires unencrypted APFS; do not apply that requirement to all other content. Choose another destination or keep data local. See [storage preparation](/docs/storage-guide#apfs).
 
+## After migrating, an app says the data directory is not mine {#owners}
+
+Such messages come from the app's own background service — for example clash-verge's system service refusing to start the kernel (error 1012). The usual cause is not lost permissions but a target disk that does not record file ownership: exFAT and FAT32 have no ownership field, and HFS+ mounted with ownership ignored writes new files as a placeholder user. Your account sees itself; the administrator service sees that placeholder, so the two disagree.
+
+The message often suggests `sudo chown`, but on such volumes the system silently drops the change — it looks successful while changing nothing. What works: restore this data locally, or move it to an APFS disk (APFS keeps the real owner); for HFS+ you can untick “Ignore ownership on this volume” in Finder's Show Info and migrate again. exFAT has no such switch. See [Does the external drive remember file owners?](/docs/storage-guide#owners).
+
 ## Destination exists, a copy is retained, or cleanup is incomplete {#conflict}
 
 Identify the contents on both sides. Target Conflict needs an ownership check; Retained Copy or failed cleanup may mean the main operation succeeded but cleanup remains. Follow the retry or retain options. Do not repeat migration, manually delete recovery copies or overwrite same-named directories. See [restoration and reconnection](/docs/restore) for the distinction between repairing an entry and moving data back.

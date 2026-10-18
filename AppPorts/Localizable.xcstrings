@@ -177846,6 +177846,417 @@
           }
         }
       }
+    },
+    "「%@」不保存文件所有者。迁移后数据仍可正常读写，但个别应用（例如带后台管理员服务的）可能拒绝工作，并给出修改权限也无法解决的错误。建议把数据留在本机，或改用 APFS 格式的磁盘。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」不保存文件所有者。迁移后数据仍可正常读写，但个别应用（例如带后台管理员服务的）可能拒绝工作，并给出修改权限也无法解决的错误。建议把数据留在本机，或改用 APFS 格式的磁盘。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ does not store file owners. Your data still reads and writes normally after migration, but a few apps (for example ones with a privileged background service) may refuse to work and report an error that changing permissions cannot fix. Consider keeping the data on this Mac, or using an APFS disk instead."
+          }
+        }
+      }
+    },
+    "「%@」当前忽略文件所有权，迁移后新文件在磁盘上会被记成「未知用户」。数据仍可正常读写，但个别应用（例如带后台管理员服务的）可能拒绝工作。可以在访达的「显示简介」里取消「忽略此宗卷上的所有权」后重新迁移，或把数据留在本机。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」当前忽略文件所有权，迁移后新文件在磁盘上会被记成「未知用户」。数据仍可正常读写，但个别应用（例如带后台管理员服务的）可能拒绝工作。可以在访达的「显示简介」里取消「忽略此宗卷上的所有权」后重新迁移，或把数据留在本机。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ currently ignores file ownership, so new files are recorded as an unknown user on disk after migration. Your data still reads and writes normally, but a few apps (for example ones with a privileged background service) may refuse to work. You can turn off \"Ignore ownership on this volume\" in Finder's Get Info and migrate again, or keep the data on this Mac."
+          }
+        }
+      }
+    },
+    "这块磁盘不保存文件所有者" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这块磁盘不保存文件所有者"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This disk does not keep file owners"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

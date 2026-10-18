@@ -26,6 +26,12 @@ Container mount migration currently does not support encrypted destinations. A n
 
 Keep container data local, or choose suitable storage after understanding the protection difference. Do not remove existing encryption simply to bypass a check.
 
+## Does the external drive remember file owners? {#owners}
+
+Some macOS storage does not record file ownership: exFAT and FAT32 have no such field, and HFS+ mounted with ownership ignored writes new files as a placeholder user. Ordinary reads and writes are unaffected, but a few apps that check ownership as an administrator — clash-verge with its privileged service, for example — refuse to work and suggest a `chown` fix. On such volumes the kernel silently drops that command, so it looks successful while changing nothing.
+
+APFS keeps the real owner even when mounted with ownership ignored, so it is out of scope here. When migrating an ordinary data directory or a custom folder, AppPorts explains the target's situation in the confirmation dialog without blocking the operation. Prefer keeping such app data local, or use an APFS disk; for HFS+ you can untick “Ignore ownership on this volume” in Finder's Show Info and migrate again. exFAT has no such switch.
+
 ## Everyday connection and disconnection {#daily}
 
 - Connect the drive before use. Open AppPorts if necessary and confirm Mounted or a working link.
