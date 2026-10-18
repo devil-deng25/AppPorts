@@ -58,16 +58,27 @@ struct OwnershipStorageAdvisoryTests {
         #expect(message.contains("sudo") == false)
     }
 
+    /// The contract is that the two limitations give *different* advice, because
+    /// only HFS+ has an ownership switch in Finder and exFAT has none. Asserting
+    /// on literal wording would bind this to the test host's language: the suite
+    /// runs on an English macOS in CI, where `.localized` resolves to English and
+    /// a Chinese substring never matches. Pin the language instead, and check the
+    /// switch is offered in exactly one of the two messages.
     @Test("The two limitations do not share the same advice")
     func limitationsGiveDifferentAdvice() {
+        let original = LanguageManager.shared.language
+        LanguageManager.shared.language = "zh-Hans"
+        defer { LanguageManager.shared.language = original }
+
         let noOwners = OwnershipStorageAdvisory.Limitation.noFileOwners(filesystemType: "exfat")
             .advisoryMessage(driveName: "UD210")
         let ignored = OwnershipStorageAdvisory.Limitation.ignoredOwnership(filesystemType: "hfs")
             .advisoryMessage(driveName: "UD210")
         #expect(noOwners != ignored)
         // 只有 HFS+ 能在访达里打开所有权；exFAT 没有这个开关。
-        #expect(ignored.contains("忽略此宗卷上的所有权"))
-        #expect(noOwners.contains("忽略此宗卷上的所有权") == false)
+        let switchHint = "忽略此宗卷上的所有权"
+        #expect(ignored.contains(switchHint))
+        #expect(noOwners.contains(switchHint) == false)
     }
 
     // MARK: 真机探针
