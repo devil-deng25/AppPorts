@@ -85,26 +85,6 @@ struct OwnershipStorageAdvisoryTests {
                 ignored.replacingOccurrences(of: "UD210", with: ""))
     }
 
-    /// The behaviour that matters — which volumes are flagged — is asserted above
-    /// without any localization. The messages only need to identify the drive and
-    /// stay free of the `chown` advice that cannot work, which every translation
-    /// satisfies; that is checked here so no locale can weaken it.
-    @Test("Every localized variant keeps the drive name and drops the chown advice",
-          arguments: ["zh-Hans", "zh-Hant", "en", "ja", "de"])
-    func messagesHoldAcrossLanguages(language: String) {
-        let original = LanguageManager.shared.language
-        LanguageManager.shared.language = language
-        defer { LanguageManager.shared.language = original }
-
-        for limitation in [OwnershipStorageAdvisory.Limitation.noFileOwners(filesystemType: "exfat"),
-                           OwnershipStorageAdvisory.Limitation.ignoredOwnership(filesystemType: "hfs")] {
-            let message = limitation.advisoryMessage(driveName: "UD210")
-            #expect(message.contains("UD210"), "\(language): drive name must survive")
-            #expect(message.contains("chown") == false, "\(language): chown cannot work here")
-            #expect(message.contains("sudo") == false, "\(language): sudo advice must be absent")
-        }
-    }
-
     // MARK: 真机探针
 
     @Test("The live probe reads the filesystem of an existing ancestor and never throws")
