@@ -271,6 +271,12 @@ struct ContentView: View {
     @State private var progressBytes: Int64 = 0
     @State private var progressTotalBytes: Int64 = 0
     @State private var progressFileName = ""
+    /// Stage-aware progress for an application transfer. Data directory
+    /// migration already reported prepare/copy/verify/cleanup separately; app
+    /// migration only ever published raw byte counts, so a long verification or
+    /// flush looked identical to a stalled copy. One object per operation, as
+    /// `DataTransferProgress` documents.
+    @State private var appTransferProgress: DataTransferProgress?
 
     private let fileManager = FileManager.default
 
@@ -487,16 +493,30 @@ struct ContentView: View {
                 ZStack {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
-                    
-                    ProgressOverlay(
-                        title: progressTitle,
-                        current: progressCurrent,
-                        total: progressTotal,
-                        appName: progressAppName,
-                        copiedBytes: progressBytes,
-                        totalBytes: progressTotalBytes,
-                        currentFile: progressFileName
-                    )
+
+                    VStack(spacing: 10) {
+                        // Batch counter belongs outside the stage view: it is the
+                        // only number that spans several applications.
+                        if progressTotal > 1 {
+                            Text(String(format: "应用 %lld / %lld".localized,
+                                        Int64(progressCurrent), Int64(progressTotal)))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        if let appTransferProgress {
+                            DataDirProgressOverlay(title: progressTitle, progress: appTransferProgress)
+                        } else {
+                            ProgressOverlay(
+                                title: progressTitle,
+                                current: progressCurrent,
+                                total: progressTotal,
+                                appName: progressAppName,
+                                copiedBytes: progressBytes,
+                                totalBytes: progressTotalBytes,
+                                currentFile: progressFileName
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1818,20 +1838,18 @@ struct ContentView: View {
                 let service = AppMigrationService(portalCreationOverride: { appItem, externalURL in
                     try FileManager.default.createSymbolicLink(at: appItem.path, withDestinationURL: externalURL)
                 })
-                let result = try await service.moveAndLink(
-                    appToMove: app,
-                    destinationURL: destURL,
-                    isRunning: isAppRunning(url: app.displayURL),
-                    replacementChoice: replacementChoice,
-                    deleteSourceFallback: AppMigrationService.removeItemViaFinder(at:),
-                    progressHandler: { progress in
-                        await MainActor.run {
-                            self.progressBytes = progress.copiedBytes
-                            self.progressTotalBytes = progress.totalBytes
-                            self.progressFileName = progress.currentFile
-                        }
-                    }
-                )
+                let progress = DataTransferProgress()
+                await MainActor.run { self.appTransferProgress = progress }
+                let result = try await progress.track { handler in
+                    try await service.moveAndLink(
+                        appToMove: app,
+                        destinationURL: destURL,
+                        isRunning: self.isAppRunning(url: app.displayURL),
+                        replacementChoice: replacementChoice,
+                        deleteSourceFallback: AppMigrationService.removeItemViaFinder(at:),
+                        progressHandler: handler
+                    )
+                }
                 recordCompletedTransfer(.movedOut(app, destination: destURL, isMASExternal: false))
                 if let message = result.pendingMessage {
                     showError(title: "应用已迁移，仍有待办".localized, message: message)
@@ -1845,6 +1863,7 @@ struct ContentView: View {
             }
             await MainActor.run {
                 showProgress = false
+                appTransferProgress = nil
                 isMigrating = false
                 scanBothAppsAtomic()
             }
@@ -2290,13 +2309,14 @@ struct ContentView: View {
                 )
                 
                 do {
-                    let result = try await moveAndLink(appToMove: app, destinationURL: destURL, lockExternal: lockExternal,
-                                                       replacementChoice: replacementChoices[app.id]) { progress in
-                        await MainActor.run {
-                            self.progressBytes = progress.copiedBytes
-                            self.progressTotalBytes = progress.totalBytes
-                            self.progressFileName = progress.currentFile
-                        }
+                    // One progress object per application, so stages restart
+                    // cleanly between items in a batch.
+                    let progress = DataTransferProgress()
+                    await MainActor.run { self.appTransferProgress = progress }
+                    let result = try await progress.track { handler in
+                        try await self.moveAndLink(appToMove: app, destinationURL: destURL, lockExternal: lockExternal,
+                                                   replacementChoice: replacementChoices[app.id],
+                                                   progressHandler: handler)
                     }
                     if let message = result.pendingMessage { completionWarnings.append(app.displayName + ": " + message) }
                     recordCompletedTransfer(.movedOut(app, destination: destURL,
@@ -2318,6 +2338,7 @@ struct ContentView: View {
             
             await MainActor.run {
                 showProgress = false
+                appTransferProgress = nil
                 isMigrating = false
                 selectedLocalApps.removeAll()
                 scanBothAppsAtomic()
@@ -2439,6 +2460,7 @@ struct ContentView: View {
             
             await MainActor.run {
                 showProgress = false
+                appTransferProgress = nil
                 isMigrating = false
                 selectedExternalApps.removeAll()
                 scanBothAppsAtomic()
@@ -2493,6 +2515,7 @@ struct ContentView: View {
         operationState.startTask(for: activityToken) { @MainActor in
             defer {
                 showProgress = false
+                appTransferProgress = nil
                 operationState.finish(activityToken)
             }
             do {
@@ -2608,6 +2631,7 @@ struct ContentView: View {
             
             await MainActor.run {
                 showProgress = false
+                appTransferProgress = nil
                 isMigrating = false
                 scanBothAppsAtomic()
             }
@@ -2705,6 +2729,7 @@ struct ContentView: View {
             
             await MainActor.run {
                 showProgress = false
+                appTransferProgress = nil
                 isMigrating = false
                 selectedExternalApps.removeAll()
                 scanBothAppsAtomic()
@@ -2761,6 +2786,7 @@ struct ContentView: View {
         let task = Task { @MainActor in
             defer {
                 showProgress = false
+                appTransferProgress = nil
                 operationState.finish(activityToken)
             }
             do {
@@ -2827,6 +2853,7 @@ struct ContentView: View {
         let task = Task { @MainActor in
             defer {
                 showProgress = false
+                appTransferProgress = nil
                 operationState.finish(activityToken)
             }
             let signer = CodeSigner()

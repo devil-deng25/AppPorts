@@ -41,12 +41,26 @@ final class MigrationSafetyRenderTests: XCTestCase {
         for (name, title, stage) in [
             ("data-backup-progress", "正在备份原始应用".localized, DataTransferStage.preparing),
             ("data-signing-progress", "重签名此应用".localized, .verifying),
-            ("data-cleanup-progress", "正在清理旧副本...".localized, .cleaning)
+            ("data-cleanup-progress", "正在清理旧副本...".localized, .cleaning),
+            // Application transfers now use the same stage-aware overlay.
+            ("app-transfer-preparing", "正在迁移应用...".localized, DataTransferStage.preparing),
+            ("app-transfer-synchronizing", "正在迁移应用...".localized, .synchronizing)
         ] {
             let progress = DataTransferProgress()
             progress.begin(stage, currentFile: "Example.app")
             try await render(DataDirProgressOverlay(title: title, progress: progress),
                              size: NSSize(width: 540, height: 340), to: output.appendingPathComponent("\(name).png"))
+        }
+        // The copying stage is the only one with a determinate bar; render it with
+        // real byte totals so the layout can be checked.
+        do {
+            let progress = DataTransferProgress()
+            progress.begin(.copying, currentFile: "Contents/Frameworks/Example")
+            progress.update(FileCopier.Progress(copiedBytes: 1_240_000_000, totalBytes: 3_700_000_000,
+                currentFile: "Contents/Frameworks/Example"))
+            try await render(DataDirProgressOverlay(title: "正在迁移应用...".localized, progress: progress),
+                             size: NSSize(width: 540, height: 340),
+                             to: output.appendingPathComponent("app-transfer-copying.png"))
         }
         for width: CGFloat in [580, 900] {
             for zeros in [false, true] {

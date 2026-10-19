@@ -368,6 +368,9 @@ final class AppTransferTransaction {
                                at: URL(fileURLWithPath: journal.record.activeDestinationPath))
         }
         let source = URL(fileURLWithPath: journal.record.sourcePath)
+        // Announce work before the first byte moves so the overlay shows a
+        // spinning stage instead of a frozen zero.
+        DataTransferSession.progress?.begin(.preparing)
         try requireIdentity(journal.record.sourceIdentity, at: source)
         try requireNotRunning(source: source, applicationPaths: journal.record.applicationPaths)
         // Until an existing target's baseline is durable we cannot distinguish
@@ -401,6 +404,7 @@ final class AppTransferTransaction {
         // performs the same final source/process checks immediately afterwards.
         try verifySource(journal.record)
         try requireNotRunning(source: source, applicationPaths: journal.record.applicationPaths)
+        DataTransferSession.progress?.begin(.switching)
         journal.record.phase = .switching
         journal.record.switchIntentRecorded = true
         try journal.save()
@@ -616,6 +620,7 @@ final class AppTransferTransaction {
             try DurableFileIO.syncDirectory(at: URL(fileURLWithPath: journal.record.sourcePath).deletingLastPathComponent())
             try syncStageIfPresent(URL(fileURLWithPath: portalStage), identity: journal.record.portalStageIdentity, record: journal.record)
         }
+        DataTransferSession.progress?.begin(.cleaning)
         try prepareCleanupItems(journal)
         journal.record.phase = .committed
         journal.record.recoverableReason = nil
