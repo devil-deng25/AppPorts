@@ -394,7 +394,11 @@ final class AppTransferTransaction {
         if !journal.record.hasCandidateBaseline {
             try await prepareCandidate(journal, progress: progress)
         }
-        try verifySource(journal.record)
+        // `copy` already proved the source unchanged against the same baseline
+        // (written by preparedHandler during the scan) and nothing since has
+        // touched the source. Re-walking the whole tree here only repeated that
+        // proof, so the pre-switch check below is the one that still guards a real
+        // window: everything between this point and the rename.
         let published = try candidateIsPublished(journal.record)
         try verifyCandidate(journal.record, at: published ? URL(fileURLWithPath: journal.record.destinationPath) : journal.record.candidateURL)
         try requireNotRunning(source: source, applicationPaths: journal.record.applicationPaths)

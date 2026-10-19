@@ -1830,6 +1830,10 @@ struct ContentView: View {
         progressTotalBytes = 0
         progressFileName = ""
         progressTitle = "正在迁移应用...".localized
+        // Create the stage object before revealing the overlay so the first
+        // frame is already the stage view, not the byte-only fallback.
+        let progress = DataTransferProgress()
+        appTransferProgress = progress
         showProgress = true
 
         let task = Task { @MainActor in
@@ -1838,8 +1842,6 @@ struct ContentView: View {
                 let service = AppMigrationService(portalCreationOverride: { appItem, externalURL in
                     try FileManager.default.createSymbolicLink(at: appItem.path, withDestinationURL: externalURL)
                 })
-                let progress = DataTransferProgress()
-                await MainActor.run { self.appTransferProgress = progress }
                 let result = try await progress.track { handler in
                     try await service.moveAndLink(
                         appToMove: app,
@@ -2281,8 +2283,10 @@ struct ContentView: View {
         progressTotal = apps.count
         progressCurrent = 0
         progressTitle = "正在迁移应用...".localized
+        let batchProgress = DataTransferProgress()
+        appTransferProgress = batchProgress
         showProgress = true
-        
+
         var errors: [String] = []
         var completionWarnings: [String] = []
         
@@ -2595,17 +2599,18 @@ struct ContentView: View {
         progressTotalBytes = 0
         progressFileName = ""
         progressTitle = "还原".localized
+        // Build the stage object before revealing the overlay, otherwise the
+        // first frame renders the byte-only fallback and then swaps.
+        let transferProgress = DataTransferProgress()
+        appTransferProgress = transferProgress
         showProgress = true
-        
+
         let task = Task { @MainActor in
             defer { operationState.finish(activityToken) }
             do {
-                let result = try await moveBack(app: target, localDestinationURL: destination) { progress in
-                    await MainActor.run {
-                        self.progressBytes = progress.copiedBytes
-                        self.progressTotalBytes = progress.totalBytes
-                        self.progressFileName = progress.currentFile
-                    }
+                let result = try await transferProgress.track { handler in
+                    try await self.moveBack(app: target, localDestinationURL: destination,
+                                            progressHandler: handler)
                 }
                 recordCompletedTransfer(.movedBack(target, localDestination: destination,
                                                     externalSourceRemains: result.externalSourceRemains,
@@ -2676,8 +2681,10 @@ struct ContentView: View {
         progressTotal = validApps.count
         progressCurrent = 0
         progressTitle = "还原".localized
+        let batchProgress = DataTransferProgress()
+        appTransferProgress = batchProgress
         showProgress = true
-        
+
         var errors: [String] = []
         var completionWarnings: [String] = []
         
@@ -2701,12 +2708,12 @@ struct ContentView: View {
                 )
                 
                 do {
-                    let result = try await moveBack(app: app, localDestinationURL: destination) { progress in
-                        await MainActor.run {
-                            self.progressBytes = progress.copiedBytes
-                            self.progressTotalBytes = progress.totalBytes
-                            self.progressFileName = progress.currentFile
-                        }
+                    // A fresh object per app so stages restart between items.
+                    let itemProgress = DataTransferProgress()
+                    await MainActor.run { self.appTransferProgress = itemProgress }
+                    let result = try await itemProgress.track { handler in
+                        try await self.moveBack(app: app, localDestinationURL: destination,
+                                                progressHandler: handler)
                     }
                     if let message = result.transferResult.pendingMessage { completionWarnings.append(app.displayName + ": " + message) }
                     recordCompletedTransfer(.movedBack(app, localDestination: destination,
