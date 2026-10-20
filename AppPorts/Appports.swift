@@ -55,7 +55,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main
 struct AppMoverApp: App {
     /// 全局语言管理器
     @StateObject private var languageManager = LanguageManager.shared

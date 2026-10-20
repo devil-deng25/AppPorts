@@ -35,6 +35,8 @@ Status: implemented
 
 ## Related decisions
 
+- root 应用的位置交换与已验证原件清理使用[一次性受限管理员授权](../bug-fix/2026-10-20-root应用迁移授权.md)，事务记账仍由普通用户进程持有。
+
 - 复制结束后校验与清理的界面反馈见[按真实工作阶段显示进度](../feature/2026-10-14-data-transfer-progress.md)，界面百分比不替代持久化完成事实。
 - 严格旧还原的根映射、同 ID 重试与私有恢复点见[历史严格还原只映射目标根所有权](../bug-fix/2026-10-02-legacy-volume-restore-ownership.md)。
 

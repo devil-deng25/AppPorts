@@ -10,6 +10,8 @@ struct AppTransferHooks {
     var checkpoint: ((Checkpoint, AppTransferRecord) throws -> Void)?
     var synchronizeCleanupParent: (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) }
     var synchronizeStagingParent: (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) }
+    var exchange: (URL, URL) throws -> Void = { try AppTransferTransaction.exchange($0, $1) }
+    var administratorOperation: ((PrivilegedAppTransfer.Request) throws -> Void)?
 }
 
 /// Executes the application's own location journal. It never signs real code.
@@ -30,15 +32,18 @@ final class AppTransferTransaction {
     private let facts: SignatureFactStore
     private let hooks: AppTransferHooks
     private let protection: AppUpdateProtectionStore
+    private let allowsAdministratorPrompt: Bool
 
     init(store: AppTransferStore, fileManager: FileManager, facts: SignatureFactStore,
          buildPortal: @escaping PortalBuilder, portalMatches: @escaping PortalMatcher,
          updateDock: @escaping AppMigrationService.DockShortcutUpdater,
-         runningApplications: @escaping () -> [AppRunningState.RunningApplication], hooks: AppTransferHooks) {
+         runningApplications: @escaping () -> [AppRunningState.RunningApplication], hooks: AppTransferHooks,
+         allowsAdministratorPrompt: Bool = true) {
         self.store = store; self.fileManager = fileManager; self.facts = facts
         self.buildPortal = buildPortal; self.portalMatches = portalMatches; self.updateDock = updateDock
         self.runningApplications = runningApplications; self.hooks = hooks
         self.protection = AppUpdateProtectionStore(transferStore: store)
+        self.allowsAdministratorPrompt = allowsAdministratorPrompt
     }
 
     /// A later signature/location operation must not strand developer evidence
@@ -214,7 +219,7 @@ final class AppTransferTransaction {
             }
             for relative in record.applicationPaths {
                 let url = relative.isEmpty ? source : source.appendingPathComponent(relative)
-                let valid = try signatureIsValid(at: url)
+                let valid = try Self.signatureIsValid(at: url)
                 if let relocation = try facts.captureRelocation(from: url, transferStore: store) {
                     journal.record.signatureRelocations.append(.init(relativePath: relative, relocation: relocation))
                 }
@@ -383,7 +388,7 @@ final class AppTransferTransaction {
         if journal.record.applicationPaths.contains(where: { journal.record.signatureChecks[$0] == nil }) {
             for relative in journal.record.applicationPaths where journal.record.signatureChecks[relative] == nil {
                 let url = relative.isEmpty ? source : source.appendingPathComponent(relative)
-                let valid = try signatureIsValid(at: url)
+                let valid = try Self.signatureIsValid(at: url)
                 if let relocation = try facts.captureRelocation(from: url, transferStore: store) {
                     journal.record.signatureRelocations.append(.init(relativePath: relative, relocation: relocation))
                 }
@@ -426,7 +431,14 @@ final class AppTransferTransaction {
                 throw Self.failure("暂存入口已改变，未切换应用。".localized, at: portal)
             }
             try store.recheckWriterAdmission()
-            try Self.exchange(source, portal)
+            do { try hooks.exchange(source, portal) }
+            catch {
+                guard mayAuthorize(error, at: source) else { throw error }
+                try authorize(.init(action: .exchange, record: journal.record,
+                    sourceBaseline: store.baseline("source", operationID: journal.record.operationID),
+                    candidateBaseline: store.baseline("candidate", operationID: journal.record.operationID),
+                    portalBaseline: captureBaseline(portal)))
+            }
         } else {
             let destination = URL(fileURLWithPath: journal.record.destinationPath)
             try verifyExistingDestination(journal.record)
@@ -800,7 +812,14 @@ final class AppTransferTransaction {
             try checkpoint(.beforeCleanup, journal)
             try requireActive(journal.record)
             try requireOldCopyNotRunning(item, record: journal.record)
-            try remove(baseline, at: url, identity: item.identity, removalID: item.id, partial: true)
+            do { try remove(baseline, at: url, identity: item.identity, removalID: item.id, partial: true) }
+            catch {
+                let retained = try TreeCopySession.retainedRemovalURL(at: url, removalID: item.id) ?? url
+                guard item.role == .source, journal.record.direction == .migrate,
+                      mayAuthorize(error, at: retained) else { throw error }
+                try authorize(.init(action: .remove, record: journal.record, sourceBaseline: baseline,
+                                    cleanupItem: item))
+            }
         } else if !item.deletionStarted {
             throw Self.failure("旧副本已不在记录位置，未将其视为已清理。".localized, at: url)
         }
@@ -1105,7 +1124,7 @@ final class AppTransferTransaction {
             .map(\.lastPathComponent).sorted()
     }
 
-    private func signatureIsValid(at url: URL) throws -> Bool {
+    static func signatureIsValid(at url: URL) throws -> Bool {
         var code: SecStaticCode?
         let creation = SecStaticCodeCreateWithPath(url as CFURL, [], &code)
         if creation == errSecCSUnsigned || creation == errSecCSBadObjectFormat { return false }
@@ -1119,7 +1138,7 @@ final class AppTransferTransaction {
     private func verifySignatures(_ record: AppTransferRecord, root: URL) throws {
         for (relative, wasValid) in record.signatureChecks where wasValid {
             let url = relative.isEmpty ? root : root.appendingPathComponent(relative)
-            guard try signatureIsValid(at: url) else { throw Self.failure("目标应用未通过原有签名校验，原件已保留。".localized, at: url) }
+            guard try Self.signatureIsValid(at: url) else { throw Self.failure("目标应用未通过原有签名校验，原件已保留。".localized, at: url) }
         }
     }
 
@@ -1176,7 +1195,7 @@ final class AppTransferTransaction {
     /// the other into place. The window is real but tiny, and it only opens on a
     /// filesystem that cannot express the atomic operation at all — refusing
     /// outright would make that drive unusable for migration.
-    private static func exchange(_ a: URL, _ b: URL) throws {
+    static func exchange(_ a: URL, _ b: URL) throws {
         if renameatx_np(AT_FDCWD, a.path, AT_FDCWD, b.path, UInt32(RENAME_SWAP)) == 0 { return }
         let code = errno
         guard code == ENOTSUP || code == EINVAL else {
@@ -1198,6 +1217,22 @@ final class AppTransferTransaction {
             try? moveExclusively(staged, a)
             throw error
         }
+    }
+
+    private func mayAuthorize(_ error: Error, at url: URL) -> Bool {
+        let error = error as NSError
+        guard allowsAdministratorPrompt, error.domain == NSPOSIXErrorDomain,
+              error.code == Int(EACCES) || error.code == Int(EPERM) else { return false }
+        return hooks.administratorOperation != nil || (try? SignatureSnapshot.info(at: url).st_uid) == 0
+    }
+
+    private func authorize(_ request: PrivilegedAppTransfer.Request) throws {
+        try Task.checkCancellation()
+        try store.recheckWriterAdmission()
+        AppLogger.shared.logContext("应用位置操作需要管理员授权", details: [
+            ("operation_id", request.record.operationID.uuidString), ("action", request.action.rawValue)])
+        let prepared = try request.preparedForAuthorization()
+        try (hooks.administratorOperation ?? PrivilegedAppTransfer.authorize)(prepared)
     }
 
     /// Rename that never replaces an existing name.

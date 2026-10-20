@@ -705,7 +705,7 @@ struct AppMigrationService {
                 }
             }, portalMatches: { self.localPortalKind(at: $0, linkedTo: $1) != nil },
             updateDock: retrying ? dockShortcutRetryUpdater : dockShortcutUpdater,
-            runningApplications: runningApplications, hooks: transferHooks)
+            runningApplications: runningApplications, hooks: transferHooks, allowsAdministratorPrompt: !retrying)
     }
 
     private func sameApplicationContainer(_ source: URL, _ destination: URL, folder: Bool) -> Bool {
