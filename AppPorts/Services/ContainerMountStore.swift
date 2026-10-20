@@ -45,7 +45,7 @@ final class ContainerMountStore: @unchecked Sendable {
     // are reusable; the document and filesystem are always read again.
     private let baselineValidation = BaselineValidation()
 
-    private struct Document: Codable {
+    private struct Document: Codable, Equatable {
         var schemaVersion = 3
         var mounts: [ContainerMountRecord] = []
         var cleanups: [ContainerCleanupRecord] = []
@@ -737,6 +737,7 @@ final class ContainerMountStore: @unchecked Sendable {
         defer { _ = flock(writer, LOCK_UN); _ = close(writer) }
         let validation = baselineValidation
         var document = try load(using: validation)
+        let original = document
         try body(&document, validation)
         // Older schema-3 writers drop unknown transfer fields while preserving
         // the opaque baseline. Protect ownership-aware records before any such
@@ -768,6 +769,9 @@ final class ContainerMountStore: @unchecked Sendable {
         let activeVolumes = Set(document.mounts.map { $0.volumeUUID.uppercased() })
         document.remountInterventions = document.remountInterventions.filter { activeVolumes.contains($0.key) }
         try validate(document, using: validation)
+        // Remount checks may confirm an unchanged record. Do not turn those
+        // checks into filesystem events and another round of UI scans.
+        guard document != original else { return }
         try save(document)
         saved = true
     }

@@ -127,6 +127,7 @@ enum DataDirStatus {
     static let existingSymlink = "现有软链"
     static let pendingRelink = "待接回"
     static let missing = "未找到"
+    static let pendingCompletion = "待完成"
     /// 挂载迁移：外置卷已挂载在原目录上
     static let mounted = "已挂载"
     /// 挂载迁移：外置卷在线但尚未挂载
@@ -153,6 +154,8 @@ enum DataDirStatus {
             return "待接回".localized
         case missing:
             return "未找到".localized
+        case pendingCompletion:
+            return "待完成".localized
         case mounted:
             return "已挂载".localized
         case pendingMount:
@@ -256,6 +259,7 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
     var hasManagedLinkRecord = false
     var recoveryOperationID: UUID? = nil
     var hasMountTransferRecord = false
+    var weChatSplitMembers: [DataDirItem] = []
 
     var canRestore: Bool {
         hasManagedLinkRecord || DataDirStatus.mountStatuses.contains(status)
@@ -277,16 +281,22 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
         return target.standardizedFileURL.path == home.appendingPathComponent(source.lastPathComponent).path
     }
 
-    var sizeMeasurementURL: URL? { isUserDirectoryLink ? nil : linkedDestination ?? path }
+    var sizeMeasurementURL: URL? {
+        isUserDirectoryLink || !weChatSplitMembers.isEmpty ? nil : linkedDestination ?? path
+    }
 
     var displayedStatus: String { isUserDirectoryLink ? "用户目录入口" : status }
 
     var sizeScopeLabel: String {
+        if !weChatSplitMembers.isEmpty { return "msg + business" }
         if isUserDirectoryLink { return "不计入应用数据".localized }
         return (linkedDestination == nil ? "本卷大小" : "目标大小").localized
     }
 
     var sizeScopeExplanation: String {
+        if !weChatSplitMembers.isEmpty {
+            return "仅统计已迁移的媒体目录，不包含本地数据库和配置。".localized
+        }
         if isUserDirectoryLink {
             return "此链接指向用户个人目录，不是此应用独占的数据；不统计其目标大小，也不提供迁移或还原。".localized
         }

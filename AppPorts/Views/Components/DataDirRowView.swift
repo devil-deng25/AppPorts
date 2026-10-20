@@ -177,7 +177,16 @@ struct DataDirOperationButtons: View {
 
     @ViewBuilder
     var body: some View {
-        if DataDirStatus.mountStatuses.contains(item.status) {
+        if !item.weChatSplitMembers.isEmpty {
+            HStack(spacing: 6) {
+                if !item.weChatSplitMembers.contains(where: { $0.status == DataDirStatus.local }),
+                   item.weChatSplitMembers.count < PartialWeChatMigrationPolicy.memberNames.count
+                    || item.weChatSplitMembers.contains(where: { $0.status != DataDirStatus.mounted }) {
+                    Button("继续".localized) { onMigrate(item) }
+                }
+                if let onMountRestore { mountRestoreButton(action: onMountRestore) }
+            }
+        } else if DataDirStatus.mountStatuses.contains(item.status) {
             mountOperationButtons
         } else if !item.isMigratable, item.hasMountTransferRecord, let onMountRestore {
             mountRestoreButton(action: onMountRestore)

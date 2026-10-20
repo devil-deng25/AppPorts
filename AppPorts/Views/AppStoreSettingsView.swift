@@ -53,6 +53,7 @@ struct AppStoreSettingsView: View {
     @State private var isRetryingAutoResignCleanup = false
 
     /// 经典数据迁移模式：容器目录允许符号链接迁移、沙盒应用允许重签名。默认关闭。
+    @AppStorage(MigrationPreferences.partialWeChatMigrationKey) private var partialWeChatMigrationEnabled = false
     @AppStorage(MigrationPreferences.classicDataMigrationKey) private var classicDataMigrationEnabled = false
     @State private var showClassicModeAcknowledgement = false
     @State private var classicModeAcknowledged = false
@@ -289,6 +290,10 @@ struct AppStoreSettingsView: View {
                 }
                 .font(.caption)
             }
+
+            Toggle("微信账号拆分迁移".localized, isOn: $partialWeChatMigrationEnabled)
+                .toggleStyle(.switch)
+                .padding()
 
             classicModeSection
 

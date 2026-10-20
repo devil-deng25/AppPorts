@@ -1,6 +1,604 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "待完成": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pending completion"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待完成"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待完成"
+          }
+        }
+      }
+    },
+    "仅统计已迁移的媒体目录，不包含本地数据库和配置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only migrated media folders are counted, excluding local databases and settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅统计已迁移的媒体目录，不包含本地数据库和配置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅統計已遷移的媒體目錄，不包含本機資料庫和設定。"
+          }
+        }
+      }
+    },
+    "微信账号拆分迁移": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Split WeChat account migration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "微信账号拆分迁移"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "微信帳號拆分遷移"
+          }
+        }
+      }
+    },
+    "无法确认微信账号目录，未改动数据。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The WeChat account folder could not be verified. Your data has not been changed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法确认微信账号目录，未改动数据。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法確認微信帳號目錄，未改動資料。"
+          }
+        }
+      }
+    },
+    "请先在设置中开启“微信账号拆分迁移”。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable “Split WeChat account migration” in Settings first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先在设置中开启“微信账号拆分迁移”。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請先在設定中開啟「微信帳號拆分遷移」。"
+          }
+        }
+      }
+    },
+    "请先完整还原这个账号已迁移的数据，再切换迁移方式。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fully restore this account’s migrated data before changing migration modes."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先完整还原这个账号已迁移的数据，再切换迁移方式。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請先完整還原此帳號已遷移的資料，再切換遷移方式。"
+          }
+        }
+      }
+    },
+    "账号下的 msg 和 business 必须都是可读取的真实目录，才能拆分迁移。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account’s msg and business folders must both be readable directories to use split migration."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "账号下的 msg 和 business 必须都是可读取的真实目录，才能拆分迁移。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "帳號下的 msg 和 business 必須都是可讀取的實際目錄，才能拆分遷移。"
+          }
+        }
+      }
+    },
+    "目录大小未能完整读取，请检查访问权限后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Folder sizes could not be fully read. Check access permissions and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目录大小未能完整读取，请检查访问权限后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目錄大小未能完整讀取，請檢查存取權限後重試。"
+          }
+        }
+      }
+    },
+    "微信账号数据": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WeChat account data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "微信账号数据"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "微信帳號資料"
+          }
+        }
+      }
+    },
+    "微信账号 · 拆分迁移（msg + business）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WeChat account · Split migration (msg + business)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "微信账号 · 拆分迁移（msg + business）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "微信帳號 · 拆分遷移（msg + business）"
+          }
+        }
+      }
+    },
+    "微信账号迁移": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WeChat account migration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "微信账号迁移"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "微信帳號遷移"
+          }
+        }
+      }
+    },
+    "迁移方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migration mode"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "迁移方式"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遷移方式"
+          }
+        }
+      }
+    },
+    "全部迁移": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migrate everything"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部迁移"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部遷移"
+          }
+        }
+      }
+    },
+    "拆分迁移": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Split migration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拆分迁移"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拆分遷移"
+          }
+        }
+      }
+    },
+    "迁移整个账号目录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entire account folder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "迁移整个账号目录"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遷移整個帳號目錄"
+          }
+        }
+      }
+    },
+    "外置盘未连接时，微信可能无法启动。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WeChat may not start when the external drive is disconnected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外置盘未连接时，微信可能无法启动。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外接磁碟未連接時，微信可能無法啟動。"
+          }
+        }
+      }
+    },
+    "迁移 msg + business": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migrate msg + business"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "迁移 msg + business"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遷移 msg + business"
+          }
+        }
+      }
+    },
+    "本地保留数据库等数据": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Database and other data kept locally"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本地保留数据库等数据"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本機保留資料庫等資料"
+          }
+        }
+      }
+    },
+    "仅迁移媒体文件，数据库和配置留在本地。外置盘未连接时的文字消息可用性取决于微信版本。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only media files are moved. Databases and settings stay on your Mac. Text messaging without the external drive depends on your WeChat version."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅迁移媒体文件，数据库和配置留在本地。外置盘未连接时的文字消息可用性取决于微信版本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅遷移媒體檔案，資料庫和設定留在本機。外接磁碟未連接時的文字訊息可用性取決於微信版本。"
+          }
+        }
+      }
+    },
+    "正在计算目录大小…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Calculating folder sizes…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在计算目录大小…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在計算目錄大小⋯"
+          }
+        }
+      }
+    },
+    "切换迁移方式前，需要先完整还原。其他微信数据不受此操作影响。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fully restore before switching modes. Other WeChat data is unaffected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切换迁移方式前，需要先完整还原。其他微信数据不受此操作影响。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切換遷移方式前，需要先完整還原。其他微信資料不受此操作影響。"
+          }
+        }
+      }
+    },
+    "开始迁移": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start migration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开始迁移"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開始遷移"
+          }
+        }
+      }
+    },
+    "还原微信账号数据": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore WeChat account data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还原微信账号数据"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "還原微信帳號資料"
+          }
+        }
+      }
+    },
+    "将这个账号的 msg 和 business 一起还原到本地。校验并切换成功后，自动清理外置旧副本。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore this account’s msg and business folders together. Old external copies are cleaned up after verification and switching succeed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将这个账号的 msg 和 business 一起还原到本地。校验并切换成功后，自动清理外置旧副本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將此帳號的 msg 和 business 一起還原至本機。驗證並切換成功後，自動清理外接磁碟上的舊副本。"
+          }
+        }
+      }
+    },
+    "正在还原微信账号数据": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restoring WeChat account data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在还原微信账号数据"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在還原微信帳號資料"
+          }
+        }
+      }
+    },
+    "正在拆分迁移微信账号数据": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migrating WeChat account media"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在拆分迁移微信账号数据"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在拆分遷移微信帳號資料"
+          }
+        }
+      }
+    },
     " 可释放" : {
       "extractionState" : "manual",
       "localizations" : {

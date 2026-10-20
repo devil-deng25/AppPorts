@@ -33,12 +33,16 @@ struct DataPathPolicy: Sendable {
         let canMigrate: Bool
         /// Structural discovery only. Callers must additionally reject mount points and read failures.
         let mayDiscoverChildren: Bool
+        var partialSubdirectory = false
     }
 
     let homeDirectory: URL
+    let partialWeChatMigrationEnabled: Bool
 
-    init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory())) {
+    init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
+         partialWeChatMigrationEnabled: Bool = MigrationPreferences.isPartialWeChatMigrationEnabled) {
         self.homeDirectory = homeDirectory.standardizedFileURL
+        self.partialWeChatMigrationEnabled = partialWeChatMigrationEnabled
     }
 
     func evaluate(_ url: URL) -> Decision {
@@ -48,7 +52,8 @@ struct DataPathPolicy: Sendable {
         let result = !lexical.canMigrate ? lexical : (!resolved.canMigrate ? resolved : lexical.role == .unrelated ? resolved : lexical)
         let isLink = (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
         return Decision(role: result.role, reason: result.reason, canMigrate: result.canMigrate,
-                        mayDiscoverChildren: result.mayDiscoverChildren && !isLink)
+                        mayDiscoverChildren: result.mayDiscoverChildren && !isLink,
+                        partialSubdirectory: result.partialSubdirectory)
     }
 
     private func classify(_ url: URL, home: URL) -> Decision {
@@ -73,7 +78,15 @@ struct DataPathPolicy: Sendable {
         if relative[0] == "com.tencent.xinWeChat" {
             let directAccount = dataRelative.count == 3 && dataRelative.starts(with: ["Documents", "xwechat_files"])
             let support = dataRelative == ["Library", "Application Support", "com.tencent.xinWeChat"]
-            if directAccount || support { return allowed(.businessData) }
+            let partial = PartialWeChatMigrationPolicy(homeDirectory: home)
+            if directAccount || support {
+                return Decision(role: .businessData, reason: nil, canMigrate: true,
+                                mayDiscoverChildren: partialWeChatMigrationEnabled && partial.isAccount(url))
+            }
+            if partialWeChatMigrationEnabled, partial.account(forMember: url) != nil {
+                return Decision(role: .businessData, reason: nil, canMigrate: true,
+                                mayDiscoverChildren: false, partialSubdirectory: true)
+            }
             return locked(.weChatCompatibilityDirectory, .weChatCompatibility,
                           discover: dataRelative.count < 3)
         }

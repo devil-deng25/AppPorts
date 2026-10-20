@@ -30,13 +30,16 @@ struct DataOperationSafety: Sendable {
 
     let homeDirectory: URL
     let store: ContainerMountStore
+    let partialWeChatMigrationEnabled: Bool
     var runner: any ShellCommandRunning = ProcessCommandRunner()
 
     init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()), store: ContainerMountStore = .shared,
-         runner: any ShellCommandRunning = ProcessCommandRunner()) {
+         runner: any ShellCommandRunning = ProcessCommandRunner(),
+         partialWeChatMigrationEnabled: Bool = MigrationPreferences.isPartialWeChatMigrationEnabled) {
         self.homeDirectory = homeDirectory
         self.store = store
         self.runner = runner
+        self.partialWeChatMigrationEnabled = partialWeChatMigrationEnabled
     }
 
     func requireNewMigration(at source: URL, destination: URL? = nil, bundleIdentifier: String? = nil,
@@ -55,7 +58,7 @@ struct DataOperationSafety: Sendable {
     }
 
     func requirePolicy(at url: URL) throws {
-        let policy = DataPathPolicy(homeDirectory: homeDirectory)
+        let policy = DataPathPolicy(homeDirectory: homeDirectory, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled)
         let protectedRoots = ["Library/Containers", "Library/Group Containers"].map {
             homeDirectory.appendingPathComponent($0).path
         }

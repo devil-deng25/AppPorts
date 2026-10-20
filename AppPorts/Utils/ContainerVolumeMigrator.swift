@@ -226,12 +226,14 @@ actor ContainerVolumeMigrator {
         availableCapacity: @escaping @Sendable (URL) -> Int64? = { DiskUtility.availableCapacity(at: $0) },
         mountFlags: @escaping @Sendable (URL) -> UInt32? = { DiskUtility.mountFlags(at: $0) },
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
+        partialWeChatMigrationEnabled: Bool = MigrationPreferences.isPartialWeChatMigrationEnabled,
         safetyRunner: any ShellCommandRunning = ProcessCommandRunner(),
         makeMountPointLease: @escaping @Sendable (URL) throws -> any MountPointLeasing = { try MountPointLease(at: $0) },
         removeMigrationBackup: @escaping @Sendable (URL) throws -> Void = { try FileCopier.removeCopy(at: $0) },
         synchronizeCleanupParent: @escaping @Sendable (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) }
     ) {
-        self.safety = DataOperationSafety(homeDirectory: homeDirectory, store: store, runner: safetyRunner)
+        self.safety = DataOperationSafety(homeDirectory: homeDirectory, store: store, runner: safetyRunner,
+                                          partialWeChatMigrationEnabled: partialWeChatMigrationEnabled)
         self.makeMountPointLease = makeMountPointLease
         self.synchronizeCleanupParent = synchronizeCleanupParent
         self.disk = disk
