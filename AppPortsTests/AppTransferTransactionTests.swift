@@ -98,6 +98,71 @@ final class AppTransferTransactionTests: XCTestCase {
         XCTAssertTrue(recovered.isComplete)
     }
 
+    func testForegroundLinkAndRestoreResumePermissionBlockedMigration() async throws {
+        for restore in [false, true] {
+            let w = try Workspace(); defer { w.cleanup() }
+            let local = w.local.appendingPathComponent("App.app")
+            let external = w.external.appendingPathComponent("App.app")
+            try makeApp(local)
+            do {
+                _ = try await w.service(exchange: { _, _ in throw POSIXError(.EACCES) },
+                    administratorOperation: { _ in throw CancellationError() })
+                    .moveAndLink(appToMove: item(local), destinationURL: external,
+                                 isRunning: false, progressHandler: nil)
+                XCTFail("Expected pending authorization")
+            } catch is CancellationError {}
+            let pending = try XCTUnwrap(w.store.records().first)
+            var prompts = 0
+            let foreground = w.service(exchange: { _, _ in throw POSIXError(.EACCES) },
+                administratorOperation: { request in
+                    prompts += 1
+                    try PrivilegedAppTransfer.perform(request)
+                })
+            if restore {
+                let result = try await foreground.moveBack(app: item(external, status: AppStatus.unlinked),
+                                                          localDestinationURL: local, progressHandler: nil)
+                XCTAssertTrue(result.transferResult.isComplete, result.transferResult.pendingMessage ?? "")
+                XCTAssertEqual(try payload(local), "payload")
+                XCTAssertFalse(FileManager.default.fileExists(atPath: external.path))
+            } else {
+                try await foreground.linkAppWhenReady(appToLink: item(external, status: AppStatus.unlinked),
+                                                     destinationURL: local)
+                XCTAssertEqual(try CodeSigner.resolveAppURL(at: local).path, external.path)
+                XCTAssertEqual(try payload(external), "payload")
+            }
+            XCTAssertEqual(prompts, 1)
+            XCTAssertFalse(try w.store.records().contains { $0.id == pending.id })
+            try assertNoStages(w)
+        }
+    }
+
+    func testForegroundRecoveryDoesNotAdoptReplacedExternalApplication() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let local = w.local.appendingPathComponent("App.app")
+        let external = w.external.appendingPathComponent("App.app")
+        try makeApp(local)
+        do {
+            _ = try await w.service(exchange: { _, _ in throw POSIXError(.EACCES) },
+                administratorOperation: { _ in throw CancellationError() })
+                .moveAndLink(appToMove: item(local), destinationURL: external,
+                             isRunning: false, progressHandler: nil)
+            XCTFail("Expected pending authorization")
+        } catch is CancellationError {}
+        let retained = w.external.appendingPathComponent("Retained.app")
+        try FileManager.default.moveItem(at: external, to: retained)
+        try makeApp(external, payload: "replacement")
+        var prompts = 0
+        do {
+            try await w.service(administratorOperation: { _ in prompts += 1 })
+                .linkAppWhenReady(appToLink: item(external, status: AppStatus.unlinked), destinationURL: local)
+            XCTFail("An unrelated replacement must not be linked over the original")
+        } catch {}
+        XCTAssertEqual(prompts, 0)
+        XCTAssertEqual(try payload(local), "payload")
+        XCTAssertEqual(try payload(retained), "payload")
+        XCTAssertEqual(try payload(external), "replacement")
+    }
+
     func testAuthorizedExchangeRejectsChangesDuringPasswordPrompt() async throws {
         for changed in ["source", "destination", "portal", "parent"] {
             let w = try Workspace(); defer { w.cleanup() }

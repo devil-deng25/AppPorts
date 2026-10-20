@@ -3,7 +3,7 @@ import Foundation
 /// Produces only the display metadata of a macOS portal. Call on a private staging
 /// bundle, then sign and install the bundle before registering it with the system.
 enum PortalPresentation {
-    static let formatVersion = 1
+    static let formatVersion = 3
     static let versionKey = "AppPortsPortalFormatVersion"
 
     static func needsRefresh(local: [String: Any], external: [String: Any]) -> Bool {
@@ -148,6 +148,13 @@ enum PortalPresentation {
         plist["LSUIElement"] = true
         if let identifier = plist["CFBundleIdentifier"] as? String { plist["CFBundleIdentifier"] = identifier + ".appports.stub" }
         for key in ["SUFeedURL", "SUPublicDSAKeyFile", "SUPublicEDKey", "SUScheduledCheckInterval", "SUAllowsAutomaticUpdates", "ElectronDefaultApp", "electron"] {
+            plist.removeValue(forKey: key)
+        }
+        // The portal runs its own NSApplication delegate, not the target's UI,
+        // scripting, extension or system-service implementation.
+        for key in ["NSPrincipalClass", "NSMainNibFile", "NSMainStoryboardFile", "NSServices",
+                    "NSAppleScriptEnabled", "OSAScriptingDefinition", "NSExtension", "NSExtensionSDK",
+                    "NSSupportsAutomaticTermination", "NSSupportsSuddenTermination"] {
             plist.removeValue(forKey: key)
         }
         plist[versionKey] = formatVersion

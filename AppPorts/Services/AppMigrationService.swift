@@ -808,11 +808,33 @@ struct AppMigrationService {
         return .same
     }
 
+    /// Foreground actions wait for maintenance, then resume the exact unfinished
+    /// migration with permission to show an administrator prompt.
+    func linkAppWhenReady(appToLink: AppItem, destinationURL: URL) async throws {
+        try await Self.mutationCoordinator.begin()
+        defer { Self.mutationCoordinator.end() }
+        let operationLock = makeOperationLock()
+        guard await operationLock.acquire(timeout: OperationLock.appWaitTimeout) else {
+            throw AppTransferTransaction.failure(operationLock.admissionFailureReason
+                ?? "其他操作正在使用应用记录，请稍后重试。".localized, at: destinationURL)
+        }
+        defer { operationLock.release() }
+        let resumed = try await finishPendingMigration(external: appToLink.path, local: destinationURL)
+        // Resuming may already have installed the requested entry. Do not
+        // replace an entry still owned by its transfer's cleanup journal.
+        if resumed && localPortalKind(at: destinationURL, linkedTo: appToLink.path) != nil { return }
+        try linkAppWhileLocked(appToLink: appToLink, destinationURL: destinationURL)
+    }
+
     func linkApp(appToLink: AppItem, destinationURL: URL) throws {
         try Self.mutationCoordinator.beginSynchronously()
         defer { Self.mutationCoordinator.end() }
         let operationLock = try acquireOperationLock(at: destinationURL)
         defer { operationLock.release() }
+        try linkAppWhileLocked(appToLink: appToLink, destinationURL: destinationURL)
+    }
+
+    private func linkAppWhileLocked(appToLink: AppItem, destinationURL: URL) throws {
         let operationID = AppLogger.shared.makeOperationID(prefix: "app-link")
         let startedAt = Date()
         var operationResult = "failed"
@@ -1047,6 +1069,7 @@ struct AppMigrationService {
                 ?? "其他操作正在使用应用记录，请稍后重试。".localized, at: app.path)
         }
         defer { operationLock.release() }
+        _ = try await finishPendingMigration(external: app.path, local: localDestinationURL, progress: progressHandler)
         try Self.checkWritePermission(at: localDestinationURL, fileManager: fileManager)
         let existing = localPortalKind(at: localDestinationURL, linkedTo: app.path)
         if existing == .folderMirror {
@@ -1065,6 +1088,28 @@ struct AppMigrationService {
         }
         return RestoreResult(retiredLocalPortalURLs: result.retiredLocalPortalURLs,
                              externalSourceRemains: result.externalSourceRemains, transferResult: result)
+    }
+
+    /// Caller holds the coordinator and operation lock. Only the exact inverse
+    /// migration is eligible; unrelated/overlapping records stay fail-closed.
+    private func finishPendingMigration(external: URL, local: URL,
+                                        progress: FileCopier.ProgressHandler? = nil) async throws -> Bool {
+        _ = retireUnrecoverableTransfersWhileLocked()
+        var resumed = false
+        for record in try transferStore.inventory().records where record.direction == .migrate
+            && !record.isSwitchComplete && record.phase != .cancelled
+            && record.sourcePath == local.standardizedFileURL.path
+            && record.destinationPath == external.standardizedFileURL.path {
+            try AppTransferJournalIntegrity.requireVerifiedManifests(for: record, store: transferStore)
+            let result = try await transferTransaction().resume(record.operationID, progress: progress)
+            guard result.isSwitchComplete else {
+                throw AppTransferTransaction.failure(result.pendingMessage ?? record.recoverableReason ??
+                    "此位置的上次操作尚未完成。AppPorts 已保留数据并会继续尝试，请根据下面的原因处理后重试。".localized,
+                    at: external)
+            }
+            resumed = true
+        }
+        return resumed
     }
 
     /// A folder marker identifies the entry, but does not authorize deleting
@@ -2106,6 +2151,13 @@ struct AppMigrationService {
             defer { stage.cleanup() }
             // Copy bytes into independent files. Never inherit uchg or hard links from the old portal.
             try stage.copyContents(from: localURL, snapshot: original)
+            let stagedContents = stageURL.appendingPathComponent("Contents")
+            let stagedMacOS = stagedContents.appendingPathComponent("MacOS")
+            try fileManager.removeItem(at: stagedMacOS.appendingPathComponent("launcher"))
+            try copyNativeLauncher(to: stagedMacOS,
+                                   resourcesDir: stagedContents.appendingPathComponent("Resources"),
+                                   externalURL: externalURL)
+            try stage.recordGeneratedFiles(replacing: ["Contents/MacOS/launcher", "Contents/Resources/real_app_path.txt"])
             for warning in try PortalPresentation.write(from: externalContents, to: stageURL.appendingPathComponent("Contents")) {
                 AppLogger.shared.log(warning, level: "WARN")
             }

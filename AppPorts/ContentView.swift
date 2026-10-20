@@ -1873,8 +1873,8 @@ struct ContentView: View {
         operationState.registerCancellation(for: activityToken) { task.cancel() }
     }
 
-    func linkApp(appToLink: AppItem, destinationURL: URL) throws {
-        try AppMigrationService().linkApp(appToLink: appToLink, destinationURL: destinationURL)
+    func linkApp(appToLink: AppItem, destinationURL: URL) async throws {
+        try await AppMigrationService().linkAppWhenReady(appToLink: appToLink, destinationURL: destinationURL)
     }
     
     func deleteLink(app: AppItem) throws {
@@ -2439,7 +2439,7 @@ struct ContentView: View {
                 )
                 
                 do {
-                    try linkApp(appToLink: tempAppItem, destinationURL: destination)
+                    try await linkApp(appToLink: tempAppItem, destinationURL: destination)
                     // 锁定外部 app（仅 Sparkle/Electron 有更新器的应用）
                     if lockExternal && item.app.needsLock {
                         AppMigrationService().lockExternalApp(at: item.sourcePath)

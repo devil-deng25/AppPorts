@@ -1,4 +1,5 @@
 import Cocoa
+import os
 
 /// AppPorts Stub Portal Native Launcher
 ///
@@ -62,56 +63,93 @@ enum DiskMissingStrings {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var realAppPath: String?
+    private let logger = Logger(subsystem: "com.shimoko.AppPorts.StubLauncher", category: "launch")
+    private var canTerminate = false
+    private var receivedOpenRequest = false
+    private var pendingRequests = 0
+    private var failed = false
 
     func readRealAppPath() -> String {
-        guard let resURL = Bundle.main.resourceURL else {
-            return ""
-        }
+        guard let resURL = Bundle.main.resourceURL else { return "" }
         let pathFile = resURL.appendingPathComponent("real_app_path.txt")
-        if let str = try? String(contentsOf: pathFile, encoding: .utf8) {
-            let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return ""
+        return (try? String(contentsOf: pathFile, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        realAppPath = readRealAppPath()
-        guard let path = realAppPath, !path.isEmpty,
-              FileManager.default.fileExists(atPath: path) else {
-            showExternalDiskMissing()
-            NSApp.terminate(nil)
-            return
+    func start() {
+        // Some launchers start the process without delivering an initial open
+        // event. AppKit can then defer didFinishLaunching until a second click.
+        // Bootstrap from the event loop itself, independently of that event.
+        DispatchQueue.main.async {
+            self.canTerminate = true
+            if !self.receivedOpenRequest { self.openRealApplication(urls: []) }
+            self.terminateIfFinished()
         }
-        launchApp(at: path)
-        NSApp.terminate(nil)
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        realAppPath = readRealAppPath()
-        guard let realPath = realAppPath, !realPath.isEmpty,
-              FileManager.default.fileExists(atPath: realPath) else {
-            showExternalDiskMissing()
-            NSApp.reply(toOpenOrPrint: .failure)
-            NSApp.terminate(nil)
-            return
-        }
-        for file in filenames {
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            proc.arguments = ["-a", realPath, file]
-            try? proc.run()
-        }
-        NSApp.reply(toOpenOrPrint: .success)
-        NSApp.terminate(nil)
+        openRealApplication(urls: filenames.map { URL(fileURLWithPath: $0) }, replyToFiles: true)
     }
 
-    private func launchApp(at path: String) {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        proc.arguments = [path]
-        try? proc.run()
+    func application(_ application: NSApplication, open urls: [URL]) {
+        openRealApplication(urls: urls)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // An in-flight launch already activates the real app. Repeated clicks
+        // must not enqueue competing launches while it is starting.
+        if pendingRequests == 0 && !failed { openRealApplication(urls: []) }
+        return false
+    }
+
+    private func openRealApplication(urls: [URL], replyToFiles: Bool = false) {
+        receivedOpenRequest = true
+        logger.info("Opening target; forwarded URLs: \(urls.count)")
+        let path = readRealAppPath()
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
+            failed = true
+            logger.error("Target missing: \(path, privacy: .public)")
+            showExternalDiskMissing()
+            if replyToFiles { NSApp.reply(toOpenOrPrint: .failure) }
+            terminateIfFinished()
+            return
+        }
+        pendingRequests += 1
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        let completion: (NSRunningApplication?, Error?) -> Void = { application, error in
+            DispatchQueue.main.async {
+                self.pendingRequests -= 1
+                let succeeded = application != nil && error == nil
+                if replyToFiles { NSApp.reply(toOpenOrPrint: succeeded ? .success : .failure) }
+                if !succeeded && !self.failed {
+                    self.failed = true
+                    self.logger.error("Launch failed: \(String(describing: error), privacy: .public)")
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") == true
+                    alert.messageText = chinese ? "无法打开应用" : "Unable to open application"
+                    alert.informativeText = path + "\n\n" + (error?.localizedDescription ??
+                        (chinese ? "系统未能完成启动，请重试。" : "The system could not complete the launch. Try again."))
+                    alert.runModal()
+                }
+                self.terminateIfFinished()
+            }
+        }
+        let applicationURL = URL(fileURLWithPath: path)
+        if urls.isEmpty {
+            NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration,
+                                               completionHandler: completion)
+        } else {
+            NSWorkspace.shared.open(urls, withApplicationAt: applicationURL,
+                                    configuration: configuration, completionHandler: completion)
+        }
+    }
+
+    private func terminateIfFinished() {
+        // Acknowledge every request before exiting, even when AppKit never
+        // receives the initial open event from the invoking launcher.
+        if canTerminate && pendingRequests == 0 { NSApp.terminate(nil) }
     }
 
     /// Wraps a string as an AppleScript double-quoted literal, escaping `\` and `"`.
@@ -138,5 +176,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.prohibited)
+// Match LSUIElement in the portal plist. A prohibited policy changes the
+// process to BackgroundOnly, which can suppress the first open event.
+app.setActivationPolicy(.accessory)
+delegate.start()
 app.run()

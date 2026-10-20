@@ -112,8 +112,35 @@ final class PortalPresentationTests: XCTestCase {
         let external: [String: Any] = ["CFBundleVersion": "42", "CFBundleShortVersionString": "1"]
         XCTAssertTrue(PortalPresentation.needsRefresh(local: external, external: external))
         var current = external
+        for oldVersion in 1..<PortalPresentation.formatVersion {
+            current[PortalPresentation.versionKey] = oldVersion
+            XCTAssertTrue(PortalPresentation.needsRefresh(local: current, external: external))
+        }
         current[PortalPresentation.versionKey] = PortalPresentation.formatVersion
         XCTAssertFalse(PortalPresentation.needsRefresh(local: current, external: external))
+    }
+
+    func testPortalDoesNotInheritTargetApplicationStartupConfiguration() throws {
+        try withFixture { source, destination in
+            let startup: [String: Any] = [
+                "NSPrincipalClass": "IDEApplication", "NSMainNibFile": "MainMenu",
+                "NSMainStoryboardFile": "Main", "NSServices": [["NSPortName": "Xcode"]],
+                "NSAppleScriptEnabled": true, "OSAScriptingDefinition": "Xcode.sdef",
+                "NSExtension": [:], "NSExtensionSDK": [:],
+                "NSSupportsAutomaticTermination": true, "NSSupportsSuddenTermination": true
+            ]
+            var original = startup
+            original["CFBundleIdentifier"] = "org.example.app"
+            original["CFBundleDocumentTypes"] = [["CFBundleTypeName": "Project"]]
+            original["CFBundleURLTypes"] = [["CFBundleURLSchemes": ["example"]]]
+            try writePlist(original, to: source.appendingPathComponent("Info.plist"))
+            _ = try PortalPresentation.write(from: source, to: destination)
+            let portal = try readPlist(destination.appendingPathComponent("Info.plist"))
+            for key in startup.keys { XCTAssertNil(portal[key], key) }
+            XCTAssertNotNil(portal["CFBundleDocumentTypes"])
+            XCTAssertNotNil(portal["CFBundleURLTypes"])
+            XCTAssertEqual(try readPlist(source.appendingPathComponent("Info.plist"))["NSPrincipalClass"] as? String, "IDEApplication")
+        }
     }
 
     private func withFixture(_ body: (URL, URL) throws -> Void) throws {
