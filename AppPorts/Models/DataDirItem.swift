@@ -295,6 +295,7 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
 
     var sizeScopeExplanation: String {
         if !weChatSplitMembers.isEmpty {
+            if status == DataDirStatus.local { return "msg + business" }
             return "仅统计已迁移的媒体目录，不包含本地数据库和配置。".localized
         }
         if isUserDirectoryLink {
@@ -308,7 +309,9 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
             || pathPolicy?.reason == .runtimeConflict || pathPolicy?.reason == .readFailure
     }
 
-    func matchesVisibility(showZeroByteDirectories: Bool, showLockedStructure: Bool) -> Bool {
+    func matchesVisibility(showZeroByteDirectories: Bool, showLockedStructure: Bool,
+                           showNonMigratableDirectories: Bool = true) -> Bool {
+        if !isMigratable && !showNonMigratableDirectories { return false }
         if needsRecoveryOrAttention { return true }
         if isUserDirectoryLink { return false }
         if !isMigratable { return showLockedStructure }

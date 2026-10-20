@@ -293,7 +293,6 @@ struct ContentView: View {
 
     // 插盘通知：重新挂载容器卷
     @State private var volumeMountObserver: NSObjectProtocol?
-    @State private var volumeUnmountObserver: NSObjectProtocol?
 
     enum SortOption {
         case name, size
@@ -803,8 +802,17 @@ struct ContentView: View {
             TabButton(title: "应用".localized, systemImage: "cube", isSelected: mainTab == .apps) {
                 withAnimation { mainTab = .apps }
             }
-            TabButton(title: "数据目录".localized, systemImage: "cylinder", isSelected: mainTab == .dataDirs) {
-                withAnimation { mainTab = .dataDirs }
+            TabButton(title: "工具目录".localized, systemImage: "wrench.and.screwdriver", isSelected: mainTab == .dataDirs && selectedDataDirsTab == .toolDirs) {
+                withAnimation {
+                    selectedDataDirsTab = .toolDirs
+                    mainTab = .dataDirs
+                }
+            }
+            TabButton(title: "应用数据".localized, systemImage: "cylinder", isSelected: mainTab == .dataDirs && selectedDataDirsTab == .appDirs) {
+                withAnimation {
+                    selectedDataDirsTab = .appDirs
+                    mainTab = .dataDirs
+                }
             }
             TabButton(title: "目录迁移".localized, systemImage: "folder.badge.gearshape", isSelected: mainTab == .customDirs) {
                 withAnimation { mainTab = .customDirs }
@@ -815,23 +823,6 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.primary.opacity(0.03))
         )
-
-        if mainTab == .dataDirs {
-            HStack(spacing: 2) {
-                TabButton(title: "工具目录".localized, isSelected: selectedDataDirsTab == .toolDirs) {
-                    withAnimation { selectedDataDirsTab = .toolDirs }
-                }
-                TabButton(title: "应用数据".localized, isSelected: selectedDataDirsTab == .appDirs) {
-                    withAnimation { selectedDataDirsTab = .appDirs }
-                }
-            }
-            .padding(4)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.primary.opacity(0.03))
-            )
-            .transition(.opacity.combined(with: .move(edge: .leading)))
-        }
 
         if mainTab == .apps {
             // Search Bar
@@ -3225,17 +3216,6 @@ struct ContentView: View {
                 self.remountContainerVolumes(trigger: "volume-mounted")
             }
         }
-        // 卷也可能被别的进程卸掉（拔盘、命令行）。这种情况没有重挂动作可做，
-        // 但列表里的大小和状态已经过期，要刷新一次。
-        volumeUnmountObserver = center.addObserver(
-            forName: NSWorkspace.didUnmountNotification,
-            object: nil,
-            queue: .main
-        ) { _ in
-            Task { @MainActor in
-                self.refreshAfterExternalUnmount()
-            }
-        }
     }
 
     private func stopObservingVolumeMounts() {
@@ -3244,23 +3224,6 @@ struct ContentView: View {
             center.removeObserver(volumeMountObserver)
         }
         volumeMountObserver = nil
-        if let volumeUnmountObserver {
-            center.removeObserver(volumeUnmountObserver)
-        }
-        volumeUnmountObserver = nil
-    }
-
-    /// 挂载点被外部卸载：刷新列表。大小缓存按挂载状态分键，重算时会自己回到空目录的真实大小。
-    @MainActor
-    private func refreshAfterExternalUnmount() {
-        let records = ContainerMountStore.shared.records()
-        guard !records.isEmpty else { return }
-        guard records.contains(where: { !DiskUtility.isMountPoint($0.mountPointURL) }) else { return }
-        AppLogger.shared.logContext(
-            "检测到容器挂载点已卸载，刷新数据目录",
-            details: [("record_count", String(records.count))]
-        )
-        dataDirsRefreshTrigger += 1
     }
 
     @MainActor
@@ -3269,7 +3232,6 @@ struct ContentView: View {
               !operationState.isBusy else { return }
         Task {
             _ = await OperationMaintenance.shared.run()
-            dataDirsRefreshTrigger += 1
         }
     }
 }

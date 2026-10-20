@@ -246,22 +246,10 @@ struct DiskUtility: Sendable {
         self.administratorRunner = administratorRunner
     }
 
-    /// 通过 AppleScript 弹出系统密码框执行命令。同一进程内的授权会被系统缓存约 5 分钟，
-    /// 一次迁移中的多条 diskutil 命令通常只提示一次。
+    /// 通过共享脚本执行管理员命令，短期保留同一授权会话；是否再次验证由系统决定。
     static func runWithAdministratorPrivileges(executable: String, arguments: [String]) throws -> ShellCommandResult {
         let command = ([executable] + arguments).map(shellQuoted).joined(separator: " ")
-        let script = "do shell script \(AppMigrationService.appleScriptStringLiteral(command)) with administrator privileges"
-        var errorInfo: NSDictionary?
-        let output = NSAppleScript(source: script)?.executeAndReturnError(&errorInfo)
-        if let errorInfo {
-            let number = errorInfo[NSAppleScript.errorNumber] as? Int ?? -1
-            let message = errorInfo[NSAppleScript.errorMessage] as? String ?? "unknown AppleScript error"
-            if number == -128 {
-                throw Failure.administratorPromptCancelled(command: command)
-            }
-            return ShellCommandResult(status: 1, standardOutput: Data(), standardError: Data("\(message) (AppleScript error \(number))".utf8), timedOut: false)
-        }
-        return ShellCommandResult(status: 0, standardOutput: Data((output?.stringValue ?? "").utf8), standardError: Data(), timedOut: false)
+        return try AdministratorAuthorization.shared.run(command: command)
     }
 
     private static func shellQuoted(_ value: String) -> String {

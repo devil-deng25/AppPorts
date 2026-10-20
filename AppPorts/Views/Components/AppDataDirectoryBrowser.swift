@@ -332,6 +332,9 @@ struct AppDataDirectoryBrowser<Actions: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 pathLine(item.path, label: "本地路径".localized)
+                ForEach(item.weChatSplitMembers) { member in
+                    pathLine(member.path, label: member.path.lastPathComponent)
+                }
                 if let destination = item.linkedDestination, destination != item.path {
                     pathLine(destination, label: "链接目标".localized)
                 }

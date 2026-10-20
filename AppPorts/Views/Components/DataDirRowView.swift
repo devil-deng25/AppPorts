@@ -179,12 +179,15 @@ struct DataDirOperationButtons: View {
     var body: some View {
         if !item.weChatSplitMembers.isEmpty {
             HStack(spacing: 6) {
-                if !item.weChatSplitMembers.contains(where: { $0.status == DataDirStatus.local }),
-                   item.weChatSplitMembers.count < PartialWeChatMigrationPolicy.memberNames.count
+                if item.weChatSplitMembers.count < PartialWeChatMigrationPolicy.memberNames.count
                     || item.weChatSplitMembers.contains(where: { $0.status != DataDirStatus.mounted }) {
-                    Button("继续".localized) { onMigrate(item) }
+                    migrationButton(title: (item.status == DataDirStatus.local ? "迁移" : "继续").localized,
+                                    icon: "externaldrive.fill.badge.plus") { onMigrate(item) }
                 }
-                if let onMountRestore { mountRestoreButton(action: onMountRestore) }
+                if item.weChatSplitMembers.contains(where: { $0.canRestore || $0.recoveryOperationID != nil }),
+                   let onMountRestore {
+                    mountRestoreButton(action: onMountRestore)
+                }
             }
         } else if DataDirStatus.mountStatuses.contains(item.status) {
             mountOperationButtons
@@ -279,20 +282,8 @@ struct DataDirOperationButtons: View {
                     .accessibilityLabel("迁移".localized)
                     .help("经典模式：用符号链接迁移（不推荐）".localized)
                 }
-                Button(action: { onMountMigrate(item) }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "externaldrive.fill.badge.plus")
-                        Text(classicModeActive ? "挂载迁移".localized : "迁移".localized)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, inline ? 8 : 10)
-                    .padding(.vertical, inline ? 7 : 5)
-                    .background(
-                        Capsule().fill(Color.accentColor)
-                    )
-                }
-                .buttonStyle(.plain)
+                migrationButton(title: classicModeActive ? "挂载迁移".localized : "迁移".localized,
+                                icon: "externaldrive.fill.badge.plus") { onMountMigrate(item) }
                 .help("在外部存储上创建 APFS 卷并挂载到此目录（实验性）".localized)
             } else if item.requiresMountMigration {
                 Image(systemName: "lock.fill")
@@ -301,23 +292,25 @@ struct DataDirOperationButtons: View {
                     .help("沙盒应用的容器数据不支持符号链接迁移".localized)
             } else {
                 // 本地：显示「迁移」按钮
-                Button(action: { onMigrate(item) }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.right.circle.fill")
-                        Text("迁移".localized)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, inline ? 8 : 10)
-                    .padding(.vertical, inline ? 7 : 5)
-                    .background(
-                        Capsule().fill(Color.accentColor)
-                    )
-                }
-                .buttonStyle(.plain)
+                migrationButton(title: "迁移".localized, icon: "arrow.right.circle.fill") { onMigrate(item) }
                 .help("将数据目录迁移到外部存储".localized)
             }
         }
+    }
+
+    private func migrationButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                Text(title)
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, inline ? 8 : 10)
+            .padding(.vertical, inline ? 7 : 5)
+            .background(Capsule().fill(Color.accentColor))
+        }
+        .buttonStyle(.plain)
     }
 
     private func restoreButton(compact: Bool = false) -> some View {

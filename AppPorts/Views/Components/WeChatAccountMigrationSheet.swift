@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WeChatAccountMigrationSheet: View {
     let item: DataDirItem
+    let containerIdentifier: String
     let onConfirm: (WeChatAccountMigrationService.Mode) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var mode: WeChatAccountMigrationService.Mode = .split
@@ -63,8 +64,9 @@ struct WeChatAccountMigrationSheet: View {
         .frame(width: 480)
         .task {
             let account = item.path
+            let identifier = containerIdentifier
             let worker = Task.detached(priority: .userInitiated) {
-                try WeChatAccountMigrationService().measure(account)
+                try WeChatAccountMigrationService(containerIdentifier: identifier).measure(account)
             }
             await withTaskCancellationHandler {
                 do {

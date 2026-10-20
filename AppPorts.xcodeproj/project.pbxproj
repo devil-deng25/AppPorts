@@ -10,6 +10,7 @@
 		2A2693822F667A0E0044F015 /* icon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 2A2693812F667A0E0044F015 /* icon.icon */; };
 		2A2693832F667A0E0044F015 /* icon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 2A2693812F667A0E0044F015 /* icon.icon */; };
 		A92026092900000000000001 /* sponsors.json in Resources */ = {isa = PBXBuildFile; fileRef = A92026092900000000000002 /* sponsors.json */; };
+		B20261020000000000000001 /* StubLauncherBinary in Resources */ = {isa = PBXBuildFile; fileRef = B20261020000000000000002 /* StubLauncherBinary */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,11 +28,25 @@
 		2A2693852F667C1B0044F015 /* AppPorts.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppPorts.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2A2693862F667CCC0044F015 /* AppPortsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppPortsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A92026092900000000000002 /* sponsors.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = sponsors.json; sourceTree = "<group>"; };
+		B20261020000000000000002 /* StubLauncherBinary */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = StubLauncherBinary; sourceTree = DERIVED_FILE_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B20261020000000000000003 /* Exceptions for "AppPorts" folder in "AppPorts" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				StubLauncherBinary,
+			);
+			target = 2A6892EE2ECB9A7D0074F02E /* AppPorts */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		2A6892F12ECB9A7D0074F02E /* AppPorts */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B20261020000000000000003 /* Exceptions for "AppPorts" folder in "AppPorts" target */,
+			);
 			path = AppPorts;
 			sourceTree = "<group>";
 		};
@@ -63,6 +78,7 @@
 		2A6892E62ECB9A7D0074F02E = {
 			isa = PBXGroup;
 			children = (
+				B20261020000000000000002 /* StubLauncherBinary */,
 				A92026092900000000000002 /* sponsors.json */,
 				2A6892F12ECB9A7D0074F02E /* AppPorts */,
 				B10000012F00100000000002 /* AppPortsTests */,
@@ -79,6 +95,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2A6892FA2ECB9A7E0074F02E /* Build configuration list for PBXNativeTarget "AppPorts" */;
 			buildPhases = (
+				B20261020000000000000004 /* Build Stub Launcher */,
 				2A6892EB2ECB9A7D0074F02E /* Sources */,
 				2A6892EC2ECB9A7D0074F02E /* Frameworks */,
 				2A6892ED2ECB9A7D0074F02E /* Resources */,
@@ -185,6 +202,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B20261020000000000000001 /* StubLauncherBinary in Resources */,
 				A92026092900000000000001 /* sponsors.json in Resources */,
 				2A2693822F667A0E0044F015 /* icon.icon in Resources */,
 			);
@@ -199,6 +217,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		B20261020000000000000004 /* Build Stub Launcher */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Tools/StubLauncher/StubLauncherSource.swift",
+				"$(SRCROOT)/script/build_stub_launcher.sh",
+			);
+			name = "Build Stub Launcher";
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/StubLauncherBinary",
+				"$(DERIVED_FILE_DIR)/StubLauncherBuild",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "/bin/bash \"$SRCROOT/script/build_stub_launcher.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		2A6892EB2ECB9A7D0074F02E /* Sources */ = {
@@ -370,6 +409,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "AppPorts 需要控制 Finder 来迁移 App Store 应用。";
@@ -406,6 +446,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "AppPorts 需要控制 Finder 来迁移 App Store 应用。";

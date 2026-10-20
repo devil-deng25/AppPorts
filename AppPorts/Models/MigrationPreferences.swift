@@ -11,9 +11,18 @@ enum MigrationPreferences {
     /// 只面向暂不升级 macOS 27 且外置盘不是 APFS 的用户；27 及以上已知不工作，开关禁用。
     static let classicDataMigrationKey = "classicDataMigrationEnabled"
 
-    static let partialWeChatMigrationKey = "partialWeChatMigrationEnabled"
-    static var isPartialWeChatMigrationEnabled: Bool {
-        UserDefaults.standard.bool(forKey: partialWeChatMigrationKey)
+    /// 按本地应用入口保存，多开应用互不影响；不继承旧的全局开关。
+    private static let partialWeChatAppsKey = "partialWeChatMigrationApps"
+
+    static func isPartialWeChatMigrationEnabled(for appPath: URL) -> Bool {
+        let values = UserDefaults.standard.dictionary(forKey: partialWeChatAppsKey) as? [String: Bool] ?? [:]
+        return values[appPath.standardizedFileURL.path] ?? false
+    }
+
+    static func setPartialWeChatMigrationEnabled(_ enabled: Bool, for appPath: URL) {
+        var values = UserDefaults.standard.dictionary(forKey: partialWeChatAppsKey) as? [String: Bool] ?? [:]
+        values[appPath.standardizedFileURL.path] = enabled
+        UserDefaults.standard.set(values, forKey: partialWeChatAppsKey)
     }
 
     /// 启动提醒里用户点过「以后再说」的应用集合（真实应用路径）。

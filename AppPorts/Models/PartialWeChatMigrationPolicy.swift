@@ -6,16 +6,21 @@ struct PartialWeChatMigrationPolicy: Sendable {
     static let bundleIdentifier = "com.tencent.xinWeChat"
     static let memberNames = ["msg", "business"]
     let homeDirectory: URL
+    let containerIdentifier: String
 
-    init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory())) {
+    init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
+         containerIdentifier: String = Self.bundleIdentifier) {
         self.homeDirectory = homeDirectory.standardizedFileURL
+        self.containerIdentifier = containerIdentifier
     }
 
     var accountsRoot: URL {
-        homeDirectory.appendingPathComponent("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files")
+        homeDirectory.appendingPathComponent("Library/Containers/\(containerIdentifier)/Data/Documents/xwechat_files")
     }
 
     func isAccount(_ url: URL) -> Bool {
+        guard !containerIdentifier.isEmpty, containerIdentifier != ".", containerIdentifier != "..",
+              !containerIdentifier.contains("/") else { return false }
         let normalized = url.standardizedFileURL
         let path = normalized.pathComponents
         let root = accountsRoot.pathComponents

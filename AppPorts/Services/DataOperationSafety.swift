@@ -31,15 +31,18 @@ struct DataOperationSafety: Sendable {
     let homeDirectory: URL
     let store: ContainerMountStore
     let partialWeChatMigrationEnabled: Bool
+    let weChatContainerIdentifier: String
     var runner: any ShellCommandRunning = ProcessCommandRunner()
 
     init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()), store: ContainerMountStore = .shared,
          runner: any ShellCommandRunning = ProcessCommandRunner(),
-         partialWeChatMigrationEnabled: Bool = MigrationPreferences.isPartialWeChatMigrationEnabled) {
+         partialWeChatMigrationEnabled: Bool = false,
+         weChatContainerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier) {
         self.homeDirectory = homeDirectory
         self.store = store
         self.runner = runner
         self.partialWeChatMigrationEnabled = partialWeChatMigrationEnabled
+        self.weChatContainerIdentifier = weChatContainerIdentifier
     }
 
     func requireNewMigration(at source: URL, destination: URL? = nil, bundleIdentifier: String? = nil,
@@ -57,8 +60,26 @@ struct DataOperationSafety: Sendable {
         try await requireNoKnownWriters(at: source, bundleIdentifier: bundleIdentifier)
     }
 
+    /// Existing journaled media migrations remain mountable after the UI switch is turned off.
+    /// Callers must first verify that the mount/transfer belongs to the persistent store.
+    func requireExistingMigrationPolicy(at url: URL, bundleIdentifier: String?) throws {
+        guard let identifier = bundleIdentifier else {
+            try requirePolicy(at: url)
+            return
+        }
+        let policy = PartialWeChatMigrationPolicy(homeDirectory: homeDirectory, containerIdentifier: identifier)
+        guard policy.account(forMember: url) != nil else {
+            try requirePolicy(at: url)
+            return
+        }
+        try DataOperationSafety(homeDirectory: homeDirectory, store: store, runner: runner,
+                                partialWeChatMigrationEnabled: true, weChatContainerIdentifier: identifier)
+            .requirePolicy(at: url)
+    }
+
     func requirePolicy(at url: URL) throws {
-        let policy = DataPathPolicy(homeDirectory: homeDirectory, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled)
+        let policy = DataPathPolicy(homeDirectory: homeDirectory, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled,
+                                    weChatContainerIdentifier: weChatContainerIdentifier)
         let protectedRoots = ["Library/Containers", "Library/Group Containers"].map {
             homeDirectory.appendingPathComponent($0).path
         }

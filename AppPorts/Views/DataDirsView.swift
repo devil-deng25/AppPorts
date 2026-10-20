@@ -51,7 +51,8 @@ struct DataDirsView: View {
     let resolveRealAppURL: (AppItem) throws -> URL
 
     // MARK: - 内部状态
-    @AppStorage(MigrationPreferences.partialWeChatMigrationKey) private var partialWeChatMigrationEnabled = false
+    @State private var weChatPreferenceRevision = 0
+    @State private var weChatContainerIdentifier = PartialWeChatMigrationPolicy.bundleIdentifier
     @State private var weChatMigrationItem: DataDirItem?
     @State private var weChatMigrationMode: WeChatAccountMigrationService.Mode = .whole
     @State private var dotFolderItems: [DataDirItem] = []
@@ -61,16 +62,17 @@ struct DataDirsView: View {
     @State private var dotFolderReadIssues: [DataDirReadIssue] = []
     @State private var libraryReadIssues: [DataDirReadIssue] = []
     @State private var libraryIdentityIssue: AppIdentityIssue?
+    @State private var selectedAppIsWeChat = false
     @State private var showReadinessCheck = false
     @AppStorage("showZeroByteDataDirectories") private var showZeroByteDirectories = false
     @AppStorage("showLockedAppDataDirectoryStructure") private var showLockedDirectoryStructure = false
+    @AppStorage("showNonMigratableAppDataDirectories") private var showNonMigratableDirectories = false
 
     @State private var showAppDataFilters = false
     @State private var selectedPriorityFilters: Set<DataDirPriority> = []
     @State private var selectedStatusFilters: Set<String> = []
     @State private var selectedTypeFilters: Set<DataDirType> = []
     @State private var selectedAppDataSortMode: AppDataSortMode = .defaultOrder
-    @State private var selectedAppSortMode: AppSortMode = .size
 
     // 进度弹窗
     @State private var showProgress = false
@@ -107,7 +109,7 @@ struct DataDirsView: View {
     @State private var dotFolderScanToken = UUID()
     @State private var libraryScanToken = UUID()
     @State private var directoryScanTask: Task<Void, Never>?
-    @State private var recordRefreshTask: Task<Void, Never>?
+    @State private var hasLoadedDirectories = false
 
     // 搜索
     @State private var appSearchText = ""
@@ -135,21 +137,28 @@ struct DataDirsView: View {
         }
     }
 
-    enum AppSortMode: String, CaseIterable {
-        case size = "按大小"
-        case alphabetical = "按首字母"
+    private let appDataStatusOrder = ["本地", "已链接", "已挂载", "待挂载", "卷丢失", "待规范", "现有软链", "用户目录入口", "待接回", "待完成", "未找到"]
 
-        var localizedTitle: String {
-            switch self {
-            case .size:
-                return "按大小".localized
-            case .alphabetical:
-                return "按首字母".localized
-            }
-        }
+    private var partialWeChatMigrationEnabled: Bool {
+        _ = weChatPreferenceRevision
+        return selectedApp.map { MigrationPreferences.isPartialWeChatMigrationEnabled(for: $0.path) } ?? false
     }
 
-    private let appDataStatusOrder = ["本地", "已链接", "已挂载", "待挂载", "卷丢失", "待规范", "现有软链", "用户目录入口", "待接回", "待完成", "未找到"]
+    private var selectedWeChatPolicy: PartialWeChatMigrationPolicy {
+        PartialWeChatMigrationPolicy(containerIdentifier: weChatContainerIdentifier)
+    }
+
+    private var partialWeChatMigrationBinding: Binding<Bool> {
+        Binding(get: { partialWeChatMigrationEnabled }, set: { enabled in
+            guard let app = selectedApp else { return }
+            MigrationPreferences.setPartialWeChatMigrationEnabled(enabled, for: app.path)
+            weChatPreferenceRevision += 1
+            clearAppDataFilters()
+            directorySearchText = ""
+            clearSizeCache()
+            scanLibraryDirs(for: app)
+        })
+    }
 
     // MARK: - Body
 
@@ -177,6 +186,8 @@ struct DataDirsView: View {
         }
         .disabled(operationState.isBusy)
         .onAppear {
+            guard !hasLoadedDirectories else { return }
+            hasLoadedDirectories = true
             reloadCurrentTab()
         }
         .onChange(of: selectedTab) { _ in
@@ -184,15 +195,8 @@ struct DataDirsView: View {
             summaryFilter = nil
             reloadCurrentTab()
         }
-        .onChange(of: operationState.recordsRevision) { _ in
-            recordRefreshTask?.cancel()
-            recordRefreshTask = Task { @MainActor in
-                do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
-                reloadCurrentTab()
-            }
-        }
         .onDisappear {
-            recordRefreshTask?.cancel()
+            if isScanning { hasLoadedDirectories = false }
             directoryScanTask?.cancel()
             dotFolderScanToken = UUID()
             libraryScanToken = UUID()
@@ -202,16 +206,8 @@ struct DataDirsView: View {
             clearSizeCache()
             reloadCurrentTab()
         }
-        .onChange(of: externalDriveURL) { _ in
-            clearSizeCache()
-            reloadCurrentTab()
-        }
-        .onChange(of: languageManager.language) { _ in
-            reloadCurrentTab()
-        }
-        .onChange(of: partialWeChatMigrationEnabled) { _ in reloadCurrentTab() }
         .sheet(item: $weChatMigrationItem) { item in
-            WeChatAccountMigrationSheet(item: item) { mode in
+            WeChatAccountMigrationSheet(item: item, containerIdentifier: weChatContainerIdentifier) { mode in
                 weChatMigrationItem = nil
                 weChatMigrationMode = mode
                 checkMountMigrationDestination(for: item, destination: externalDriveURL)
@@ -318,23 +314,9 @@ struct DataDirsView: View {
                     let filteredApps = localApps.filter { app in
                         !app.isFolder && (appSearchText.isEmpty || app.displayName.localizedCaseInsensitiveContains(appSearchText) || app.name.localizedCaseInsensitiveContains(appSearchText))
                     }
-                    let sortedApps: [AppItem] = {
-                        switch selectedAppSortMode {
-                        case .size:
-                            return filteredApps.sorted { lhs, rhs in
-                                if lhs.sizeBytes != rhs.sizeBytes { return lhs.sizeBytes > rhs.sizeBytes }
-                                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
-                            }
-                        case .alphabetical:
-                            return filteredApps.sorted {
-                                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-                            }
-                        }
-                    }()
-
                     ScrollView {
                         LazyVStack(spacing: 4) {
-                            ForEach(sortedApps, id: \.id) { app in
+                            ForEach(filteredApps, id: \.id) { app in
                                 Button {
                                     selectedApp = app
                                 } label: {
@@ -351,7 +333,9 @@ struct DataDirsView: View {
                 }
             }
             .frame(minWidth: 200, maxWidth: 280)
-            .onChange(of: selectedApp.map(AppDataScanIdentity.init)) { _ in
+            .onChange(of: selectedApp?.path) { _ in
+                selectedAppIsWeChat = false
+                directorySearchText = ""
                 directoryRevealRequest = nil
                 summaryFilter = nil
                 if let app = selectedApp { scanLibraryDirs(for: app) }
@@ -365,12 +349,9 @@ struct DataDirsView: View {
                     isScanning = false
                 }
             }
-            .onChange(of: selectedApp?.path) { _ in
-                directorySearchText = ""
-            }
             .onChange(of: localApps) { newApps in
                 // 重签名/迁移后刷新 selectedApp，避免持有旧的 isResigned 等字段
-                // 更新展示状态；只有扫描身份变化才重新获取数据目录。
+                // 更新应用展示信息，不因后台列表更新重新扫描数据目录。
                 if let selected = selectedApp,
                    let refreshed = newApps.first(where: { $0.path == selected.path }) {
                     selectedApp = refreshed
@@ -385,6 +366,13 @@ struct DataDirsView: View {
                             Text(String(format: "%@ 的数据目录".localized, app.displayName))
                         } else {
                             Text("请从左侧选择应用".localized)
+                        }
+                        if selectedAppIsWeChat {
+                            Toggle("微信账号拆分迁移".localized, isOn: partialWeChatMigrationBinding)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .font(.system(size: 12))
+                                .fixedSize()
                         }
                         Spacer()
                         if selectedApp != nil {
@@ -481,9 +469,6 @@ struct DataDirsView: View {
 
                 Spacer(minLength: 4)
 
-                if !localApps.isEmpty {
-                    appSelectionSortMenu
-                }
             }
             .padding(.horizontal, 10)
             .frame(minHeight: 28)
@@ -517,31 +502,8 @@ struct DataDirsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .padding(.horizontal, 12)
-        .padding(.top, 24)
+        .padding(.top, 0)
         .padding(.bottom, 12)
-    }
-
-    private var appSelectionSortMenu: some View {
-        Menu {
-            ForEach(AppSortMode.allCases, id: \.self) { mode in
-                Button(action: { selectedAppSortMode = mode }) {
-                    HStack {
-                        Text(mode.localizedTitle)
-                        Spacer()
-                        if selectedAppSortMode == mode {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label(selectedAppSortMode.localizedTitle, systemImage: "arrow.up.arrow.down")
-        }
-        .font(.system(size: 11, weight: .medium))
-        .foregroundColor(.secondary)
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("排序方式".localized)
     }
 
     private var externalDriveWarning: some View {
@@ -764,7 +726,8 @@ struct DataDirsView: View {
 
     private var appDataVisibilityToggles: some View {
         AppDataVisibilityControls(showZeroByteDirectories: $showZeroByteDirectories,
-                                  showLockedStructure: $showLockedDirectoryStructure)
+                                  showLockedStructure: $showLockedDirectoryStructure,
+                                  showNonMigratableDirectories: $showNonMigratableDirectories)
     }
 
     private var zeroByteDirectoriesToggle: some View {
@@ -779,7 +742,9 @@ struct DataDirsView: View {
             Text("部分目录无法读取，请检查后刷新。".localized)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .help(issues.map { $0.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }.joined(separator: "\n"))
+                .help(issues.map {
+                    $0.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") + "\n" + $0.errorDescription
+                }.joined(separator: "\n\n"))
             Spacer(minLength: 0)
             if issues.contains(where: \.isPermissionDenied) {
                 Button("检查访问权限".localized) {
@@ -969,7 +934,8 @@ struct DataDirsView: View {
             } ?? DataDirTree.visibleTree(from: items,
                                               showZeroByteDirectories: showZeroByteDirectories,
                                               showLockedStructure: showLockedDirectoryStructure,
-                                              matchingIDs: matchingIDs)
+                                              matchingIDs: matchingIDs,
+                                              showNonMigratableDirectories: showNonMigratableDirectories)
             return tree.isEmpty ? nil : DataDirGroup(type: type, items: tree)
         }
     }
@@ -1002,6 +968,8 @@ struct DataDirsView: View {
     }
 
     private func matchesAppDataFilters(_ item: DataDirItem) -> Bool {
+        if selectedAppIsWeChat, partialWeChatMigrationEnabled,
+           !selectedWeChatPolicy.isAccount(item.path) { return false }
         let query = directorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let matchesSearch = query.isEmpty || item.path.path.localizedStandardContains(query)
             || item.name.localizedStandardContains(query) || item.description.localizedStandardContains(query)
@@ -1009,7 +977,8 @@ struct DataDirsView: View {
             && (selectedStatusFilters.isEmpty || selectedStatusFilters.contains(item.displayedStatus))
             && (selectedTypeFilters.isEmpty || selectedTypeFilters.contains(item.type))
             && item.matchesVisibility(showZeroByteDirectories: showZeroByteDirectories,
-                                      showLockedStructure: showLockedDirectoryStructure)
+                                      showLockedStructure: showLockedDirectoryStructure,
+                                      showNonMigratableDirectories: showNonMigratableDirectories)
     }
 
     private func clearAppDataFilters() {
@@ -1190,8 +1159,9 @@ struct DataDirsView: View {
         libraryReadIssues = []
         libraryIdentityIssue = nil
         let appDisplayName = app.displayName
-        let appIdentity = AppDataScanIdentity(app)
+        let appPath = app.path.standardizedFileURL
         let selectedExternalRoot = externalDriveURL
+        let splitMode = MigrationPreferences.isPartialWeChatMigrationEnabled(for: app.path)
         let scanID = AppLogger.shared.makeOperationID(prefix: "scan-library-dirs")
         AppLogger.shared.logContext(
             "开始扫描应用数据目录",
@@ -1203,21 +1173,35 @@ struct DataDirsView: View {
             ]
         )
         directoryScanTask = Task.detached(priority: .userInitiated) {
-            let scanner = DataDirScanner()
+            let matchesWeChatName = app.displayName.localizedCaseInsensitiveContains("wechat")
+            let isWeChat: Bool
+            let containerIdentifier: String
+            if case .success(let identity) = AppIdentityResolver.resolve(at: app.displayURL) {
+                isWeChat = matchesWeChatName || identity.bundleIdentifier == PartialWeChatMigrationPolicy.bundleIdentifier
+                containerIdentifier = isWeChat ? identity.bundleIdentifier : PartialWeChatMigrationPolicy.bundleIdentifier
+            } else {
+                isWeChat = matchesWeChatName
+                containerIdentifier = PartialWeChatMigrationPolicy.bundleIdentifier
+            }
+            let scanner = DataDirScanner(partialWeChatMigrationEnabled: splitMode && isWeChat,
+                                         weChatContainerIdentifier: containerIdentifier)
             // 沙盒应用迁移数据后不能重签名；先算一次供整页使用。
             let isSandboxed = await scanner.isSandboxed(app)
             guard !Task.isCancelled else { return }
             let scanResult = await scanner.scanLibraryDirsWithDiagnostics(for: app, externalRootURL: selectedExternalRoot)
             guard !Task.isCancelled else { return }
-            let items = WeChatAccountMigrationService.groupedItems(scanResult.items)
+            let items = WeChatAccountMigrationService.groupedItems(scanResult.items, splitMode: splitMode && isWeChat,
+                                                                   containerIdentifier: containerIdentifier)
 
             await MainActor.run {
                 guard self.libraryScanToken == scanToken,
-                      self.selectedApp.map(AppDataScanIdentity.init) == appIdentity else { return }
+                      self.selectedApp?.path.standardizedFileURL == appPath else { return }
                 self.libraryItems = items
                 self.libraryReadIssues = scanResult.readIssues
                 self.libraryIdentityIssue = scanResult.identityIssue
                 self.selectedAppIsSandboxed = isSandboxed
+                self.selectedAppIsWeChat = isWeChat
+                self.weChatContainerIdentifier = containerIdentifier
             }
             AppLogger.shared.logContext(
                 "应用数据目录扫描完成",
@@ -1261,7 +1245,7 @@ struct DataDirsView: View {
 
             await MainActor.run {
                 guard self.libraryScanToken == scanToken,
-                      self.selectedApp.map(AppDataScanIdentity.init) == appIdentity else { return }
+                      self.selectedApp?.path.standardizedFileURL == appPath else { return }
                 withAnimation {
                     for (i, result) in sizedItems {
                         guard i < self.libraryItems.count else { continue }
@@ -1282,7 +1266,7 @@ struct DataDirsView: View {
             checkMountMigrationDestination(for: item, destination: externalDriveURL)
             return
         }
-        if partialWeChatMigrationEnabled, PartialWeChatMigrationPolicy().isAccount(item.path) {
+        if partialWeChatMigrationEnabled, selectedWeChatPolicy.isAccount(item.path) {
             askMountMigrate(item)
             return
         }
@@ -1748,7 +1732,7 @@ struct DataDirsView: View {
     // MARK: - 挂载迁移（沙盒应用容器数据）
 
     private func askMountMigrate(_ item: DataDirItem) {
-        if partialWeChatMigrationEnabled, PartialWeChatMigrationPolicy().isAccount(item.path) {
+        if partialWeChatMigrationEnabled, selectedWeChatPolicy.isAccount(item.path) {
             if requestAssociatedAppExit(for: item, continuing: { askMountMigrate(item) }) { return }
             weChatMigrationItem = item
             return
@@ -1830,7 +1814,7 @@ struct DataDirsView: View {
     }
 
     private func performMountMigrate(_ item: DataDirItem) {
-        if weChatMigrationMode == .split, PartialWeChatMigrationPolicy().isAccount(item.path) {
+        if weChatMigrationMode == .split, selectedWeChatPolicy.isAccount(item.path) {
             performWeChatSplitOperation(item, restoring: false)
             return
         }
@@ -2129,6 +2113,8 @@ struct DataDirsView: View {
         transferProgress = DataTransferProgress()
         showProgress = true
         let capturedApp = selectedApp
+        let splitEnabled = partialWeChatMigrationEnabled
+        let containerIdentifier = weChatContainerIdentifier
         operationState.startTask(for: token) { @MainActor in
             let lock = OperationLock()
             let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
@@ -2141,7 +2127,7 @@ struct DataDirsView: View {
                 guard acquired else { throw DataOperationSafety.Failure.occupied(item.path.path) }
                 if requestAssociatedAppExit(for: item, associatedApp: capturedApp,
                     continuing: { performWeChatSplitOperation(item, restoring: restoring) }) { return }
-                let service = WeChatAccountMigrationService()
+                let service = WeChatAccountMigrationService(enabled: splitEnabled, containerIdentifier: containerIdentifier)
                 let warnings = try await transferProgress.track { handler in
                     if restoring { return try await service.restoreSplit(account: item.path, progress: handler) }
                     guard let destination else { throw DataOperationSafety.Failure.inspection("请先选择外部存储路径".localized) }

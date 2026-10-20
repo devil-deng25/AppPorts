@@ -5,6 +5,28 @@ import Testing
 struct DataDirPresentationTests {
     private let home = URL(fileURLWithPath: "/fixture/presentation-home")
 
+    @Test("Unsupported directories obey their visibility toggle even with links or read errors")
+    func unsupportedDirectoryVisibility() {
+        for status in [DataDirStatus.local, DataDirStatus.existingSymlink, DataDirStatus.linked] {
+            var item = DataDirItem(name: "AddressBook", path: home.appendingPathComponent("AddressBook"),
+                                   type: .containers, priority: .optional, description: "",
+                                   status: status, isMigratable: false)
+            item.sizeIsIncomplete = true
+            #expect(!item.matchesVisibility(showZeroByteDirectories: true, showLockedStructure: true,
+                                           showNonMigratableDirectories: false))
+            #expect(item.matchesVisibility(showZeroByteDirectories: true, showLockedStructure: true,
+                                          showNonMigratableDirectories: true))
+
+            var child = item
+            child.path = item.path.appendingPathComponent("Business")
+            child.isMigratable = true
+            let tree = DataDirTree.visibleTree(from: [item, child], showZeroByteDirectories: true,
+                                              showLockedStructure: true, matchingIDs: [item.id, child.id],
+                                              showNonMigratableDirectories: false)
+            #expect(DataDirTree.rows(in: tree).map(\.id) == [child.id])
+        }
+    }
+
     private func shortcut(_ name: String = "Desktop") -> DataDirItem {
         DataDirItem(name: name,
                     path: home.appendingPathComponent("Library/Containers/com.example.app/Data/\(name)"),

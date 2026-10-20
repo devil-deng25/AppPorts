@@ -1,4 +1,5 @@
 import Cocoa
+import Carbon
 import os
 
 /// AppPorts Stub Portal Native Launcher
@@ -62,12 +63,14 @@ enum DiskMissingStrings {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject {
     private let logger = Logger(subsystem: "com.shimoko.AppPorts.StubLauncher", category: "launch")
     private var canTerminate = false
     private var receivedOpenRequest = false
     private var pendingRequests = 0
     private var failed = false
+    private var finished = false
+    private let startedAt = ProcessInfo.processInfo.systemUptime
 
     func readRealAppPath() -> String {
         guard let resURL = Bundle.main.resourceURL else { return "" }
@@ -77,9 +80,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func start() {
-        // Some launchers start the process without delivering an initial open
-        // event. AppKit can then defer didFinishLaunching until a second click.
-        // Bootstrap from the event loop itself, independently of that event.
+        let events = NSAppleEventManager.shared()
+        for eventID in [kAEOpenApplication, kAEReopenApplication] {
+            events.setEventHandler(self, andSelector: #selector(handleLaunch(_:withReplyEvent:)),
+                                   forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(eventID))
+        }
+        events.setEventHandler(self, andSelector: #selector(handleDocuments(_:withReplyEvent:)),
+                               forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEOpenDocuments))
+        events.setEventHandler(self, andSelector: #selector(handleURL(_:withReplyEvent:)),
+                               forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+        // Direct executable launches do not deliver an initial Apple Event.
+        // Run the fallback on the event loop, without an artificial delay.
         DispatchQueue.main.async {
             self.canTerminate = true
             if !self.receivedOpenRequest { self.openRealApplication(urls: []) }
@@ -87,30 +98,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        openRealApplication(urls: filenames.map { URL(fileURLWithPath: $0) }, replyToFiles: true)
+    func run() {
+        // Dispatch Apple Events without NSApplication.run(), which also starts
+        // AppKit's document/window restoration machinery for the portal.
+        while !finished {
+            autoreleasepool {
+                var event: EventRef?
+                // Carbon's -1 timeout means wait until an event or completion;
+                // the equivalent C macro is not imported by current Swift SDKs.
+                let status = ReceiveNextEvent(0, nil, EventTimeout(-1.0), true, &event)
+                guard status == noErr, let event else {
+                    if !finished { logger.error("Event loop stopped: \(status)") }
+                    finished = true
+                    return
+                }
+                defer { ReleaseEvent(event) }
+                if GetEventClass(event) == OSType(kEventClassAppleEvent) {
+                    _ = AEProcessEvent(event)
+                } else {
+                    _ = SendEventToEventTarget(event, GetEventDispatcherTarget())
+                }
+            }
+        }
     }
 
-    func application(_ application: NSApplication, open urls: [URL]) {
+    @objc private func handleLaunch(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        // The bootstrap and initial/reopen events must not launch the target twice.
+        if !receivedOpenRequest && !failed { openRealApplication(urls: []) }
+    }
+
+    @objc private func handleDocuments(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        guard let items = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject)), items.numberOfItems > 0 else {
+            reject(reply)
+            return
+        }
+        var urls: [URL] = []
+        for index in 1...items.numberOfItems {
+            guard let url = items.atIndex(index)?.fileURLValue else {
+                reject(reply)
+                return
+            }
+            urls.append(url)
+        }
         openRealApplication(urls: urls)
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // An in-flight launch already activates the real app. Repeated clicks
-        // must not enqueue competing launches while it is starting.
-        if pendingRequests == 0 && !failed { openRealApplication(urls: []) }
-        return false
+    @objc private func handleURL(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        guard let value = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: value) else {
+            reject(reply)
+            return
+        }
+        openRealApplication(urls: [url])
     }
 
-    private func openRealApplication(urls: [URL], replyToFiles: Bool = false) {
+    private func reject(_ reply: NSAppleEventDescriptor) {
+        if reply.descriptorType != DescType(typeNull) {
+            reply.setParam(NSAppleEventDescriptor(int32: Int32(errAECoercionFail)), forKeyword: AEKeyword(keyErrorNumber))
+        }
+    }
+
+    private func openRealApplication(urls: [URL]) {
         receivedOpenRequest = true
-        logger.info("Opening target; forwarded URLs: \(urls.count)")
+        logger.notice("Forwarding launch; URLs: \(urls.count), elapsed ms: \(Int((ProcessInfo.processInfo.systemUptime - self.startedAt) * 1000))")
         let path = readRealAppPath()
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
             failed = true
             logger.error("Target missing: \(path, privacy: .public)")
             showExternalDiskMissing()
-            if replyToFiles { NSApp.reply(toOpenOrPrint: .failure) }
             terminateIfFinished()
             return
         }
@@ -121,17 +176,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self.pendingRequests -= 1
                 let succeeded = application != nil && error == nil
-                if replyToFiles { NSApp.reply(toOpenOrPrint: succeeded ? .success : .failure) }
+                self.logger.notice("Launch completed; success: \(succeeded), elapsed ms: \(Int((ProcessInfo.processInfo.systemUptime - self.startedAt) * 1000))")
                 if !succeeded && !self.failed {
                     self.failed = true
                     self.logger.error("Launch failed: \(String(describing: error), privacy: .public)")
-                    let alert = NSAlert()
-                    alert.alertStyle = .warning
                     let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") == true
-                    alert.messageText = chinese ? "无法打开应用" : "Unable to open application"
-                    alert.informativeText = path + "\n\n" + (error?.localizedDescription ??
-                        (chinese ? "系统未能完成启动，请重试。" : "The system could not complete the launch. Try again."))
-                    alert.runModal()
+                    let message = (chinese ? "无法打开应用" : "Unable to open application") + "\n\n" + path + "\n\n"
+                        + (error?.localizedDescription ?? (chinese ? "系统未能完成启动，请重试。" : "The system could not complete the launch. Try again."))
+                    self.showDialog(message: message, button: chinese ? "好" : "OK")
                 }
                 self.terminateIfFinished()
             }
@@ -147,9 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func terminateIfFinished() {
-        // Acknowledge every request before exiting, even when AppKit never
-        // receives the initial open event from the invoking launcher.
-        if canTerminate && pendingRequests == 0 { NSApp.terminate(nil) }
+        // Keep the event loop alive until all forwarded requests complete.
+        if canTerminate && pendingRequests == 0 {
+            finished = true
+            QuitEventLoop(GetMainEventLoop())
+        }
     }
 
     /// Wraps a string as an AppleScript double-quoted literal, escaping `\` and `"`.
@@ -162,8 +216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showExternalDiskMissing() {
         let strings = DiskMissingStrings.current
-        let script = "display dialog \(appleScriptLiteral(strings.message)) "
-            + "buttons {\(appleScriptLiteral(strings.button))} default button 1 with icon caution"
+        showDialog(message: strings.message, button: strings.button)
+    }
+
+    private func showDialog(message: String, button: String) {
+        let script = "display dialog \(appleScriptLiteral(message)) "
+            + "buttons {\(appleScriptLiteral(button))} default button 1 with icon caution"
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         proc.arguments = ["-e", script]
@@ -172,12 +230,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// Manual NSApplication setup — no MainMenu.xib
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-// Match LSUIElement in the portal plist. A prohibited policy changes the
-// process to BackgroundOnly, which can suppress the first open event.
-app.setActivationPolicy(.accessory)
-delegate.start()
-app.run()
+// A portal handles only Launch Services requests; the real application owns
+// all AppKit startup, documents, restoration, menus and windows.
+let launcher = AppDelegate()
+launcher.start()
+launcher.run()

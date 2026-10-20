@@ -3,7 +3,7 @@ import Foundation
 /// Produces only the display metadata of a macOS portal. Call on a private staging
 /// bundle, then sign and install the bundle before registering it with the system.
 enum PortalPresentation {
-    static let formatVersion = 3
+    static let formatVersion = 5
     static let versionKey = "AppPortsPortalFormatVersion"
 
     static func needsRefresh(local: [String: Any], external: [String: Any]) -> Bool {
@@ -106,6 +106,8 @@ enum PortalPresentation {
         // Document icons otherwise inherit references to resources absent in a stub.
         if var documents = plist["CFBundleDocumentTypes"] as? [[String: Any]] {
             for index in documents.indices {
+                documents[index].removeValue(forKey: "NSDocumentClass")
+                documents[index].removeValue(forKey: "NSPersistentStoreTypeKey")
                 if let icon = documents[index]["CFBundleTypeIconFile"] as? String {
                     let file = (icon as NSString).pathExtension.isEmpty ? icon + ".icns" : icon
                     if try !copyResource(file, regularFileOnly: true) { documents[index].removeValue(forKey: "CFBundleTypeIconFile") }
@@ -154,6 +156,7 @@ enum PortalPresentation {
         // scripting, extension or system-service implementation.
         for key in ["NSPrincipalClass", "NSMainNibFile", "NSMainStoryboardFile", "NSServices",
                     "NSAppleScriptEnabled", "OSAScriptingDefinition", "NSExtension", "NSExtensionSDK",
+                    "NSDocumentControllerClass", "NSRecentDocumentsLimit",
                     "NSSupportsAutomaticTermination", "NSSupportsSuddenTermination"] {
             plist.removeValue(forKey: key)
         }

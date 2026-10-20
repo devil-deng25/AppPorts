@@ -3,10 +3,13 @@ import Foundation
 struct DataDirReadIssue: Equatable, Sendable {
     let url: URL
     let isPermissionDenied: Bool
+    let errorDescription: String
 
     init(url: URL, error: Error) {
         self.url = url.standardizedFileURL
-        isPermissionDenied = Self.errorChain(error).contains {
+        let errors = Self.errorChain(error)
+        errorDescription = errors.map { "\($0.localizedDescription) (\($0.domain):\($0.code))" }.joined(separator: "\n")
+        isPermissionDenied = errors.contains {
             ($0.domain == NSCocoaErrorDomain && $0.code == CocoaError.fileReadNoPermission.rawValue)
                 || ($0.domain == NSPOSIXErrorDomain
                     && [Int(POSIXErrorCode.EACCES.rawValue), Int(POSIXErrorCode.EPERM.rawValue)].contains($0.code))

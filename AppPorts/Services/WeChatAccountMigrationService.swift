@@ -29,7 +29,7 @@ struct WeChatAccountMigrationService: Sendable {
         var errorDescription: String? {
             switch self {
             case .invalidAccount: return "无法确认微信账号目录，未改动数据。".localized
-            case .disabled: return "请先在设置中开启“微信账号拆分迁移”。".localized
+            case .disabled: return "请先开启“微信账号拆分迁移”。".localized
             case .restoreFirst: return "请先完整还原这个账号已迁移的数据，再切换迁移方式。".localized
             case .missingMembers: return "账号下的 msg 和 business 必须都是可读取的真实目录，才能拆分迁移。".localized
             case .incompleteSize: return "目录大小未能完整读取，请检查访问权限后重试。".localized
@@ -44,11 +44,12 @@ struct WeChatAccountMigrationService: Sendable {
 
     init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()), store: ContainerMountStore = .shared,
          migrator: (any WeChatAccountMountDriving)? = nil,
-         enabled: Bool = MigrationPreferences.isPartialWeChatMigrationEnabled) {
-        policy = PartialWeChatMigrationPolicy(homeDirectory: homeDirectory)
+         enabled: Bool = false,
+         containerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier) {
+        policy = PartialWeChatMigrationPolicy(homeDirectory: homeDirectory, containerIdentifier: containerIdentifier)
         self.store = store
         self.migrator = migrator ?? ContainerVolumeMigrator(store: store, homeDirectory: homeDirectory,
-                                                          partialWeChatMigrationEnabled: enabled)
+                                                          partialWeChatMigrationEnabled: enabled, weChatContainerIdentifier: policy.containerIdentifier)
         self.enabled = enabled
     }
 
@@ -106,7 +107,7 @@ struct WeChatAccountMigrationService: Sendable {
             let info = try SignatureSnapshot.info(at: source)
             guard info.st_mode & S_IFMT == S_IFDIR else { throw Failure.missingMembers }
             let safety = DataOperationSafety(homeDirectory: policy.homeDirectory, store: store,
-                                            partialWeChatMigrationEnabled: enabled)
+                                            partialWeChatMigrationEnabled: enabled, weChatContainerIdentifier: policy.containerIdentifier)
             try safety.requirePolicy(at: source)
             try safety.requireNoOverlap(at: source)
             try safety.requireNoManagedFileSystemAncestor(at: source)
@@ -124,7 +125,7 @@ struct WeChatAccountMigrationService: Sendable {
             let item = DataDirItem(name: source.lastPathComponent, path: source, type: .containers,
                                    priority: .critical, description: "微信账号数据".localized)
             let result = try await migrator.migrateAndComplete(item: item, externalRootURL: externalRoot,
-                appName: appName, bundleIdentifier: PartialWeChatMigrationPolicy.bundleIdentifier, progressHandler: progress)
+                appName: appName, bundleIdentifier: policy.containerIdentifier, progressHandler: progress)
             if let warning = result.cleanupWarning { warnings.append(warning.message) }
         }
         return warnings
@@ -163,17 +164,21 @@ struct WeChatAccountMigrationService: Sendable {
 
     private func requireAccount(_ account: URL) throws {
         guard policy.isAccount(account),
-              PartialWeChatMigrationPolicy(homeDirectory: policy.homeDirectory.resolvingSymlinksInPath())
+              PartialWeChatMigrationPolicy(homeDirectory: policy.homeDirectory.resolvingSymlinksInPath(),
+                                          containerIdentifier: policy.containerIdentifier)
                 .isAccount(account.resolvingSymlinksInPath()),
               try SignatureSnapshot.info(at: account).st_mode & S_IFMT == S_IFDIR else { throw Failure.invalidAccount }
     }
 
     /// Keep scanner recovery facts intact; the browser exposes one account action,
     /// never independent checkboxes/buttons for msg and business.
-    static func groupedItems(_ items: [DataDirItem], homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory())) -> [DataDirItem] {
-        let policy = PartialWeChatMigrationPolicy(homeDirectory: homeDirectory)
+    static func groupedItems(_ items: [DataDirItem], homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
+                             splitMode: Bool = false,
+                             containerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier) -> [DataDirItem] {
+        let policy = PartialWeChatMigrationPolicy(homeDirectory: homeDirectory, containerIdentifier: containerIdentifier)
         let members = Dictionary(grouping: items.filter {
-            policy.account(forMember: $0.path) != nil && ($0.hasMountTransferRecord || DataDirStatus.mountStatuses.contains($0.status))
+            policy.account(forMember: $0.path) != nil &&
+                (splitMode || $0.hasMountTransferRecord || DataDirStatus.mountStatuses.contains($0.status))
         }) {
             policy.account(forMember: $0.path)!.path
         }
@@ -182,17 +187,25 @@ struct WeChatAccountMigrationService: Sendable {
                 ($0.recoveryOperationID != nil && !$0.hasMountTransferRecord)
         }
         for (path, children) in members {
-            let active = children.filter { $0.canRestore || $0.recoveryOperationID != nil }
+            let active = children.filter { (splitMode && $0.status == DataDirStatus.local && $0.isMigratable)
+                || $0.canRestore || $0.recoveryOperationID != nil }
             guard !active.isEmpty else { continue }
             let account = URL(fileURLWithPath: path)
             let index = result.firstIndex { $0.path.standardizedFileURL.path == account.path }
             var item = index.map { result[$0] } ?? DataDirItem(name: account.lastPathComponent, path: account,
                 type: .containers, priority: .critical, description: "微信账号数据".localized)
+            let localPreview = splitMode && active.count == PartialWeChatMigrationPolicy.memberNames.count
+                && active.allSatisfy { $0.status == DataDirStatus.local && !$0.hasMountTransferRecord && $0.recoveryOperationID == nil }
+                && item.isMigratable
+            if !localPreview && active.allSatisfy({ $0.status == DataDirStatus.local && !$0.hasMountTransferRecord && $0.recoveryOperationID == nil }) {
+                continue
+            }
             item.weChatSplitMembers = active
             item.description = "微信账号 · 拆分迁移（msg + business）".localized
-            item.isMigratable = false
-            item.hasMountTransferRecord = true
-            item.status = active.contains(where: { $0.status == DataDirStatus.local }) ? DataDirStatus.pendingCompletion
+            item.isMigratable = localPreview
+            item.hasMountTransferRecord = !localPreview
+            item.status = localPreview ? DataDirStatus.local
+                : active.contains(where: { $0.status == DataDirStatus.local }) ? DataDirStatus.pendingCompletion
                 : active.contains(where: { $0.status == DataDirStatus.volumeMissing }) ? DataDirStatus.volumeMissing
                 : active.allSatisfy({ $0.status == DataDirStatus.mounted }) ? DataDirStatus.mounted : DataDirStatus.pendingMount
             if let index { result[index] = item } else { result.append(item) }

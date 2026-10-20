@@ -226,14 +226,16 @@ actor ContainerVolumeMigrator {
         availableCapacity: @escaping @Sendable (URL) -> Int64? = { DiskUtility.availableCapacity(at: $0) },
         mountFlags: @escaping @Sendable (URL) -> UInt32? = { DiskUtility.mountFlags(at: $0) },
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
-        partialWeChatMigrationEnabled: Bool = MigrationPreferences.isPartialWeChatMigrationEnabled,
+        partialWeChatMigrationEnabled: Bool = false,
+        weChatContainerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier,
         safetyRunner: any ShellCommandRunning = ProcessCommandRunner(),
         makeMountPointLease: @escaping @Sendable (URL) throws -> any MountPointLeasing = { try MountPointLease(at: $0) },
         removeMigrationBackup: @escaping @Sendable (URL) throws -> Void = { try FileCopier.removeCopy(at: $0) },
         synchronizeCleanupParent: @escaping @Sendable (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) }
     ) {
         self.safety = DataOperationSafety(homeDirectory: homeDirectory, store: store, runner: safetyRunner,
-                                          partialWeChatMigrationEnabled: partialWeChatMigrationEnabled)
+                                          partialWeChatMigrationEnabled: partialWeChatMigrationEnabled,
+                                    weChatContainerIdentifier: weChatContainerIdentifier)
         self.makeMountPointLease = makeMountPointLease
         self.synchronizeCleanupParent = synchronizeCleanupParent
         self.disk = disk
@@ -1168,7 +1170,9 @@ actor ContainerVolumeMigrator {
                   record.volumeUUID.caseInsensitiveCompare(transfer.createdVolumeUUID ?? "") == .orderedSame else {
                 throw DataOperationSafety.Failure.conflict(local.path)
             }
-            if !isMountPoint(local) { try safety.requirePolicy(at: local) }
+            if !isMountPoint(local) {
+                try safety.requireExistingMigrationPolicy(at: local, bundleIdentifier: transfer.bundleIdentifier)
+            }
         } else {
             guard staging.path == local.deletingLastPathComponent()
                     .appendingPathComponent(".appports-restore-staging-\(transfer.operationID.uuidString)").path,
@@ -1697,8 +1701,8 @@ actor ContainerVolumeMigrator {
     /// 把记录对应的卷重新挂到容器内挂载点上；已挂载则直接返回。
     func mount(record: ContainerMountRecord) async throws {
         let mountPoint = record.mountPointURL
-        try safety.requirePolicy(at: mountPoint)
         guard try store.recordsStrict().contains(record) else { throw DataOperationSafety.Failure.conflict(mountPoint.path) }
+        try safety.requireExistingMigrationPolicy(at: mountPoint, bundleIdentifier: record.bundleIdentifier)
         let history = try store.transfers()
         let related = history.filter {
             $0.mode == .mount && $0.direction == .migrate
@@ -1867,6 +1871,11 @@ actor ContainerVolumeMigrator {
             } catch {
                 outcomes.append(RemountOutcome(record: record, state: .failed(error.localizedDescription)))
             }
+        }
+        // A successful remount changes the visible filesystem without changing
+        // the saved record. Notify observers only when a mount actually occurred.
+        if outcomes.contains(where: { $0.state == .mounted }) {
+            NotificationCenter.default.post(name: .appPortsRecordsDidChange, object: store)
         }
         return outcomes
     }

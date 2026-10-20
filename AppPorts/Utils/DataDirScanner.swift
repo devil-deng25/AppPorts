@@ -158,6 +158,10 @@ func measureDirectorySize(
         includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .isSymbolicLinkKey],
         options: [],
         errorHandler: { failedURL, error in
+            // Live apps may remove temporary entries while enumeration is in
+            // progress. A missing child is no longer part of the measured tree.
+            if failedURL.standardizedFileURL != url.standardizedFileURL,
+               DataDirReadIssue.isMissingFile(error) { return true }
             result.readIssues.append(DataDirReadIssue(url: failedURL, error: error))
             return true
         }
@@ -176,6 +180,7 @@ func measureDirectorySize(
                   let fileSize = attrs.fileSize else { continue }
             result.bytes += Int64(fileSize)
         } catch {
+            if DataDirReadIssue.isMissingFile(error) { continue }
             result.readIssues.append(DataDirReadIssue(url: fileURL, error: error))
         }
     }
@@ -206,6 +211,7 @@ actor DataDirScanner {
     private var recoveryInspection: ContainerMountStore.Inspection?
     private var readIssues: [DataDirReadIssue] = []
     private let partialWeChatMigrationEnabled: Bool
+    private let weChatContainerIdentifier: String
 
     private struct ManagedLinkMetadata: Codable, Sendable {
         let schemaVersion: Int
@@ -218,7 +224,8 @@ actor DataDirScanner {
     init(
         homeDir: URL = URL(fileURLWithPath: NSHomeDirectory()),
         mountStore: ContainerMountStore = .shared,
-        partialWeChatMigrationEnabled: Bool = MigrationPreferences.isPartialWeChatMigrationEnabled,
+        partialWeChatMigrationEnabled: Bool = false,
+        weChatContainerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier,
         isMountPoint: @escaping @Sendable (URL) -> Bool = { DiskUtility.isMountPoint($0) },
         isVolumeOnline: @escaping @Sendable (String) -> Bool = { DiskUtility.isVolumeOnline($0) },
         isSandboxedApplication: @escaping @Sendable (URL) -> Bool = { DataDirScanner.isSandboxedRealApplication($0) }
@@ -226,6 +233,7 @@ actor DataDirScanner {
         self.homeDir = homeDir.standardizedFileURL
         self.mountStore = mountStore
         self.partialWeChatMigrationEnabled = partialWeChatMigrationEnabled
+        self.weChatContainerIdentifier = weChatContainerIdentifier
         self.isMountPoint = isMountPoint
         self.isVolumeOnline = isVolumeOnline
         self.isSandboxedApplication = isSandboxedApplication
@@ -563,7 +571,8 @@ actor DataDirScanner {
             roots.append((root, type))
         }
         var found: [String: DataDirItem] = [:]
-        let policy = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled)
+        let policy = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled,
+                                    weChatContainerIdentifier: weChatContainerIdentifier)
         func inspect(_ url: URL, type: DataDirType) -> Bool {
             let state = inspectItem(at: url, type: type)
             var item = makeAppDataItem(name: url.lastPathComponent, path: url, type: type,
@@ -740,7 +749,8 @@ actor DataDirScanner {
 
         mergeRecoveryRecords(into: &resultsByPath, bundleID: bundleID, appName: appName, externalRootURL: externalRootURL)
 
-        let policy = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled)
+        let policy = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled,
+                                    weChatContainerIdentifier: weChatContainerIdentifier)
         for (key, item) in resultsByPath where item.type == .containers || item.type == .groupContainers {
             var updated = item
             if ![DataPathPolicy.Reason.runtimeConflict, .readFailure, .retainedOriginal].contains(where: { $0 == item.pathPolicy?.reason }) {
@@ -876,7 +886,8 @@ actor DataDirScanner {
             return lexical == root || lexical.hasPrefix(root + "/")
         }
         func conflict(_ item: inout DataDirItem) {
-            let role = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled).evaluate(item.path).role
+            let role = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled,
+                                    weChatContainerIdentifier: weChatContainerIdentifier).evaluate(item.path).role
             item.applyPathPolicy(.init(role: role, reason: .runtimeConflict, canMigrate: false, mayDiscoverChildren: false))
         }
         // A successful restore is usable local data. Its old copies can be
@@ -939,7 +950,8 @@ actor DataDirScanner {
             // before reusing an old destination.
             if transfer.isDataSwitchComplete,
                item.pathPolicy?.reason != .runtimeConflict, item.pathPolicy?.reason != .readFailure {
-                let policy = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled).evaluate(item.path)
+                let policy = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled,
+                                    weChatContainerIdentifier: weChatContainerIdentifier).evaluate(item.path)
                 let canContinue = completedRestores[source.path] != nil && item.status == DataDirStatus.local
                 item.applyPathPolicy(.init(role: policy.role, reason: .retainedOriginal,
                                            canMigrate: canContinue && policy.canMigrate, mayDiscoverChildren: false))
@@ -1031,7 +1043,8 @@ actor DataDirScanner {
         appName: String,
         externalRootURL: URL?
     ) -> [DataDirItem] {
-        let policy = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled)
+        let policy = DataPathPolicy(homeDirectory: homeDir, partialWeChatMigrationEnabled: partialWeChatMigrationEnabled,
+                                    weChatContainerIdentifier: weChatContainerIdentifier)
         var results: [DataDirItem] = []
 
         func visit(_ url: URL, depth: Int) {
@@ -1054,7 +1067,7 @@ actor DataDirScanner {
                   decision.mayDiscoverChildren, depth < 5 else { return }
             let entries = directoryEntries(at: url)
             for child in entries {
-                if PartialWeChatMigrationPolicy(homeDirectory: homeDir).isAccount(url),
+                if PartialWeChatMigrationPolicy(homeDirectory: homeDir, containerIdentifier: weChatContainerIdentifier).isAccount(url),
                    !PartialWeChatMigrationPolicy.memberNames.contains(child.lastPathComponent) { continue }
                 // Container metadata is not a data candidate. The Data root is deliberately visible.
                 if depth == 0 && type == .containers && child.lastPathComponent != "Data" { continue }
