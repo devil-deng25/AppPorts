@@ -2426,6 +2426,140 @@ final class AppTransferTransactionTests: XCTestCase {
         XCTAssertEqual(try payload(local), "original")
     }
 
+    func testLostVerifiedCandidateIsArchivedBeforeNewMigration() async throws {
+        for replace in [false, true] {
+            let w = try Workspace(); defer { w.cleanup() }
+            let source = w.local.appendingPathComponent("App.app")
+            let destination = w.external.appendingPathComponent("App.app")
+            try makeApp(source)
+            do {
+                _ = try await w.service(hook: { point, _ in if point == .verified { throw Interrupted() } })
+                    .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                                 lockExternal: false, progressHandler: nil)
+                XCTFail("Expected interruption")
+            } catch is Interrupted {}
+            let record = try XCTUnwrap(w.store.records().first)
+            XCTAssertTrue(record.hasCandidateBaseline)
+            // Move aside rather than remove, so inode reuse cannot mimic identity.
+            let retained = w.root.appendingPathComponent("Retained.app")
+            try FileManager.default.moveItem(at: record.candidateURL, to: retained)
+            if replace { try makeApp(record.candidateURL, payload: "replacement") }
+            XCTAssertTrue(w.service().retryDisposition(for: record).isTerminal)
+            let result = try await w.service().moveAndLink(appToMove: item(source), destinationURL: destination,
+                isRunning: false, lockExternal: false, progressHandler: nil)
+            XCTAssertTrue(result.isComplete)
+            XCTAssertTrue(try w.store.records().isEmpty)
+            XCTAssertEqual(try payload(retained), "payload")
+            if replace { XCTAssertEqual(try payload(record.candidateURL), "replacement") }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: w.store.directoryURL
+                .appendingPathComponent("archived/" + record.id.uuidString + ".plist").path))
+        }
+    }
+
+    func testPublishedCandidateIsNotRetiredWithEmptyStage() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .destinationPublished { throw Interrupted() } })
+                .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                             lockExternal: false, progressHandler: nil)
+            XCTFail("Expected interruption")
+        } catch is Interrupted {}
+        let record = try XCTUnwrap(w.store.records().first)
+        XCTAssertFalse(try AppTransferStore.exists(record.candidateURL))
+        XCTAssertFalse(w.service().retryDisposition(for: record).isTerminal)
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty)
+        let result = try await w.service().retryTransfer(operationID: record.id)
+        XCTAssertTrue(result.isComplete)
+    }
+
+    func testOfflineVolumeDoesNotRetireMissingCandidate() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .verified { throw Interrupted() } })
+                .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                             lockExternal: false, progressHandler: nil)
+            XCTFail("Expected interruption")
+        } catch is Interrupted {}
+        let record = try XCTUnwrap(w.store.records().first)
+        let offline = w.root.appendingPathComponent("Offline")
+        try FileManager.default.moveItem(at: w.external, to: offline)
+        // An empty directory at the old mount point is not the original volume.
+        try FileManager.default.createDirectory(at: w.external, withIntermediateDirectories: false)
+        XCTAssertFalse(w.service().retryDisposition(for: record).isTerminal)
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty)
+        try FileManager.default.removeItem(at: w.external)
+        try FileManager.default.moveItem(at: offline, to: w.external)
+        let result = try await w.service().retryTransfer(operationID: record.id)
+        XCTAssertTrue(result.isComplete)
+    }
+
+    func testUnreadableSourceDoesNotRetireTransfer() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .verified { throw Interrupted() } })
+                .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                             lockExternal: false, progressHandler: nil)
+            XCTFail("Expected interruption")
+        } catch is Interrupted {}
+        let record = try XCTUnwrap(w.store.records().first)
+        XCTAssertEqual(chmod(w.local.path, 0), 0)
+        defer { _ = chmod(w.local.path, 0o755) }
+        XCTAssertFalse(w.service().retryDisposition(for: record).isTerminal)
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty)
+        XCTAssertEqual(try w.store.records().count, 1)
+    }
+
+    func testLostRestoreCandidateIsRetiredWithoutDeletingApplications() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        _ = try await w.service().moveAndLink(appToMove: item(source), destinationURL: destination,
+            isRunning: false, lockExternal: false, progressHandler: nil)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .verified { throw Interrupted() } })
+                .moveBack(app: item(destination), localDestinationURL: source, progressHandler: nil)
+            XCTFail("Expected interruption")
+        } catch is Interrupted {}
+        let record = try XCTUnwrap(w.store.records().first)
+        try FileManager.default.moveItem(at: record.candidateURL, to: w.root.appendingPathComponent("Retained.app"))
+        let lock = OperationLock(fileURL: w.store.operationLockURL)
+        XCTAssertTrue(lock.tryAcquire())
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty, "Must not archive during another operation")
+        lock.release()
+        XCTAssertEqual(w.service().retireUnrecoverableTransfers().count, 1)
+        XCTAssertEqual(try payload(destination), "payload")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        let restored = try await w.service().moveBack(app: item(destination), localDestinationURL: source, progressHandler: nil)
+        XCTAssertTrue(restored.transferResult.isComplete)
+    }
+
+    func testExchangedEntryWithoutCommitIsNeverArchived() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .entrySwitched { throw Interrupted() } })
+                .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                             lockExternal: false, progressHandler: nil)
+        } catch is Interrupted {}
+        XCTAssertFalse(try w.store.records().isEmpty)
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty)
+        let record = try XCTUnwrap(w.store.records().first)
+        let result = try await w.service().retryTransfer(operationID: record.id)
+        XCTAssertTrue(result.isComplete)
+    }
+
     func testProtectionRecordsWrittenBeforeProvenanceStillDecodeAsManaged() throws {
         let w = try Workspace(); defer { w.cleanup() }
         let protection = AppUpdateProtectionStore(transferStore: w.store)

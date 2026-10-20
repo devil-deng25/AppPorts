@@ -524,6 +524,7 @@ struct AppMigrationService {
         }
         let kind: LocalPortalKind = portalCreationOverride != nil ? .wholeAppSymlink
             : appToMove.usesFolderOperation ? .folderMirror : preferredPortalKind(for: appToMove.path)
+        _ = retireUnrecoverableTransfersWhileLocked()
         let result = try await transferTransaction().start(app: appToMove, destination: destinationURL, direction: .migrate,
             portalKind: kind.rawValue, protectDestination: lockExternal && needsUpdateProtection(appToMove),
             mayReplaceDestination: mayReplace, replacementChoice: confirmedReplacement, legacyPortals: [], progress: progressHandler)
@@ -618,23 +619,45 @@ struct AppMigrationService {
         if record.phase == .cancelled {
             return .terminal("本次尝试已结束，保留的材料已列出。")
         }
-        // Every resume path re-verifies against a manifest. A record whose
-        // manifest is gone can never complete (a v1.9.1 remove() deleted the
-        // manifests before the record itself), so retrying only hides that.
-        if AppTransferJournalIntegrity.missingManifests(for: record, store: transferStore) {
-            return .terminal("校验清单缺失，记录无法再次验证。")
-        }
         guard !record.isSwitchComplete else { return .retry }
         let source = URL(fileURLWithPath: record.sourcePath)
-        let parent = source.deletingLastPathComponent()
-        // A missing object only settles the question when its parent still
-        // exists; a missing parent may just mean the disk is unplugged.
-        guard let object = try? DataPathIdentity.capture(source) else {
-            guard (try? SignatureSnapshot.info(at: parent)) != nil else { return .retry }
-            return .terminal("记录中的外部应用已不在原位。")
+        let destination = URL(fileURLWithPath: record.destinationPath)
+        // Both original parents must be available before interpreting absence.
+        // An offline volume or unreadable path is still recoverable.
+        guard let sourceParent = try? DataPathIdentity.capture(source.deletingLastPathComponent()),
+              sourceParent.matchesFilesystemObject(record.sourceParentIdentity),
+              let destinationParent = try? DataPathIdentity.capture(destination.deletingLastPathComponent()),
+              destinationParent.matchesFilesystemObject(record.destinationParentIdentity) else { return .retry }
+        do {
+            let object = try DataPathIdentity.capture(source)
+            // An exchanged local portal can outlive commit bookkeeping. If its
+            // activation cannot currently be inspected, keep the cleanup journal.
+            if let portal = record.portalIdentity, object.matchesFilesystemObject(portal) { return .retry }
+            guard object.matchesFilesystemObject(record.sourceIdentity) else {
+                return .terminal("记录中的源应用已被替换。")
+            }
+        } catch {
+            guard (error as? POSIXError)?.code == .ENOENT else { return .retry }
+            return .terminal("记录中的源应用已不在原位。")
         }
-        guard object.matchesFilesystemObject(record.sourceIdentity) else {
-            return .terminal("记录中的外部应用已被替换。")
+        if AppTransferJournalIntegrity.missingManifests(for: record, store: transferStore,
+                                                       onlyConfirmedMissing: true) {
+            return .terminal("校验清单缺失，记录无法再次验证。")
+        }
+        // Before a candidate baseline is saved, copying can simply start again.
+        // Afterwards, resume requires that exact object, either staged or (for
+        // migration) already published at the external destination.
+        if record.hasCandidateBaseline, let identity = record.candidateIdentity {
+            var candidates = [record.candidateURL]
+            if record.direction == .migrate && record.switchIntentRecorded { candidates.append(destination) }
+            for url in candidates {
+                do {
+                    if try DataPathIdentity.capture(url).matchesFilesystemObject(identity) { return .retry }
+                } catch {
+                    guard (error as? POSIXError)?.code == .ENOENT else { return .retry }
+                }
+            }
+            return .terminal("已校验的暂存副本已丢失或被替换，旧记录已归档，可重新操作。")
         }
         return .retry
     }
@@ -650,6 +673,16 @@ struct AppMigrationService {
     /// copy under its own verified manifest, and retrying performs that safely.
     @discardableResult
     func retireUnrecoverableTransfers() -> [String] {
+        do { try Self.mutationCoordinator.beginSynchronously() } catch { return [] }
+        defer { Self.mutationCoordinator.end() }
+        let operationLock = makeOperationLock()
+        guard operationLock.tryAcquire() else { return [] }
+        defer { operationLock.release() }
+        return retireUnrecoverableTransfersWhileLocked()
+    }
+
+    /// Caller holds both the mutation coordinator and the operation lock.
+    private func retireUnrecoverableTransfersWhileLocked() -> [String] {
         guard let inventory = try? pendingTransferInspection() else { return [] }
         var notes: [String] = []
         for record in inventory.records {
@@ -1022,6 +1055,7 @@ struct AppMigrationService {
         let portals = app.usesFolderOperation
             ? folderPortalSnapshots(for: app.path, localAppsDir: localDestinationURL.deletingLastPathComponent())
                 .map { ($0.localURL, $0.externalURL) } : []
+        _ = retireUnrecoverableTransfersWhileLocked()
         let result = try await transferTransaction().start(app: app, destination: localDestinationURL, direction: .restore,
             portalKind: nil, protectDestination: false, mayReplaceDestination: existing != nil,
             legacyPortals: portals, progress: progressHandler)
