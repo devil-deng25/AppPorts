@@ -2343,7 +2343,6 @@ private struct AppListRow: View {
     let isSelected: Bool
 
     @State private var isHovered = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 10) {
@@ -2377,6 +2376,7 @@ private struct AppListRow: View {
 
             Spacer()
         }
+        .frame(height: 32)
         .padding(.vertical, 7)
         .padding(.horizontal, 10)
         .background(
@@ -2387,6 +2387,5 @@ private struct AppListRow: View {
         )
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isHovered)
     }
 }

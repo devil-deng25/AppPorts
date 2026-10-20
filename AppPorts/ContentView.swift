@@ -208,6 +208,7 @@ struct ContentView: View {
     @State private var sizeCache: [String: CachedAppSize] = [:]
     
     @State private var searchText: String = ""
+    @State private var hideMigratedApps = false
     
     private let localAppsURL = URL(fileURLWithPath: "/Applications")
     @State private var externalDriveURL: URL?
@@ -525,22 +526,20 @@ struct ContentView: View {
     
     var filteredLocalApps: [AppItem] {
         let apps = localAppFilter == .signatureReplaced ? localApps.filter(\.signatureReplaced) : localApps
-        let filtered = searchText.isEmpty ? apps : apps.filter {
-            $0.displayName.localizedCaseInsensitiveContains(searchText) || $0.name.localizedCaseInsensitiveContains(searchText)
-        }
-        
-        return sortApps(filtered)
+        return sortApps(apps.filter(matchesAppListFilters))
     }
-    
+
     var filteredExternalApps: [AppItem] {
-        let apps = externalApps
-        let filtered = searchText.isEmpty ? apps : apps.filter {
-            $0.displayName.localizedCaseInsensitiveContains(searchText) || $0.name.localizedCaseInsensitiveContains(searchText)
-        }
-        
-        return sortApps(filtered)
+        sortApps(externalApps.filter(matchesAppListFilters))
     }
-    
+
+    private func matchesAppListFilters(_ app: AppItem) -> Bool {
+        // Keep partial/broken links visible so unfinished migrations can still be handled.
+        if hideMigratedApps && app.status == AppStatus.linked { return false }
+        return searchText.isEmpty || app.displayName.localizedCaseInsensitiveContains(searchText)
+            || app.name.localizedCaseInsensitiveContains(searchText)
+    }
+
     func sortApps(_ apps: [AppItem]) -> [AppItem] {
         switch sortOption {
         case .name:
@@ -796,8 +795,40 @@ struct ContentView: View {
     // MARK: - 顶部工具栏（拆出以减轻 body 的类型推断负担）
 
     private var topToolbar: some View {
-    HStack(spacing: 14) {
-        // Tab 切换器
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                primaryNavigation
+                Spacer(minLength: 12)
+                if mainTab == .dataDirs {
+                    dataDirsToolbarControls
+                }
+                Button(action: { showAppStoreSettings = true }) {
+                    Label("设置".localized, systemImage: "gearshape")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 32, height: 30)
+                        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
+                .keyboardShortcut(",", modifiers: .command)
+                .help("设置".localized + " (⌘,)")
+                .accessibilityLabel("设置".localized)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            if mainTab == .apps {
+                appListToolbar
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+            }
+            Divider()
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var primaryNavigation: some View {
         HStack(spacing: 2) {
             TabButton(title: "应用".localized, systemImage: "cube", isSelected: mainTab == .apps) {
                 withAnimation { mainTab = .apps }
@@ -823,9 +854,10 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.primary.opacity(0.03))
         )
+    }
 
-        if mainTab == .apps {
-            // Search Bar
+    private var appListToolbar: some View {
+        HStack(spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
@@ -833,11 +865,34 @@ struct ContentView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
             }
-            .padding(8)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
             .background(Color.primary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-            // Sort Button
+            Button { hideMigratedApps.toggle() } label: {
+                Label("隐藏已迁移应用".localized, systemImage: "eye.slash")
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .foregroundColor(hideMigratedApps ? .accentColor : .primary)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(hideMigratedApps ? Color.accentColor.opacity(0.12) : .clear)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(hideMigratedApps ? "开启".localized : "关闭".localized)
+            .accessibilityAddTraits(hideMigratedApps ? .isSelected : [])
+            .fixedSize()
+            .onChange(of: hideMigratedApps) { enabled in
+                guard enabled else { return }
+                selectedLocalApps.formIntersection(Set(filteredLocalApps.map(\.id)))
+                selectedExternalApps.formIntersection(Set(filteredExternalApps.map(\.id)))
+            }
+
             Menu {
                 Button(action: { sortOption = .name }) {
                     HStack {
@@ -859,41 +914,16 @@ struct ContentView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help("排序方式".localized)
-        }
 
-        Spacer()
-
-        if mainTab == .dataDirs {
-            dataDirsToolbarControls
-        }
-
-        if mainTab == .apps {
             Button {
                 showSearchExclusion = true
             } label: {
                 Label("排除外盘应用索引".localized, systemImage: "magnifyingglass.circle")
             }
             .buttonStyle(.borderless)
+            .fixedSize()
             .disabled(operationState.isBusy || externalDriveURL == nil)
-
         }
-
-        // App Store Settings Button（始终显示）
-        Button(action: { showAppStoreSettings = true }) {
-            Label("设置".localized, systemImage: "gearshape")
-                .font(.system(size: 12, weight: .medium))
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(Color.primary.opacity(0.03))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .foregroundColor(.secondary)
-        .help("App Store 应用迁移设置".localized)
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 10)
-    .background(Color(nsColor: .controlBackgroundColor))
     }
 
     // MARK: - 应用页两个面板（拆出以减轻 body 的类型推断负担）
@@ -1137,6 +1167,7 @@ struct ContentView: View {
                     }
                     Text(title)
                         .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                        .lineLimit(1)
                 }
                 .foregroundColor(isSelected ? .accentColor : .secondary)
                 .padding(.horizontal, 12)

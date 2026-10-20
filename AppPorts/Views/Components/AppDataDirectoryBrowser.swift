@@ -146,7 +146,6 @@ struct AppDataDirectoryBrowser<Actions: View>: View {
                                         actions: actions(row.item)
                                     )
                                     .tag(row.id)
-                                    .id(row.id)
                                     .contextMenu {
                                         Button("在 Finder 中显示".localized) { reveal(row.item) }
                                         Button("复制路径".localized) { copyPath(row.item) }

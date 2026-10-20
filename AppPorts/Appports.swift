@@ -95,6 +95,7 @@ struct AppMoverApp: App {
             .environment(\.locale, languageManager.locale)
 
             .id(languageManager.language)
+            .background(MainWindowAppearance())
             
 
         }
@@ -204,6 +205,18 @@ struct AppMoverApp: App {
                     }
                 }
             }
+        }
+    }
+}
+
+private struct MainWindowAppearance: NSViewRepresentable {
+    func makeNSView(context: Context) -> WindowView { WindowView() }
+    func updateNSView(_ nsView: WindowView, context: Context) {}
+
+    final class WindowView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.titlebarSeparatorStyle = .none
         }
     }
 }

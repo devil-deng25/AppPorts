@@ -14,6 +14,7 @@ struct AppIconView: View {
     var size: CGFloat = 40
 
     @State private var icon: NSImage? = nil
+    @State private var iconRevision = 0
 
     var body: some View {
         Group {
@@ -26,29 +27,71 @@ struct AppIconView: View {
             }
         }
         .frame(width: size, height: size)
-        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
         .accessibilityHidden(true)
         .onReceive(NotificationCenter.default.publisher(for: .appPortalPresentationDidChange)
             .receive(on: DispatchQueue.main)) { notification in
             guard let changedURL = notification.object as? URL,
                   changedURL.standardizedFileURL.path == url.standardizedFileURL.path else { return }
-            icon = Self.loadIcon(from: url)
+            AppIconLoader.shared.invalidate(url)
+            iconRevision += 1
         }
-        .task(id: url) {
-            let loaded = Self.loadIcon(from: url)
+        .task(id: IconRequest(url: url, revision: iconRevision)) {
+            let loaded = await AppIconLoader.shared.load(url)
+            guard !Task.isCancelled else { return }
             icon = loaded
-            if loaded == nil {
-                AppLogger.shared.logContext(
-                    "AppIconView 图标加载失败",
-                    details: [
-                        ("url", url.path),
-                        ("exists", FileManager.default.fileExists(atPath: url.path) ? "YES" : "NO"),
-                        ("resolved", url.resolvingSymlinksInPath().path)
-                    ],
-                    level: "WARN"
-                )
+        }
+    }
+
+    private struct IconRequest: Hashable {
+        let url: URL
+        let revision: Int
+    }
+}
+
+/// A serial worker keeps filesystem/Launch Services reads off the UI thread and
+/// coalesces repeated requests through a bounded, thread-safe memory cache.
+private final class AppIconLoader: @unchecked Sendable {
+    static let shared = AppIconLoader()
+    private let queue = DispatchQueue(label: "AppPorts.app-icons", qos: .userInitiated)
+    private let cache: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 512
+        cache.totalCostLimit = 32 * 1024 * 1024
+        return cache
+    }()
+
+    func load(_ url: URL) async -> NSImage? {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                let key = url.standardizedFileURL as NSURL
+                if let image = cache.object(forKey: key) {
+                    continuation.resume(returning: image)
+                    return
+                }
+                let image = Self.loadIcon(from: url).map(Self.decodedThumbnail)
+                if let image { cache.setObject(image, forKey: key, cost: 144 * 144 * 4) }
+                continuation.resume(returning: image)
             }
         }
+    }
+
+    func invalidate(_ url: URL) {
+        queue.async { [self] in
+            cache.removeObject(forKey: url.standardizedFileURL as NSURL)
+        }
+    }
+
+    /// Decode and downsample on the worker, so scrolling only draws a small bitmap.
+    private static func decodedThumbnail(_ image: NSImage) -> NSImage {
+        var rect = CGRect(x: 0, y: 0, width: 144, height: 144)
+        guard let source = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
+              let context = CGContext(data: nil, width: 144, height: 144, bitsPerComponent: 8,
+                                     bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
+        context.interpolationQuality = .high
+        context.draw(source, in: CGRect(x: 0, y: 0, width: 144, height: 144))
+        guard let bitmap = context.makeImage() else { return image }
+        return NSImage(cgImage: bitmap, size: NSSize(width: 48, height: 48))
     }
 
     private static func loadIcon(from appURL: URL) -> NSImage? {
