@@ -524,6 +524,7 @@ struct AppMigrationService {
         }
         let kind: LocalPortalKind = portalCreationOverride != nil ? .wholeAppSymlink
             : appToMove.usesFolderOperation ? .folderMirror : preferredPortalKind(for: appToMove.path)
+        _ = retireUnrecoverableTransfersWhileLocked()
         let result = try await transferTransaction().start(app: appToMove, destination: destinationURL, direction: .migrate,
             portalKind: kind.rawValue, protectDestination: lockExternal && needsUpdateProtection(appToMove),
             mayReplaceDestination: mayReplace, replacementChoice: confirmedReplacement, legacyPortals: [], progress: progressHandler)
@@ -580,6 +581,21 @@ struct AppMigrationService {
         return try await transferTransaction(retrying: true).resume(operationID, progress: progressHandler)
     }
 
+    /// User-requested recovery bypasses content verification, never the operation locks.
+    func recoverTransferIgnoringErrors(operationID: UUID, restore: Bool,
+                                       progress: DataTransferProgress) async throws -> String {
+        try await Self.mutationCoordinator.begin()
+        defer { Self.mutationCoordinator.end() }
+        let operationLock = makeOperationLock()
+        guard await operationLock.acquire(timeout: OperationLock.appWaitTimeout) else {
+            throw AppTransferTransaction.failure(operationLock.admissionFailureReason
+                ?? "其他操作正在使用应用记录，请稍后重试。".localized, at: transferStore.directoryURL)
+        }
+        defer { operationLock.release() }
+        return try await AppTransferForceRecovery(store: transferStore).run(
+            operationID: operationID, restore: restore, progress: progress)
+    }
+
     @discardableResult
     func cancelTransfer(operationID: UUID) async throws -> AppTransferResult {
         try await Self.mutationCoordinator.begin()
@@ -618,23 +634,45 @@ struct AppMigrationService {
         if record.phase == .cancelled {
             return .terminal("本次尝试已结束，保留的材料已列出。")
         }
-        // Every resume path re-verifies against a manifest. A record whose
-        // manifest is gone can never complete (a v1.9.1 remove() deleted the
-        // manifests before the record itself), so retrying only hides that.
-        if AppTransferJournalIntegrity.missingManifests(for: record, store: transferStore) {
-            return .terminal("校验清单缺失，记录无法再次验证。")
-        }
         guard !record.isSwitchComplete else { return .retry }
         let source = URL(fileURLWithPath: record.sourcePath)
-        let parent = source.deletingLastPathComponent()
-        // A missing object only settles the question when its parent still
-        // exists; a missing parent may just mean the disk is unplugged.
-        guard let object = try? DataPathIdentity.capture(source) else {
-            guard (try? SignatureSnapshot.info(at: parent)) != nil else { return .retry }
-            return .terminal("记录中的外部应用已不在原位。")
+        let destination = URL(fileURLWithPath: record.destinationPath)
+        // Both original parents must be available before interpreting absence.
+        // An offline volume or unreadable path is still recoverable.
+        guard let sourceParent = try? DataPathIdentity.capture(source.deletingLastPathComponent()),
+              sourceParent.matchesFilesystemObject(record.sourceParentIdentity),
+              let destinationParent = try? DataPathIdentity.capture(destination.deletingLastPathComponent()),
+              destinationParent.matchesFilesystemObject(record.destinationParentIdentity) else { return .retry }
+        do {
+            let object = try DataPathIdentity.capture(source)
+            // An exchanged local portal can outlive commit bookkeeping. If its
+            // activation cannot currently be inspected, keep the cleanup journal.
+            if let portal = record.portalIdentity, object.matchesFilesystemObject(portal) { return .retry }
+            guard object.matchesFilesystemObject(record.sourceIdentity) else {
+                return .terminal("记录中的源应用已被替换。")
+            }
+        } catch {
+            guard (error as? POSIXError)?.code == .ENOENT else { return .retry }
+            return .terminal("记录中的源应用已不在原位。")
         }
-        guard object.matchesFilesystemObject(record.sourceIdentity) else {
-            return .terminal("记录中的外部应用已被替换。")
+        if AppTransferJournalIntegrity.missingManifests(for: record, store: transferStore,
+                                                       onlyConfirmedMissing: true) {
+            return .terminal("校验清单缺失，记录无法再次验证。")
+        }
+        // Before a candidate baseline is saved, copying can simply start again.
+        // Afterwards, resume requires that exact object, either staged or (for
+        // migration) already published at the external destination.
+        if record.hasCandidateBaseline, let identity = record.candidateIdentity {
+            var candidates = [record.candidateURL]
+            if record.direction == .migrate && record.switchIntentRecorded { candidates.append(destination) }
+            for url in candidates {
+                do {
+                    if try DataPathIdentity.capture(url).matchesFilesystemObject(identity) { return .retry }
+                } catch {
+                    guard (error as? POSIXError)?.code == .ENOENT else { return .retry }
+                }
+            }
+            return .terminal("已校验的暂存副本已丢失或被替换，旧记录已归档，可重新操作。")
         }
         return .retry
     }
@@ -650,6 +688,16 @@ struct AppMigrationService {
     /// copy under its own verified manifest, and retrying performs that safely.
     @discardableResult
     func retireUnrecoverableTransfers() -> [String] {
+        do { try Self.mutationCoordinator.beginSynchronously() } catch { return [] }
+        defer { Self.mutationCoordinator.end() }
+        let operationLock = makeOperationLock()
+        guard operationLock.tryAcquire() else { return [] }
+        defer { operationLock.release() }
+        return retireUnrecoverableTransfersWhileLocked()
+    }
+
+    /// Caller holds both the mutation coordinator and the operation lock.
+    private func retireUnrecoverableTransfersWhileLocked() -> [String] {
         guard let inventory = try? pendingTransferInspection() else { return [] }
         var notes: [String] = []
         for record in inventory.records {
@@ -705,7 +753,7 @@ struct AppMigrationService {
                 }
             }, portalMatches: { self.localPortalKind(at: $0, linkedTo: $1) != nil },
             updateDock: retrying ? dockShortcutRetryUpdater : dockShortcutUpdater,
-            runningApplications: runningApplications, hooks: transferHooks)
+            runningApplications: runningApplications, hooks: transferHooks, allowsAdministratorPrompt: !retrying)
     }
 
     private func sameApplicationContainer(_ source: URL, _ destination: URL, folder: Bool) -> Bool {
@@ -775,11 +823,33 @@ struct AppMigrationService {
         return .same
     }
 
+    /// Foreground actions wait for maintenance, then resume the exact unfinished
+    /// migration with permission to show an administrator prompt.
+    func linkAppWhenReady(appToLink: AppItem, destinationURL: URL) async throws {
+        try await Self.mutationCoordinator.begin()
+        defer { Self.mutationCoordinator.end() }
+        let operationLock = makeOperationLock()
+        guard await operationLock.acquire(timeout: OperationLock.appWaitTimeout) else {
+            throw AppTransferTransaction.failure(operationLock.admissionFailureReason
+                ?? "其他操作正在使用应用记录，请稍后重试。".localized, at: destinationURL)
+        }
+        defer { operationLock.release() }
+        let resumed = try await finishPendingMigration(external: appToLink.path, local: destinationURL)
+        // Resuming may already have installed the requested entry. Do not
+        // replace an entry still owned by its transfer's cleanup journal.
+        if resumed && localPortalKind(at: destinationURL, linkedTo: appToLink.path) != nil { return }
+        try linkAppWhileLocked(appToLink: appToLink, destinationURL: destinationURL)
+    }
+
     func linkApp(appToLink: AppItem, destinationURL: URL) throws {
         try Self.mutationCoordinator.beginSynchronously()
         defer { Self.mutationCoordinator.end() }
         let operationLock = try acquireOperationLock(at: destinationURL)
         defer { operationLock.release() }
+        try linkAppWhileLocked(appToLink: appToLink, destinationURL: destinationURL)
+    }
+
+    private func linkAppWhileLocked(appToLink: AppItem, destinationURL: URL) throws {
         let operationID = AppLogger.shared.makeOperationID(prefix: "app-link")
         let startedAt = Date()
         var operationResult = "failed"
@@ -1014,6 +1084,7 @@ struct AppMigrationService {
                 ?? "其他操作正在使用应用记录，请稍后重试。".localized, at: app.path)
         }
         defer { operationLock.release() }
+        _ = try await finishPendingMigration(external: app.path, local: localDestinationURL, progress: progressHandler)
         try Self.checkWritePermission(at: localDestinationURL, fileManager: fileManager)
         let existing = localPortalKind(at: localDestinationURL, linkedTo: app.path)
         if existing == .folderMirror {
@@ -1022,6 +1093,7 @@ struct AppMigrationService {
         let portals = app.usesFolderOperation
             ? folderPortalSnapshots(for: app.path, localAppsDir: localDestinationURL.deletingLastPathComponent())
                 .map { ($0.localURL, $0.externalURL) } : []
+        _ = retireUnrecoverableTransfersWhileLocked()
         let result = try await transferTransaction().start(app: app, destination: localDestinationURL, direction: .restore,
             portalKind: nil, protectDestination: false, mayReplaceDestination: existing != nil,
             legacyPortals: portals, progress: progressHandler)
@@ -1031,6 +1103,28 @@ struct AppMigrationService {
         }
         return RestoreResult(retiredLocalPortalURLs: result.retiredLocalPortalURLs,
                              externalSourceRemains: result.externalSourceRemains, transferResult: result)
+    }
+
+    /// Caller holds the coordinator and operation lock. Only the exact inverse
+    /// migration is eligible; unrelated/overlapping records stay fail-closed.
+    private func finishPendingMigration(external: URL, local: URL,
+                                        progress: FileCopier.ProgressHandler? = nil) async throws -> Bool {
+        _ = retireUnrecoverableTransfersWhileLocked()
+        var resumed = false
+        for record in try transferStore.inventory().records where record.direction == .migrate
+            && !record.isSwitchComplete && record.phase != .cancelled
+            && record.sourcePath == local.standardizedFileURL.path
+            && record.destinationPath == external.standardizedFileURL.path {
+            try AppTransferJournalIntegrity.requireVerifiedManifests(for: record, store: transferStore)
+            let result = try await transferTransaction().resume(record.operationID, progress: progress)
+            guard result.isSwitchComplete else {
+                throw AppTransferTransaction.failure(result.pendingMessage ?? record.recoverableReason ??
+                    "此位置的上次操作尚未完成。AppPorts 已保留数据并会继续尝试，请根据下面的原因处理后重试。".localized,
+                    at: external)
+            }
+            resumed = true
+        }
+        return resumed
     }
 
     /// A folder marker identifies the entry, but does not authorize deleting
@@ -2072,6 +2166,13 @@ struct AppMigrationService {
             defer { stage.cleanup() }
             // Copy bytes into independent files. Never inherit uchg or hard links from the old portal.
             try stage.copyContents(from: localURL, snapshot: original)
+            let stagedContents = stageURL.appendingPathComponent("Contents")
+            let stagedMacOS = stagedContents.appendingPathComponent("MacOS")
+            try fileManager.removeItem(at: stagedMacOS.appendingPathComponent("launcher"))
+            try copyNativeLauncher(to: stagedMacOS,
+                                   resourcesDir: stagedContents.appendingPathComponent("Resources"),
+                                   externalURL: externalURL)
+            try stage.recordGeneratedFiles(replacing: ["Contents/MacOS/launcher", "Contents/Resources/real_app_path.txt"])
             for warning in try PortalPresentation.write(from: externalContents, to: stageURL.appendingPathComponent("Contents")) {
                 AppLogger.shared.log(warning, level: "WARN")
             }

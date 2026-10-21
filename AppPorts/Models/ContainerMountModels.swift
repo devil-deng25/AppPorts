@@ -44,6 +44,7 @@ struct ContainerMountRecord: Codable, Equatable, Identifiable, Sendable {
     /// Missing means noowners, the normal application-data policy used in 1.9.0.
     /// Keep decoding owners for interrupted operations from earlier 1.9.1 builds.
     var ownershipPolicy: OwnershipPolicy?
+    var isEncrypted: Bool?
 
     init(
         appName: String,
@@ -54,7 +55,8 @@ struct ContainerMountRecord: Codable, Equatable, Identifiable, Sendable {
         volumeName: String,
         externalRootPath: String,
         createdAt: Date = Date(),
-        ownershipPolicy: OwnershipPolicy? = nil
+        ownershipPolicy: OwnershipPolicy? = nil,
+        isEncrypted: Bool? = nil
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.appName = appName
@@ -66,6 +68,7 @@ struct ContainerMountRecord: Codable, Equatable, Identifiable, Sendable {
         self.externalRootPath = externalRootPath
         self.createdAt = createdAt
         self.ownershipPolicy = ownershipPolicy
+        self.isEncrypted = isEncrypted
     }
 
     var mountPointURL: URL {

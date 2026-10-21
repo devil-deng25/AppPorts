@@ -77,7 +77,6 @@ struct MountMigrationPreflightTests {
         .destinationUnavailable,
         .notAPFS(filesystem: "exfat"),
         .notAPFS(filesystem: nil),
-        .encrypted,
         .insufficientSpace(requiredBytes: 2_000_000_000, availableBytes: 1_000_000_000)
     ]
 
@@ -117,8 +116,7 @@ struct MountMigrationPreflightTests {
     }
 
     @Test("Drives that need changes lead with keeping things as they are", arguments: [
-        MountMigrationPreflight.Outcome.notAPFS(filesystem: "exfat"),
-        .encrypted
+        MountMigrationPreflight.Outcome.notAPFS(filesystem: "exfat")
     ])
     func keepAsIsIsTheDefault(outcome: MountMigrationPreflight.Outcome) {
         let guidance = makeGuidance(outcome)
@@ -143,7 +141,9 @@ struct MountMigrationPreflightTests {
         let kinds = [makeGuidance(.notAPFS(filesystem: "exfat")), makeGuidance(.encrypted)]
             .flatMap(\.actions).map(\.kind)
         #expect(kinds.contains(.openGuide(page: "why-apfs", anchor: "prepare-apfs")))
-        #expect(kinds.contains(.openGuide(page: "why-apfs", anchor: "encrypted-drives")))
+        let encrypted = makeGuidance(.encrypted)
+        #expect(encrypted.isReady)
+        #expect(encrypted.actions.contains { $0.kind == .migrate && $0.isPrimary })
     }
 
     @Test("The drive is named by its volume, not by the chosen folder")

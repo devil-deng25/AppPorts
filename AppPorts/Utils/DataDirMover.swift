@@ -92,6 +92,7 @@ actor DataDirMover {
 
     private func migrateRetainingOriginal(item: DataDirItem, to externalBaseURL: URL,
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
+        DataTransferSession.progress?.setDirectory(item.path)
         await progressHandler?(.working(.preparing))
         let source = item.path.standardizedFileURL
         let destination = externalBaseURL.appendingPathComponent(source.lastPathComponent).standardizedFileURL
@@ -141,7 +142,7 @@ actor DataDirMover {
             try requireIdentity(source, transfer.sourceIdentity)
             try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
-            try TreeCopySession.verifyCopy(at: destination, against: baseline)
+            try TreeCopySession.verifyCopy(at: destination, against: baseline, purpose: .beforeSwitch)
             transfer.phase = .switching
             try store.updateTransfer(transfer)
             try moveTree(source, to: backup)
@@ -189,6 +190,7 @@ actor DataDirMover {
 
     private func restoreRetainingOriginal(item: DataDirItem,
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
+        DataTransferSession.progress?.setDirectory(item.path)
         await progressHandler?(.working(.preparing))
         let local = item.path.standardizedFileURL
         try finishUnstartedRestoreIfNeeded(at: local)
@@ -250,7 +252,7 @@ actor DataDirMover {
             try requireIdentity(external, sourceIdentity)
             try requireMarker(at: external, for: local, type: item.type, allowOwned: true)
             try TreeCopySession.verifyUnchanged(at: external, against: baseline)
-            try TreeCopySession.verifyCopy(at: copyURL, against: baseline)
+            try TreeCopySession.verifyCopy(at: copyURL, against: baseline, purpose: .beforeSwitch)
             try requireLocalRestoreParent(local)
             try store.beginRestore(transfer: transfer, removingMount: nil)
             transfer.phase = .switching
@@ -672,6 +674,8 @@ actor DataDirMover {
     /// failed. Reuse its operation ID; never create a second copy or reservation.
     func resumeVerifiedTransfer(operationID: UUID, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
         guard var transfer = try store.transfer(operationID: operationID) else { return nil }
+        DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: transfer.originalPath))
+        guard transfer.needsAutomaticCompletion else { return nil }
         if transfer.isPreparationRecoverable {
             await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false, stage: .recovering))
             guard try store.transfer(operationID: operationID) == transfer else {
@@ -1187,7 +1191,8 @@ actor DataDirMover {
     /// Newly switched data is checked against the just-copied content. An older
     /// completed restore can have ordinary edits while retaining its identity.
     private func verifyAutomaticCleanup(_ lineage: [DataTransferRecord], requireUnchangedActive: Bool = true) async throws {
-        guard let terminal = lineage.last else { return }
+        guard lineage.contains(where: { $0.needsAutomaticCompletion && $0.retainedCopyRemovedAt == nil }),
+              let terminal = lineage.last else { return }
         guard !(try store.transfers()).contains(where: { $0.priorOperationID == terminal.operationID }),
               let activeIdentity = terminal.destinationIdentity else {
             throw DataOperationSafety.Failure.conflict(terminal.originalPath)
@@ -1215,7 +1220,7 @@ actor DataDirMover {
         if requireUnchangedActive {
             guard let encoded = terminal.baseline else { throw DataOperationSafety.Failure.inspection(active.path) }
             let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
-            try TreeCopySession.verifyCopy(at: active, against: baseline)
+            try TreeCopySession.verifyCopy(at: active, against: baseline, purpose: .activeData)
         }
         // Each retained copy is checked immediately before its own deletion.
         // An older offline copy must not keep a newly verified local copy alive.
@@ -1290,6 +1295,8 @@ actor DataDirMover {
         guard runningCleanups.insert(operationID).inserted else { throw DataOperationSafety.Failure.occupied(operationID.uuidString) }
         defer { runningCleanups.remove(operationID) }
         guard var transfer = try store.transfer(operationID: operationID) else { return }
+        DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: transfer.originalPath))
+        guard transfer.needsAutomaticCompletion else { return }
         if transfer.retainedCopyRemovedAt != nil {
             try store.finishTransfer(operationID: operationID, deletionConfirmed: true)
             return
@@ -1391,6 +1398,7 @@ actor DataDirMover {
         let store = self.store
         do { return try await TreeCopySession().copy(from: source, to: destination,
             excludingRootEntries: [managedLinkMarkerFileName], finalDestination: final,
+            verifySourceAfterCopy: false,
             preparedHandler: { baseline in
                 if let operationID {
                     try store.prepareCopy(operationID: operationID, path: destination,
@@ -1407,8 +1415,9 @@ actor DataDirMover {
         try requireMarker(at: destination, for: source, type: type, allowOwned: true)
         do {
             try writeManagedLinkMetadata(sourcePath: source, destinationPath: destination, type: type)
+            // 只改动根目录属性；applyRootMetadata 已逐项核对根目录，
+            // 标记文件不改变子文件内容，无需因此再读取整棵目录。
             try TreeCopySession.applyRootMetadata(at: destination, from: baseline, ownershipRole: ownershipRole)
-            try TreeCopySession.verifyCopy(at: destination, against: baseline)
         } catch { throw DataDirError.metadataWriteFailed(error) }
     }
 
@@ -1583,9 +1592,9 @@ actor DataDirMover {
 
     private func verifyRetainedTree(_ root: URL, identity: DataPathIdentity, baseline: TreeCopySnapshot) throws {
         if let volumeUUID = identity.volumeUUID {
-            try TreeCopySession.verifyUnchanged(at: root, against: baseline, expectedVolumeUUID: volumeUUID)
+            try TreeCopySession.verifyUnchanged(at: root, against: baseline, expectedVolumeUUID: volumeUUID, purpose: .retainedCopy)
         } else {
-            try TreeCopySession.verifyUnchanged(at: root, against: baseline)
+            try TreeCopySession.verifyUnchanged(at: root, against: baseline, purpose: .retainedCopy)
         }
     }
 

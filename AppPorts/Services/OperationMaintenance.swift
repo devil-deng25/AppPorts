@@ -10,6 +10,8 @@ actor OperationMaintenance {
     }
 
     private var active: RunningMaintenance?
+    private var dataActive: RunningMaintenance?
+    private var lastFinishedAt: Date?
     private let perform: @Sendable () async -> [String]
 
     init(perform: (@Sendable () async -> [String])? = nil) {
@@ -18,11 +20,12 @@ actor OperationMaintenance {
 
     /// A foreground retry adopts the worker's reporter, including when it
     /// joins maintenance that already began in the background.
-    func run(observeProgress: (@Sendable (DataTransferProgress) async -> Void)? = nil) async -> [String] {
+    func run(minimumInterval: TimeInterval = 0, observeProgress: (@Sendable (DataTransferProgress) async -> Void)? = nil) async -> [String] {
         if let active {
             await observeProgress?(active.progress)
             return await active.task.value
         }
+        if let lastFinishedAt, Date().timeIntervalSince(lastFinishedAt) < minimumInterval { return [] }
         let progress = DataTransferProgress()
         let perform = self.perform
         let task = Task.detached(priority: .utility) {
@@ -32,7 +35,26 @@ actor OperationMaintenance {
             }
         }
         active = RunningMaintenance(task: task, progress: progress)
-        defer { active = nil }
+        defer { active = nil; lastFinishedAt = Date() }
+        await observeProgress?(progress)
+        return await task.value
+    }
+
+    /// 应用数据页的手动重试只处理数据目录，不夹带应用迁移或签名清理。
+    func runDataOperations(retryOperationID: UUID? = nil, observeProgress: (@Sendable (DataTransferProgress) async -> Void)? = nil) async -> [String] {
+        if let dataActive {
+            await observeProgress?(dataActive.progress)
+            return await dataActive.task.value
+        }
+        let progress = DataTransferProgress()
+        let task = Task.detached(priority: .utility) {
+            await progress.track { _ in
+                progress.begin(.recovering)
+                return await Self.finishDataOperations(interactive: true, retryOperationID: retryOperationID)
+            }
+        }
+        dataActive = RunningMaintenance(task: task, progress: progress)
+        defer { dataActive = nil; lastFinishedAt = Date() }
         await observeProgress?(progress)
         return await task.value
     }
@@ -64,7 +86,13 @@ actor OperationMaintenance {
         return warnings
     }
 
-    private static func finishDataOperations() async -> [String] {
+    /// A managed retry retains the caller's progress and cancellation context.
+    /// It is scheduled exclusively against all other foreground file jobs.
+    func runManagedDataOperations(retryOperationID: UUID? = nil) async -> [String] {
+        await Self.finishDataOperations(interactive: true, retryOperationID: retryOperationID)
+    }
+
+    private static func finishDataOperations(interactive: Bool = false, retryOperationID: UUID? = nil) async -> [String] {
         let lock = OperationLock()
         guard await lock.acquire(timeout: OperationLock.appWaitTimeout) else {
             return [lock.admissionFailureReason ?? "应用操作正在进行，请稍后重试。".localized]
@@ -72,7 +100,34 @@ actor OperationMaintenance {
         defer { lock.release() }
         var warnings: [String] = []
         let store = ContainerMountStore.shared
-        let migrator = ContainerVolumeMigrator(disk: DiskUtility(administratorRunner: nil))
+        if interactive {
+            do {
+                for transfer in try store.transfers() where transfer.cleanupDisposition != nil {
+                    // A general retry resumes deferred work, never a copy the
+                    // user explicitly chose to keep. That requires its own retry.
+                    if transfer.operationID == retryOperationID
+                        || retryOperationID == nil && transfer.cleanupDisposition == .deferred {
+                        try store.setCleanupDisposition(nil, expected: transfer)
+                    }
+                }
+            } catch { return [error.localizedDescription] }
+        }
+        let migrator = ContainerVolumeMigrator(disk: interactive ? DiskUtility() : DiskUtility(administratorRunner: nil))
+        if let retryOperationID {
+            do {
+                guard let transfer = try store.transfer(operationID: retryOperationID) else { return [] }
+                if transfer.isDataSwitchComplete {
+                    if transfer.mode == .mount { try await migrator.cleanupRetainedTransfer(operationID: retryOperationID) }
+                    else { try await DataDirMover().cleanupRetainedTransfer(operationID: retryOperationID) }
+                    return []
+                }
+                if transfer.mode == .symlink {
+                    let warning = try await DataDirMover().resumeVerifiedTransfer(operationID: retryOperationID, progressHandler: nil)
+                    return warning.map { [$0] } ?? []
+                }
+                return await migrator.performAutomaticMaintenance(only: retryOperationID)
+            } catch { return [error.localizedDescription] }
+        }
         warnings += await migrator.performAutomaticMaintenance()
         let outcomes = await migrator.remountAvailableRecords()
         for outcome in outcomes {
@@ -85,7 +140,7 @@ actor OperationMaintenance {
         do {
             let transfers = try store.transfers()
             let parents = Set(transfers.filter { $0.rollbackCompletedAt == nil }.compactMap(\.priorOperationID))
-            for transfer in transfers where transfer.mode == .symlink && !parents.contains(transfer.operationID) {
+            for transfer in transfers where transfer.mode == .symlink && transfer.needsAutomaticCompletion && !parents.contains(transfer.operationID) {
                 do {
                     let warning = try await DataDirMover().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: nil)
                     if let warning { warnings.append(warning) }

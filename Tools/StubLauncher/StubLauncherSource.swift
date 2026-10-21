@@ -1,4 +1,6 @@
 import Cocoa
+import Carbon
+import os
 
 /// AppPorts Stub Portal Native Launcher
 ///
@@ -61,57 +63,147 @@ enum DiskMissingStrings {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    var realAppPath: String?
+final class AppDelegate: NSObject {
+    private let logger = Logger(subsystem: "com.shimoko.AppPorts.StubLauncher", category: "launch")
+    private var canTerminate = false
+    private var receivedOpenRequest = false
+    private var pendingRequests = 0
+    private var failed = false
+    private var finished = false
+    private let startedAt = ProcessInfo.processInfo.systemUptime
 
     func readRealAppPath() -> String {
-        guard let resURL = Bundle.main.resourceURL else {
-            return ""
-        }
+        guard let resURL = Bundle.main.resourceURL else { return "" }
         let pathFile = resURL.appendingPathComponent("real_app_path.txt")
-        if let str = try? String(contentsOf: pathFile, encoding: .utf8) {
-            let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return ""
+        return (try? String(contentsOf: pathFile, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        realAppPath = readRealAppPath()
-        guard let path = realAppPath, !path.isEmpty,
-              FileManager.default.fileExists(atPath: path) else {
-            showExternalDiskMissing()
-            NSApp.terminate(nil)
+    func start() {
+        let events = NSAppleEventManager.shared()
+        for eventID in [kAEOpenApplication, kAEReopenApplication] {
+            events.setEventHandler(self, andSelector: #selector(handleLaunch(_:withReplyEvent:)),
+                                   forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(eventID))
+        }
+        events.setEventHandler(self, andSelector: #selector(handleDocuments(_:withReplyEvent:)),
+                               forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEOpenDocuments))
+        events.setEventHandler(self, andSelector: #selector(handleURL(_:withReplyEvent:)),
+                               forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+        // Direct executable launches do not deliver an initial Apple Event.
+        // Run the fallback on the event loop, without an artificial delay.
+        DispatchQueue.main.async {
+            self.canTerminate = true
+            if !self.receivedOpenRequest { self.openRealApplication(urls: []) }
+            self.terminateIfFinished()
+        }
+    }
+
+    func run() {
+        // Dispatch Apple Events without NSApplication.run(), which also starts
+        // AppKit's document/window restoration machinery for the portal.
+        while !finished {
+            autoreleasepool {
+                var event: EventRef?
+                // Carbon's -1 timeout means wait until an event or completion;
+                // the equivalent C macro is not imported by current Swift SDKs.
+                let status = ReceiveNextEvent(0, nil, EventTimeout(-1.0), true, &event)
+                guard status == noErr, let event else {
+                    if !finished { logger.error("Event loop stopped: \(status)") }
+                    finished = true
+                    return
+                }
+                defer { ReleaseEvent(event) }
+                if GetEventClass(event) == OSType(kEventClassAppleEvent) {
+                    _ = AEProcessEvent(event)
+                } else {
+                    _ = SendEventToEventTarget(event, GetEventDispatcherTarget())
+                }
+            }
+        }
+    }
+
+    @objc private func handleLaunch(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        // The bootstrap and initial/reopen events must not launch the target twice.
+        if !receivedOpenRequest && !failed { openRealApplication(urls: []) }
+    }
+
+    @objc private func handleDocuments(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        guard let items = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject)), items.numberOfItems > 0 else {
+            reject(reply)
             return
         }
-        launchApp(at: path)
-        NSApp.terminate(nil)
+        var urls: [URL] = []
+        for index in 1...items.numberOfItems {
+            guard let url = items.atIndex(index)?.fileURLValue else {
+                reject(reply)
+                return
+            }
+            urls.append(url)
+        }
+        openRealApplication(urls: urls)
     }
 
-    func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        realAppPath = readRealAppPath()
-        guard let realPath = realAppPath, !realPath.isEmpty,
-              FileManager.default.fileExists(atPath: realPath) else {
-            showExternalDiskMissing()
-            NSApp.reply(toOpenOrPrint: .failure)
-            NSApp.terminate(nil)
+    @objc private func handleURL(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        guard let value = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: value) else {
+            reject(reply)
             return
         }
-        for file in filenames {
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            proc.arguments = ["-a", realPath, file]
-            try? proc.run()
-        }
-        NSApp.reply(toOpenOrPrint: .success)
-        NSApp.terminate(nil)
+        openRealApplication(urls: [url])
     }
 
-    private func launchApp(at path: String) {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        proc.arguments = [path]
-        try? proc.run()
+    private func reject(_ reply: NSAppleEventDescriptor) {
+        if reply.descriptorType != DescType(typeNull) {
+            reply.setParam(NSAppleEventDescriptor(int32: Int32(errAECoercionFail)), forKeyword: AEKeyword(keyErrorNumber))
+        }
+    }
+
+    private func openRealApplication(urls: [URL]) {
+        receivedOpenRequest = true
+        logger.notice("Forwarding launch; URLs: \(urls.count), elapsed ms: \(Int((ProcessInfo.processInfo.systemUptime - self.startedAt) * 1000))")
+        let path = readRealAppPath()
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
+            failed = true
+            logger.error("Target missing: \(path, privacy: .public)")
+            showExternalDiskMissing()
+            terminateIfFinished()
+            return
+        }
+        pendingRequests += 1
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        let completion: (NSRunningApplication?, Error?) -> Void = { application, error in
+            DispatchQueue.main.async {
+                self.pendingRequests -= 1
+                let succeeded = application != nil && error == nil
+                self.logger.notice("Launch completed; success: \(succeeded), elapsed ms: \(Int((ProcessInfo.processInfo.systemUptime - self.startedAt) * 1000))")
+                if !succeeded && !self.failed {
+                    self.failed = true
+                    self.logger.error("Launch failed: \(String(describing: error), privacy: .public)")
+                    let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") == true
+                    let message = (chinese ? "无法打开应用" : "Unable to open application") + "\n\n" + path + "\n\n"
+                        + (error?.localizedDescription ?? (chinese ? "系统未能完成启动，请重试。" : "The system could not complete the launch. Try again."))
+                    self.showDialog(message: message, button: chinese ? "好" : "OK")
+                }
+                self.terminateIfFinished()
+            }
+        }
+        let applicationURL = URL(fileURLWithPath: path)
+        if urls.isEmpty {
+            NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration,
+                                               completionHandler: completion)
+        } else {
+            NSWorkspace.shared.open(urls, withApplicationAt: applicationURL,
+                                    configuration: configuration, completionHandler: completion)
+        }
+    }
+
+    private func terminateIfFinished() {
+        // Keep the event loop alive until all forwarded requests complete.
+        if canTerminate && pendingRequests == 0 {
+            finished = true
+            QuitEventLoop(GetMainEventLoop())
+        }
     }
 
     /// Wraps a string as an AppleScript double-quoted literal, escaping `\` and `"`.
@@ -124,8 +216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showExternalDiskMissing() {
         let strings = DiskMissingStrings.current
-        let script = "display dialog \(appleScriptLiteral(strings.message)) "
-            + "buttons {\(appleScriptLiteral(strings.button))} default button 1 with icon caution"
+        showDialog(message: strings.message, button: strings.button)
+    }
+
+    private func showDialog(message: String, button: String) {
+        let script = "display dialog \(appleScriptLiteral(message)) "
+            + "buttons {\(appleScriptLiteral(button))} default button 1 with icon caution"
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         proc.arguments = ["-e", script]
@@ -134,9 +230,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// Manual NSApplication setup — no MainMenu.xib
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.prohibited)
-app.run()
+// A portal handles only Launch Services requests; the real application owns
+// all AppKit startup, documents, restoration, menus and windows.
+let launcher = AppDelegate()
+launcher.start()
+launcher.run()

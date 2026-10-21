@@ -63,14 +63,15 @@ struct AppRowView: View {
         .padding(.horizontal, 12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.1) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+                .fill(isSelected ? Color.accentColor.opacity(0.07) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+        )
+        .background(AppListSelectionAppearance())
         .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                self.isHovered = hovering
-            }
-        }
+        .onHover { isHovered = $0 }
         // 保留行内按钮，VoiceOver 可以分别选择应用信息和操作。
         .accessibilityElement(children: .contain)
         .contextMenu {
@@ -197,4 +198,44 @@ struct AppRowView: View {
         .frame(height: 28)
     }
 
+}
+
+/// Keep native List keyboard and multiple selection behavior while drawing selection in AppRowView.
+private struct AppListSelectionAppearance: NSViewRepresentable {
+    func makeNSView(context: Context) -> SelectionView { SelectionView() }
+
+    func updateNSView(_ nsView: SelectionView, context: Context) {
+        nsView.updateSelectionAppearance()
+    }
+
+    final class SelectionView: NSView {
+        private weak var configuredTable: NSTableView?
+        private var updateScheduled = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { configuredTable = nil }
+            updateSelectionAppearance()
+        }
+
+        func updateSelectionAppearance() {
+            guard window != nil, configuredTable == nil, !updateScheduled else { return }
+            updateScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updateScheduled = false
+                var ancestor = self.superview
+                while let view = ancestor {
+                    if let table = view as? NSTableView {
+                        self.configuredTable = table
+                        if table.selectionHighlightStyle != .none {
+                            table.selectionHighlightStyle = .none
+                        }
+                        return
+                    }
+                    ancestor = view.superview
+                }
+            }
+        }
+    }
 }

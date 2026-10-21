@@ -1455,6 +1455,39 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
     }
 
+    func testWeChatSplitDiscoveryAddsOnlyTwoMembersAndGroupsActionsAtAccount() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+        let appURL = try createAppBundle(named: "WeChat.app", bundleID: "com.tencent.xinWeChat", in: workspace.appsURL)
+        let account = PartialWeChatMigrationPolicy(homeDirectory: workspace.homeURL).accountsRoot.appendingPathComponent("wxid_fixture")
+        for name in ["msg", "business", "db_storage", "config", "resource"] {
+            try createDirectoryWithPayload(at: account.appendingPathComponent(name))
+        }
+        let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("split-records.plist"))
+        let app = AppItem(name: "WeChat.app", path: appURL, status: "本地")
+        let before = await DataDirScanner(homeDir: workspace.homeURL, mountStore: store,
+            partialWeChatMigrationEnabled: false).scanLibraryDirs(for: app)
+        let after = await DataDirScanner(homeDir: workspace.homeURL, mountStore: store,
+            partialWeChatMigrationEnabled: true).scanLibraryDirs(for: app)
+        XCTAssertEqual(Set(after.map(\.id)).subtracting(before.map(\.id)),
+                       Set(["msg", "business"].map { account.appendingPathComponent($0).path }))
+        for member in after where member.path.deletingLastPathComponent().standardizedFileURL.path == account.standardizedFileURL.path {
+            XCTAssertTrue(member.requiresMountMigration)
+            XCTAssertTrue(member.isMigratable)
+        }
+        var migrated = after
+        for index in migrated.indices where migrated[index].path.deletingLastPathComponent().standardizedFileURL.path == account.standardizedFileURL.path {
+            migrated[index].status = DataDirStatus.mounted
+            migrated[index].hasMountTransferRecord = true
+        }
+        let grouped = WeChatAccountMigrationService.groupedItems(migrated, homeDirectory: workspace.homeURL)
+        XCTAssertFalse(grouped.contains { $0.path.deletingLastPathComponent().standardizedFileURL.path == account.standardizedFileURL.path })
+        let row = try XCTUnwrap(grouped.first { $0.path.standardizedFileURL.path == account.standardizedFileURL.path })
+        XCTAssertEqual(row.weChatSplitMembers.count, 2)
+        XCTAssertTrue(row.canRestore)
+        XCTAssertFalse(row.isMigratable)
+    }
+
     func testMountedDataRootDoesNotEnumerateBusinessChildren() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }

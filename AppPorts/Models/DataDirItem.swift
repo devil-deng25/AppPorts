@@ -127,15 +127,17 @@ enum DataDirStatus {
     static let existingSymlink = "现有软链"
     static let pendingRelink = "待接回"
     static let missing = "未找到"
+    static let pendingCompletion = "待完成"
     /// 挂载迁移：外置卷已挂载在原目录上
     static let mounted = "已挂载"
     /// 挂载迁移：外置卷在线但尚未挂载
     static let pendingMount = "待挂载"
+    static let waitingForUnlock = "等待解锁"
     /// 挂载迁移：找不到外置卷（外部存储未连接或卷已删除）
     static let volumeMissing = "卷丢失"
 
     /// 由挂载迁移管理的三种状态
-    static let mountStatuses: Set<String> = [mounted, pendingMount, volumeMissing]
+    static let mountStatuses: Set<String> = [mounted, pendingMount, waitingForUnlock, volumeMissing]
 
     static func localized(_ status: String) -> String {
         switch status {
@@ -153,8 +155,12 @@ enum DataDirStatus {
             return "待接回".localized
         case missing:
             return "未找到".localized
+        case pendingCompletion:
+            return "待完成".localized
         case mounted:
             return "已挂载".localized
+        case waitingForUnlock:
+            return "等待解锁".localized
         case pendingMount:
             return "待挂载".localized
         case volumeMissing:
@@ -256,10 +262,16 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
     var hasManagedLinkRecord = false
     var recoveryOperationID: UUID? = nil
     var hasMountTransferRecord = false
+    var weChatSplitMembers: [DataDirItem] = []
 
     var canRestore: Bool {
         hasManagedLinkRecord || DataDirStatus.mountStatuses.contains(status)
             || status == DataDirStatus.linked || status == DataDirStatus.needsNormalization
+    }
+
+    /// 已迁移或需要恢复的目录不能再次迁移，但不属于“不支持迁移”。
+    var isMigrationUnsupported: Bool {
+        !isMigratable && !canRestore && !hasMountTransferRecord && recoveryOperationID == nil
     }
 
     /// Standard container shortcuts are user-folder entry points, not app-owned data.
@@ -277,16 +289,23 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
         return target.standardizedFileURL.path == home.appendingPathComponent(source.lastPathComponent).path
     }
 
-    var sizeMeasurementURL: URL? { isUserDirectoryLink ? nil : linkedDestination ?? path }
+    var sizeMeasurementURL: URL? {
+        isUserDirectoryLink || !weChatSplitMembers.isEmpty ? nil : linkedDestination ?? path
+    }
 
     var displayedStatus: String { isUserDirectoryLink ? "用户目录入口" : status }
 
     var sizeScopeLabel: String {
+        if !weChatSplitMembers.isEmpty { return "msg + business" }
         if isUserDirectoryLink { return "不计入应用数据".localized }
         return (linkedDestination == nil ? "本卷大小" : "目标大小").localized
     }
 
     var sizeScopeExplanation: String {
+        if !weChatSplitMembers.isEmpty {
+            if status == DataDirStatus.local { return "msg + business" }
+            return "仅统计已迁移的媒体目录，不包含本地数据库和配置。".localized
+        }
         if isUserDirectoryLink {
             return "此链接指向用户个人目录，不是此应用独占的数据；不统计其目标大小，也不提供迁移或还原。".localized
         }
@@ -298,8 +317,10 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
             || pathPolicy?.reason == .runtimeConflict || pathPolicy?.reason == .readFailure
     }
 
-    func matchesVisibility(showZeroByteDirectories: Bool, showLockedStructure: Bool) -> Bool {
-        if needsRecoveryOrAttention { return true }
+    func matchesVisibility(showZeroByteDirectories: Bool, showLockedStructure: Bool,
+                           showNonMigratableDirectories: Bool = true) -> Bool {
+        if isMigrationUnsupported && !showNonMigratableDirectories { return false }
+        if needsRecoveryOrAttention || hasMountTransferRecord { return true }
         if isUserDirectoryLink { return false }
         if !isMigratable { return showLockedStructure }
         return showZeroByteDirectories || !isEmptyLocalDirectory

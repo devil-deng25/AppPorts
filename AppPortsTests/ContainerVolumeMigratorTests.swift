@@ -1896,6 +1896,13 @@ struct ContainerVolumeMigratorTests {
             ))
         }
 
+        let notifications = Counter()
+        let observer = NotificationCenter.default.addObserver(forName: .appPortsRecordsDidChange, object: nil, queue: nil) { note in
+            if let store = note.object as? ContainerMountStore, store === workspace.store {
+                notifications.increment()
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
         let outcomes = await migrator.remountAvailableRecords()
         let states = Dictionary(uniqueKeysWithValues: outcomes.map { ($0.record.volumeUUID, $0.state) })
 
@@ -1907,6 +1914,12 @@ struct ContainerVolumeMigratorTests {
         #expect(runner.commands(prefix: ["info"]).count == 2)
         #expect(runner.commands(prefix: ["info"]).allSatisfy { $0.last != "MOUNTED-UUID" })
         #expect(runner.isMounted(online))
+        #expect(notifications.value == 1)
+
+        // The minute-by-minute backstop must not refresh the UI again when
+        // mounts and offline volumes remain unchanged.
+        _ = await migrator.remountAvailableRecords()
+        #expect(notifications.value == 1)
     }
 
     @Test("Observing a legacy live mount never rewrites its flags")

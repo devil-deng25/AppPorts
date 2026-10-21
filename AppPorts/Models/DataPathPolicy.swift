@@ -33,12 +33,19 @@ struct DataPathPolicy: Sendable {
         let canMigrate: Bool
         /// Structural discovery only. Callers must additionally reject mount points and read failures.
         let mayDiscoverChildren: Bool
+        var partialSubdirectory = false
     }
 
     let homeDirectory: URL
+    let partialWeChatMigrationEnabled: Bool
+    let weChatContainerIdentifier: String
 
-    init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory())) {
+    init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
+         partialWeChatMigrationEnabled: Bool = false,
+         weChatContainerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier) {
         self.homeDirectory = homeDirectory.standardizedFileURL
+        self.partialWeChatMigrationEnabled = partialWeChatMigrationEnabled
+        self.weChatContainerIdentifier = weChatContainerIdentifier
     }
 
     func evaluate(_ url: URL) -> Decision {
@@ -48,7 +55,8 @@ struct DataPathPolicy: Sendable {
         let result = !lexical.canMigrate ? lexical : (!resolved.canMigrate ? resolved : lexical.role == .unrelated ? resolved : lexical)
         let isLink = (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
         return Decision(role: result.role, reason: result.reason, canMigrate: result.canMigrate,
-                        mayDiscoverChildren: result.mayDiscoverChildren && !isLink)
+                        mayDiscoverChildren: result.mayDiscoverChildren && !isLink,
+                        partialSubdirectory: result.partialSubdirectory)
     }
 
     private func classify(_ url: URL, home: URL) -> Decision {
@@ -70,10 +78,18 @@ struct DataPathPolicy: Sendable {
                                       "Library/Caches", "Library/Images", "Library/Logs", "Library/Preferences",
                                       "Library/Saved Application State", "SystemData", "tmp"]
         if exactLocks.contains(dataRelative.joined(separator: "/")) { return locked(.systemDirectory, .systemManagedStructure) }
-        if relative[0] == "com.tencent.xinWeChat" {
+        if relative[0] == PartialWeChatMigrationPolicy.bundleIdentifier || relative[0] == weChatContainerIdentifier {
             let directAccount = dataRelative.count == 3 && dataRelative.starts(with: ["Documents", "xwechat_files"])
             let support = dataRelative == ["Library", "Application Support", "com.tencent.xinWeChat"]
-            if directAccount || support { return allowed(.businessData) }
+            let partial = PartialWeChatMigrationPolicy(homeDirectory: home, containerIdentifier: relative[0])
+            if directAccount || support {
+                return Decision(role: .businessData, reason: nil, canMigrate: true,
+                                mayDiscoverChildren: partialWeChatMigrationEnabled && relative[0] == weChatContainerIdentifier && partial.isAccount(url))
+            }
+            if partialWeChatMigrationEnabled, relative[0] == weChatContainerIdentifier, partial.account(forMember: url) != nil {
+                return Decision(role: .businessData, reason: nil, canMigrate: true,
+                                mayDiscoverChildren: false, partialSubdirectory: true)
+            }
             return locked(.weChatCompatibilityDirectory, .weChatCompatibility,
                           discover: dataRelative.count < 3)
         }

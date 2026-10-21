@@ -28,15 +28,40 @@ import Combine
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var aboutWindowController = AboutWindowController()
+    fileprivate static weak var mainWindow: NSWindow?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let window = Self.mainWindow else { return true }
+        window.makeKeyAndOrderFront(nil)
+        return false
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        AppOperationState.shared.finishBeforeTerminating {
+        if AppOperationState.shared.isBusy {
+            let alert = NSAlert()
+            alert.messageText = "还有任务尚未结束".localized
+            alert.informativeText = "请先等待任务完成，或在任务列表中取消任务并等待安全收尾，再退出 AppPorts。暂停和等待中的任务也需要先结束。".localized
+            alert.addButton(withTitle: "查看任务".localized)
+            alert.addButton(withTitle: "返回".localized)
+            sender.activate(ignoringOtherApps: true)
+            Self.mainWindow?.makeKeyAndOrderFront(nil)
+            if alert.runModal() == .alertFirstButtonReturn {
+                MigrationTaskCenter.shared.detailID = nil
+                MigrationTaskCenter.shared.showsList = true
+            }
+            return .terminateCancel
+        }
+        return AppOperationState.shared.finishBeforeTerminating {
             sender.reply(toApplicationShouldTerminate: true)
         } ? .terminateLater : .terminateNow
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MigrationTaskCenter.shared.saveHistoryForExit()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -55,7 +80,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main
 struct AppMoverApp: App {
     /// 全局语言管理器
     @StateObject private var languageManager = LanguageManager.shared
@@ -96,6 +120,7 @@ struct AppMoverApp: App {
             .environment(\.locale, languageManager.locale)
 
             .id(languageManager.language)
+            .background(MainWindowAppearance())
             
 
         }
@@ -205,6 +230,29 @@ struct AppMoverApp: App {
                     }
                 }
             }
+        }
+    }
+}
+
+private struct MainWindowAppearance: NSViewRepresentable {
+    func makeNSView(context: Context) -> WindowView { WindowView() }
+    func updateNSView(_ nsView: WindowView, context: Context) {}
+
+    final class WindowView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.titlebarSeparatorStyle = .none
+            AppDelegate.mainWindow = window
+            // Preserve the hosting view and its in-memory state when clicking ×.
+            if let closeButton = window.standardWindowButton(.closeButton) {
+                closeButton.target = self
+                closeButton.action = #selector(hideMainWindow)
+            }
+        }
+
+        @objc private func hideMainWindow() {
+            window?.orderOut(nil)
         }
     }
 }

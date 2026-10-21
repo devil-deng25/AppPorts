@@ -27,10 +27,13 @@ final class AppTransferTransactionTests: XCTestCase {
                      running: @escaping () -> [AppRunningState.RunningApplication] = { [] },
                      storeOverride: AppTransferStore? = nil,
                      synchronizeCleanupParent: @escaping (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) },
-                     synchronizeStagingParent: @escaping (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) }) -> AppMigrationService {
+                     synchronizeStagingParent: @escaping (URL) throws -> Void = { try DurableFileIO.syncDirectory(at: $0) },
+                     exchange: @escaping (URL, URL) throws -> Void = { try AppTransferTransaction.exchange($0, $1) },
+                     administratorOperation: ((PrivilegedAppTransfer.Request) throws -> Void)? = nil) -> AppMigrationService {
             AppMigrationService(dockShortcutUpdater: dock, transferStore: storeOverride ?? store, signatureFactStore: facts,
                                 transferHooks: .init(checkpoint: hook, synchronizeCleanupParent: synchronizeCleanupParent,
-                                                     synchronizeStagingParent: synchronizeStagingParent),
+                                                     synchronizeStagingParent: synchronizeStagingParent,
+                                                     exchange: exchange, administratorOperation: administratorOperation),
                                 runningApplications: running)
         }
 
@@ -47,6 +50,192 @@ final class AppTransferTransactionTests: XCTestCase {
             }
             try? FileManager.default.removeItem(at: root)
         }
+    }
+
+    func testPermissionDeniedExchangeUsesAuthorizedVerifiedOperation() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        var prompts = 0
+        let result = try await w.service(exchange: { _, _ in throw POSIXError(.EACCES) }, administratorOperation: {
+            prompts += 1
+            try PrivilegedAppTransfer.perform($0)
+        }).moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false, progressHandler: nil)
+        XCTAssertTrue(result.isComplete, result.pendingMessage ?? "")
+        XCTAssertEqual(prompts, 1)
+        XCTAssertEqual(try payload(destination), "payload")
+        XCTAssertEqual(try CodeSigner.resolveAppURL(at: source).path, destination.path)
+        XCTAssertTrue(try w.store.records().isEmpty)
+        try assertNoStages(w)
+    }
+
+    func testCancelledAuthorizationPreservesBothCopiesAndBackgroundRetryDoesNotPrompt() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        var prompts = 0
+        let service = w.service(exchange: { _, _ in throw POSIXError(.EACCES) }, administratorOperation: { _ in
+            prompts += 1
+            throw CancellationError()
+        })
+        do {
+            _ = try await service.moveAndLink(appToMove: item(source), destinationURL: destination,
+                                            isRunning: false, progressHandler: nil)
+            XCTFail("Expected cancelled authorization")
+        } catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+        let record = try XCTUnwrap(w.store.records().first)
+        XCTAssertFalse(record.isSwitchComplete)
+        XCTAssertEqual(try payload(source), "payload")
+        XCTAssertEqual(try payload(destination), "payload")
+        do {
+            _ = try await service.retryTransfer(operationID: record.id)
+            XCTFail("Background retry must leave the permission error pending")
+        } catch { XCTAssertEqual((error as NSError).code, Int(EACCES)) }
+        XCTAssertEqual(prompts, 1)
+        let recovered = try await w.service().retryTransfer(operationID: record.id)
+        XCTAssertTrue(recovered.isComplete)
+    }
+
+    func testForegroundLinkAndRestoreResumePermissionBlockedMigration() async throws {
+        for restore in [false, true] {
+            let w = try Workspace(); defer { w.cleanup() }
+            let local = w.local.appendingPathComponent("App.app")
+            let external = w.external.appendingPathComponent("App.app")
+            try makeApp(local)
+            do {
+                _ = try await w.service(exchange: { _, _ in throw POSIXError(.EACCES) },
+                    administratorOperation: { _ in throw CancellationError() })
+                    .moveAndLink(appToMove: item(local), destinationURL: external,
+                                 isRunning: false, progressHandler: nil)
+                XCTFail("Expected pending authorization")
+            } catch is CancellationError {}
+            let pending = try XCTUnwrap(w.store.records().first)
+            var prompts = 0
+            let foreground = w.service(exchange: { _, _ in throw POSIXError(.EACCES) },
+                administratorOperation: { request in
+                    prompts += 1
+                    try PrivilegedAppTransfer.perform(request)
+                })
+            if restore {
+                let result = try await foreground.moveBack(app: item(external, status: AppStatus.unlinked),
+                                                          localDestinationURL: local, progressHandler: nil)
+                XCTAssertTrue(result.transferResult.isComplete, result.transferResult.pendingMessage ?? "")
+                XCTAssertEqual(try payload(local), "payload")
+                XCTAssertFalse(FileManager.default.fileExists(atPath: external.path))
+            } else {
+                try await foreground.linkAppWhenReady(appToLink: item(external, status: AppStatus.unlinked),
+                                                     destinationURL: local)
+                XCTAssertEqual(try CodeSigner.resolveAppURL(at: local).path, external.path)
+                XCTAssertEqual(try payload(external), "payload")
+            }
+            XCTAssertEqual(prompts, 1)
+            XCTAssertFalse(try w.store.records().contains { $0.id == pending.id })
+            try assertNoStages(w)
+        }
+    }
+
+    func testForegroundRecoveryDoesNotAdoptReplacedExternalApplication() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let local = w.local.appendingPathComponent("App.app")
+        let external = w.external.appendingPathComponent("App.app")
+        try makeApp(local)
+        do {
+            _ = try await w.service(exchange: { _, _ in throw POSIXError(.EACCES) },
+                administratorOperation: { _ in throw CancellationError() })
+                .moveAndLink(appToMove: item(local), destinationURL: external,
+                             isRunning: false, progressHandler: nil)
+            XCTFail("Expected pending authorization")
+        } catch is CancellationError {}
+        let retained = w.external.appendingPathComponent("Retained.app")
+        try FileManager.default.moveItem(at: external, to: retained)
+        try makeApp(external, payload: "replacement")
+        var prompts = 0
+        do {
+            try await w.service(administratorOperation: { _ in prompts += 1 })
+                .linkAppWhenReady(appToLink: item(external, status: AppStatus.unlinked), destinationURL: local)
+            XCTFail("An unrelated replacement must not be linked over the original")
+        } catch {}
+        XCTAssertEqual(prompts, 0)
+        XCTAssertEqual(try payload(local), "payload")
+        XCTAssertEqual(try payload(retained), "payload")
+        XCTAssertEqual(try payload(external), "replacement")
+    }
+
+    func testAuthorizedExchangeRejectsChangesDuringPasswordPrompt() async throws {
+        for changed in ["source", "destination", "portal", "parent"] {
+            let w = try Workspace(); defer { w.cleanup() }
+            let source = w.local.appendingPathComponent("App.app")
+            let destination = w.external.appendingPathComponent("App.app")
+            try makeApp(source)
+            let service = w.service(exchange: { _, _ in throw POSIXError(.EPERM) }, administratorOperation: { request in
+                switch changed {
+                case "source": try Data("changed".utf8).write(to: source.appendingPathComponent("Contents/Resources/payload"))
+                case "destination": try Data("changed".utf8).write(to: destination.appendingPathComponent("Contents/Resources/payload"))
+                case "portal":
+                    let portal = try XCTUnwrap(request.record.stagedPortalURL)
+                    try FileManager.default.removeItem(at: portal)
+                    try FileManager.default.createSymbolicLink(at: portal, withDestinationURL: w.root)
+                default:
+                    let moved = w.root.appendingPathComponent("OriginalApplications")
+                    try FileManager.default.moveItem(at: w.local, to: moved)
+                    try FileManager.default.createSymbolicLink(at: w.local, withDestinationURL: moved)
+                }
+                XCTAssertThrowsError(try PrivilegedAppTransfer.perform(request), changed)
+                throw CancellationError()
+            })
+            do {
+                _ = try await service.moveAndLink(appToMove: item(source), destinationURL: destination,
+                                                isRunning: false, progressHandler: nil)
+                XCTFail("Expected unchanged local entry")
+            } catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+            XCTAssertFalse(try XCTUnwrap(w.store.records().first).isSwitchComplete)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: source.appendingPathComponent("Contents/Info.plist").path))
+        }
+    }
+
+    func testAuthorizedCleanupUsesOriginalBaselineAndColdRetryFinishesJournal() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        let result = try await w.service(hook: { point, _ in
+            if point == .beforeCleanup { throw Interrupted() }
+        }).moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false, progressHandler: nil)
+        XCTAssertTrue(result.isSwitchComplete)
+        XCTAssertFalse(result.isComplete)
+        let record = try w.store.record(result.operationID)
+        let cleanup = try XCTUnwrap(record.cleanupItems.first)
+        let baseline = try w.store.baseline("source", operationID: result.operationID)
+        let request = PrivilegedAppTransfer.Request(action: .remove, record: record,
+                                                     sourceBaseline: baseline, cleanupItem: cleanup)
+        try PrivilegedAppTransfer.perform(request.preparedForAuthorization())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cleanup.path))
+        XCTAssertEqual(try payload(destination), "payload")
+        let finished = try await w.service().retryTransfer(operationID: result.operationID)
+        XCTAssertTrue(finished.isComplete, finished.pendingMessage ?? "")
+        XCTAssertTrue(try w.store.records().isEmpty)
+    }
+
+    func testAuthorizedCleanupPreservesChangedRetiredCopy() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        let result = try await w.service(hook: { point, _ in
+            if point == .beforeCleanup { throw Interrupted() }
+        }).moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false, progressHandler: nil)
+        let record = try w.store.record(result.operationID)
+        let cleanup = try XCTUnwrap(record.cleanupItems.first)
+        let retired = URL(fileURLWithPath: cleanup.path)
+        let request = try PrivilegedAppTransfer.Request(action: .remove, record: record,
+            sourceBaseline: try w.store.baseline("source", operationID: result.operationID), cleanupItem: cleanup)
+            .preparedForAuthorization()
+        try Data("changed".utf8).write(to: retired.appendingPathComponent("Contents/Resources/payload"))
+        XCTAssertThrowsError(try PrivilegedAppTransfer.perform(request))
+        XCTAssertEqual(try payload(retired), "changed")
+        XCTAssertEqual(try payload(destination), "payload")
     }
 
     func testApplicationRoundTripCompletesAndRemovesJournalAndStages() async throws {
@@ -2300,6 +2489,140 @@ final class AppTransferTransactionTests: XCTestCase {
         let restored = try await w.service().moveBack(app: item(external), localDestinationURL: local, progressHandler: nil)
         XCTAssertTrue(restored.transferResult.isComplete, restored.warnings.joined(separator: "\n"))
         XCTAssertEqual(try payload(local), "original")
+    }
+
+    func testLostVerifiedCandidateIsArchivedBeforeNewMigration() async throws {
+        for replace in [false, true] {
+            let w = try Workspace(); defer { w.cleanup() }
+            let source = w.local.appendingPathComponent("App.app")
+            let destination = w.external.appendingPathComponent("App.app")
+            try makeApp(source)
+            do {
+                _ = try await w.service(hook: { point, _ in if point == .verified { throw Interrupted() } })
+                    .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                                 lockExternal: false, progressHandler: nil)
+                XCTFail("Expected interruption")
+            } catch is Interrupted {}
+            let record = try XCTUnwrap(w.store.records().first)
+            XCTAssertTrue(record.hasCandidateBaseline)
+            // Move aside rather than remove, so inode reuse cannot mimic identity.
+            let retained = w.root.appendingPathComponent("Retained.app")
+            try FileManager.default.moveItem(at: record.candidateURL, to: retained)
+            if replace { try makeApp(record.candidateURL, payload: "replacement") }
+            XCTAssertTrue(w.service().retryDisposition(for: record).isTerminal)
+            let result = try await w.service().moveAndLink(appToMove: item(source), destinationURL: destination,
+                isRunning: false, lockExternal: false, progressHandler: nil)
+            XCTAssertTrue(result.isComplete)
+            XCTAssertTrue(try w.store.records().isEmpty)
+            XCTAssertEqual(try payload(retained), "payload")
+            if replace { XCTAssertEqual(try payload(record.candidateURL), "replacement") }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: w.store.directoryURL
+                .appendingPathComponent("archived/" + record.id.uuidString + ".plist").path))
+        }
+    }
+
+    func testPublishedCandidateIsNotRetiredWithEmptyStage() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .destinationPublished { throw Interrupted() } })
+                .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                             lockExternal: false, progressHandler: nil)
+            XCTFail("Expected interruption")
+        } catch is Interrupted {}
+        let record = try XCTUnwrap(w.store.records().first)
+        XCTAssertFalse(try AppTransferStore.exists(record.candidateURL))
+        XCTAssertFalse(w.service().retryDisposition(for: record).isTerminal)
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty)
+        let result = try await w.service().retryTransfer(operationID: record.id)
+        XCTAssertTrue(result.isComplete)
+    }
+
+    func testOfflineVolumeDoesNotRetireMissingCandidate() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .verified { throw Interrupted() } })
+                .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                             lockExternal: false, progressHandler: nil)
+            XCTFail("Expected interruption")
+        } catch is Interrupted {}
+        let record = try XCTUnwrap(w.store.records().first)
+        let offline = w.root.appendingPathComponent("Offline")
+        try FileManager.default.moveItem(at: w.external, to: offline)
+        // An empty directory at the old mount point is not the original volume.
+        try FileManager.default.createDirectory(at: w.external, withIntermediateDirectories: false)
+        XCTAssertFalse(w.service().retryDisposition(for: record).isTerminal)
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty)
+        try FileManager.default.removeItem(at: w.external)
+        try FileManager.default.moveItem(at: offline, to: w.external)
+        let result = try await w.service().retryTransfer(operationID: record.id)
+        XCTAssertTrue(result.isComplete)
+    }
+
+    func testUnreadableSourceDoesNotRetireTransfer() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .verified { throw Interrupted() } })
+                .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                             lockExternal: false, progressHandler: nil)
+            XCTFail("Expected interruption")
+        } catch is Interrupted {}
+        let record = try XCTUnwrap(w.store.records().first)
+        XCTAssertEqual(chmod(w.local.path, 0), 0)
+        defer { _ = chmod(w.local.path, 0o755) }
+        XCTAssertFalse(w.service().retryDisposition(for: record).isTerminal)
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty)
+        XCTAssertEqual(try w.store.records().count, 1)
+    }
+
+    func testLostRestoreCandidateIsRetiredWithoutDeletingApplications() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        _ = try await w.service().moveAndLink(appToMove: item(source), destinationURL: destination,
+            isRunning: false, lockExternal: false, progressHandler: nil)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .verified { throw Interrupted() } })
+                .moveBack(app: item(destination), localDestinationURL: source, progressHandler: nil)
+            XCTFail("Expected interruption")
+        } catch is Interrupted {}
+        let record = try XCTUnwrap(w.store.records().first)
+        try FileManager.default.moveItem(at: record.candidateURL, to: w.root.appendingPathComponent("Retained.app"))
+        let lock = OperationLock(fileURL: w.store.operationLockURL)
+        XCTAssertTrue(lock.tryAcquire())
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty, "Must not archive during another operation")
+        lock.release()
+        XCTAssertEqual(w.service().retireUnrecoverableTransfers().count, 1)
+        XCTAssertEqual(try payload(destination), "payload")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        let restored = try await w.service().moveBack(app: item(destination), localDestinationURL: source, progressHandler: nil)
+        XCTAssertTrue(restored.transferResult.isComplete)
+    }
+
+    func testExchangedEntryWithoutCommitIsNeverArchived() async throws {
+        let w = try Workspace(); defer { w.cleanup() }
+        let source = w.local.appendingPathComponent("App.app")
+        let destination = w.external.appendingPathComponent("App.app")
+        try makeApp(source)
+        do {
+            _ = try await w.service(hook: { point, _ in if point == .entrySwitched { throw Interrupted() } })
+                .moveAndLink(appToMove: item(source), destinationURL: destination, isRunning: false,
+                             lockExternal: false, progressHandler: nil)
+        } catch is Interrupted {}
+        XCTAssertFalse(try w.store.records().isEmpty)
+        XCTAssertTrue(w.service().retireUnrecoverableTransfers().isEmpty)
+        let record = try XCTUnwrap(w.store.records().first)
+        let result = try await w.service().retryTransfer(operationID: record.id)
+        XCTAssertTrue(result.isComplete)
     }
 
     func testProtectionRecordsWrittenBeforeProvenanceStillDecodeAsManaged() throws {

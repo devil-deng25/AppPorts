@@ -14,59 +14,94 @@ struct DataDirProgressOverlay: View {
 }
 
 struct DataDirProgressContent: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let snapshot: DataTransferProgress.Snapshot
+    var overallProgress: Double? = nil
+    var actions: AnyView? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(verbatim: title)
                 .font(.headline)
-                .lineLimit(3)
+                .lineLimit(2)
                 .truncationMode(.middle)
                 .help(title)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 34, alignment: .topLeading)
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .controlSize(.small)
-                        .frame(width: 16, height: 16)
-                        .accessibilityHidden(true)
-                    Text(verbatim: snapshot.stage.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    if let fraction = snapshot.fraction {
-                        Text(fraction, format: .percent.precision(.fractionLength(0)))
-                            .font(.system(size: 13, weight: .medium))
-                            .monospacedDigit()
-                    }
-                }
-
-                if let fraction = snapshot.fraction {
-                    ProgressView(value: fraction)
-                        .progressViewStyle(.linear)
-                        .accessibilityLabel(snapshot.stage.title)
-                }
-
-                Text(verbatim: snapshot.detail.isEmpty ? snapshot.stage.explanation : snapshot.detail)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            statistics
-
-            if !snapshot.currentFile.isEmpty {
-                Text(verbatim: snapshot.currentFile)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+            Group {
+                Text((URL(fileURLWithPath: snapshot.directoryPath).pathExtension.lowercased() == "app"
+                    ? "当前应用".localized : "当前目录".localized)
+                    + "：" + URL(fileURLWithPath: snapshot.directoryPath).lastPathComponent)
+                    .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(snapshot.currentFile)
+                    .help(snapshot.directoryPath)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .opacity(snapshot.directoryPath.isEmpty ? 0 : 1)
+                    .accessibilityHidden(snapshot.directoryPath.isEmpty)
             }
+            .frame(height: 18)
+
+            if let overallProgress {
+                MigrationOverallProgress(fraction: overallProgress)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .controlSize(.small)
+                                .frame(width: 16, height: 16)
+                                .accessibilityHidden(true)
+                            Text(verbatim: snapshot.stepTitle.isEmpty ? snapshot.stage.title : snapshot.stepTitle)
+                                .font(.system(size: 13, weight: .semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            if let fraction = snapshot.fraction {
+                                Text(fraction, format: .percent.precision(.fractionLength(0)))
+                                    .font(.system(size: 13, weight: .medium))
+                                    .monospacedDigit()
+                            }
+                        }
+        
+                        if let fraction = snapshot.fraction {
+                            ProgressView(value: fraction)
+                                .progressViewStyle(.linear)
+                                .accessibilityLabel(snapshot.stage.title)
+                        }
+        
+                        Text(verbatim: snapshot.detail.isEmpty ? snapshot.stage.explanation : snapshot.detail)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+        
+                    statistics
+        
+                    if !snapshot.currentFile.isEmpty {
+                        Text(verbatim: snapshot.currentFile)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(snapshot.currentFile)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+        
+                    if snapshot.isWaitingForActivity {
+                        Text(String(format: "已 %@ 未收到新的文件进度，正在等待当前步骤返回。".localized, duration(snapshot.activityAge)))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
 
@@ -79,16 +114,15 @@ struct DataDirProgressContent: View {
             .foregroundStyle(.secondary)
             .monospacedDigit()
 
-            if snapshot.isWaitingForActivity {
-                Text(String(format: "已 %@ 未收到新的文件进度，正在等待当前步骤返回。".localized, duration(snapshot.activityAge)))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let actions {
+                Divider()
+                actions
             }
         }
         .padding(24)
-        .frame(width: 460)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .frame(width: 460, height: 420)
+        .background(colorScheme == .dark ? Color(nsColor: .windowBackgroundColor) : Color.white,
+                            in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 8)
         .accessibilityElement(children: .contain)
     }
@@ -109,7 +143,7 @@ struct DataDirProgressContent: View {
             .monospacedDigit()
         } else if snapshot.completedItems > 0 || snapshot.readBytes > 0 {
             HStack(alignment: .firstTextBaseline) {
-                Text(String(format: "本轮已处理 %lld 项".localized, Int64(snapshot.completedItems)))
+                Text(String(format: "当前步骤已处理 %lld 项".localized, Int64(snapshot.completedItems)))
                 Spacer(minLength: 8)
                 if snapshot.readBytes > 0 {
                     Text(String(format: "已读取 %@".localized, bytes(snapshot.readBytes)))

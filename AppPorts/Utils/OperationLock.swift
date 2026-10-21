@@ -38,6 +38,7 @@ final class OperationLock: @unchecked Sendable {
     private let writerAdmissionCheck: () throws -> Void
     private let stateLock = NSLock()
     private var descriptor: Int32 = -1
+    private var managedLease = false
     private var lastAdmissionFailure: String?
 
     init(fileURL: URL = OperationLock.defaultFileURL, writerAdmissionCheck: (() throws -> Void)? = nil) {
@@ -69,7 +70,7 @@ final class OperationLock: @unchecked Sendable {
     /// 当前是否被**别的进程**持有。只探测、不拿锁，用来记日志判断谁在让路。
     var isHeldByAnotherProcess: Bool {
         stateLock.lock()
-        let alreadyHeldBySelf = descriptor >= 0
+        let alreadyHeldBySelf = descriptor >= 0 || managedLease
         stateLock.unlock()
         guard !alreadyHeldBySelf else { return false }
 
@@ -88,7 +89,19 @@ final class OperationLock: @unchecked Sendable {
         stateLock.lock()
         defer { stateLock.unlock() }
         guard checkAdmission() else { return false }
-        if descriptor >= 0 { return true }
+        if descriptor >= 0 || managedLease { return true }
+
+        if MigrationExecution.managed {
+            managedLease = ManagedOperationLeases.shared.acquire(path: fileURL.standardizedFileURL.path) {
+                guard let candidate = self.openDescriptor() else { return nil }
+                guard flock(candidate, LOCK_EX | LOCK_NB) == 0, self.checkAdmission() else {
+                    _ = close(candidate)
+                    return nil
+                }
+                return candidate
+            }
+            return managedLease
+        }
 
         guard let candidate = openDescriptor() else { return false }
         guard flock(candidate, LOCK_EX | LOCK_NB) == 0 else {
@@ -121,6 +134,11 @@ final class OperationLock: @unchecked Sendable {
     func release() {
         stateLock.lock()
         defer { stateLock.unlock() }
+        if managedLease {
+            ManagedOperationLeases.shared.release(path: fileURL.standardizedFileURL.path)
+            managedLease = false
+            return
+        }
         guard descriptor >= 0 else { return }
         _ = flock(descriptor, LOCK_UN)
         _ = close(descriptor)
@@ -155,5 +173,38 @@ final class OperationLock: @unchecked Sendable {
             return nil
         }
         return candidate
+    }
+}
+
+/// The scheduler owns path reservations before this pool is used. Sharing is
+/// opt-in for managed jobs only: all other local writers and external agents
+/// still contend on the same exclusive flock until the final job releases it.
+private final class ManagedOperationLeases: @unchecked Sendable {
+    static let shared = ManagedOperationLeases()
+    private let lock = NSLock()
+    private struct Lease { let descriptor: Int32; var owners: Int }
+    private var leases: [String: Lease] = [:]
+
+    func acquire(path: String, open: () -> Int32?) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if var lease = leases[path] {
+            lease.owners += 1
+            leases[path] = lease
+            return true
+        }
+        guard let descriptor = open() else { return false }
+        leases[path] = Lease(descriptor: descriptor, owners: 1)
+        return true
+    }
+
+    func release(path: String) {
+        lock.lock(); defer { lock.unlock() }
+        guard var lease = leases[path] else { return }
+        lease.owners -= 1
+        if lease.owners == 0 {
+            _ = flock(lease.descriptor, LOCK_UN)
+            _ = close(lease.descriptor)
+            leases.removeValue(forKey: path)
+        } else { leases[path] = lease }
     }
 }

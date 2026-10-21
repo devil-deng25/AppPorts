@@ -86,6 +86,8 @@ struct WarningSheet: View {
     @State private var acknowledged = false
 
     private let contentMaxHeight: CGFloat = 420
+    private let sheetWidth: CGFloat = 520
+    private let contentPadding: CGFloat = 24
 
     private var needsAcknowledgement: Bool {
         actions.contains { $0.requiresAcknowledgement }
@@ -102,6 +104,8 @@ struct WarningSheet: View {
                         Text(intro)
                             .font(.callout)
                             .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .multilineTextAlignment(.leading)
                     }
 
                     if !bullets.isEmpty {
@@ -137,7 +141,7 @@ struct WarningSheet: View {
                         .help(documentationURL.absoluteString)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: sheetWidth - contentPadding * 2, alignment: .leading)
                 .padding(.vertical, 16)
             }
             .frame(maxHeight: contentMaxHeight)
@@ -149,8 +153,8 @@ struct WarningSheet: View {
             Divider()
             actionBar
         }
-        .padding(24)
-        .frame(width: 520)
+        .padding(contentPadding)
+        .frame(width: sheetWidth)
     }
 
     // MARK: - 局部

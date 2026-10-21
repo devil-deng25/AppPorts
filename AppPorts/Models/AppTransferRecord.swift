@@ -113,14 +113,26 @@ struct AppTransferRecord: Codable, Identifiable, Sendable {
 /// every caller must hear that instead of a raw file error. Reported as one
 /// actionable message; the caller decides whether to retry or end the record.
 enum AppTransferJournalIntegrity {
-    static func missingManifests(for record: AppTransferRecord, store: AppTransferStore) -> Bool {
+    static func missingManifests(for record: AppTransferRecord, store: AppTransferStore,
+                                 onlyConfirmedMissing: Bool = false) -> Bool {
         var required = record.hasCandidateBaseline ? ["candidate"] : []
         if record.hasSourceBaseline { required.append("source") }
         if record.hasExistingDestinationBaseline { required.append("existing") }
         for item in record.cleanupItems where !item.completed { required.append(item.baselineName) }
         // Legacy portals embed their baseline in the record itself, so they never
         // require a manifest file and must not be reported as missing here.
-        return Set(required).contains { (try? store.baseline($0, operationID: record.operationID)) == nil }
+        return Set(required).contains { name in
+            do {
+                _ = try store.baseline(name, operationID: record.operationID)
+                return false
+            } catch {
+                guard onlyConfirmedMissing else { return true }
+                let failure = error as NSError
+                return (failure.domain == NSCocoaErrorDomain
+                    && [NSFileReadNoSuchFileError, NSFileNoSuchFileError].contains(failure.code))
+                    || (failure.domain == NSPOSIXErrorDomain && failure.code == Int(ENOENT))
+            }
+        }
     }
 
     static func requireVerifiedManifests(for record: AppTransferRecord, store: AppTransferStore) throws {

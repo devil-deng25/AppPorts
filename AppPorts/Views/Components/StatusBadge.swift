@@ -28,7 +28,7 @@ import SwiftUI
 ///
 /// - Note: 自动支持无障碍功能（Accessibility）
 private struct BadgeConfig: Identifiable {
-    let id = UUID()
+    var id: String { text }
     let text: String
     let icon: String
     let color: Color
@@ -67,6 +67,14 @@ struct StatusBadge: View {
     let app: AppItem
     /// 签名被替换时的修复入口：给了回调就点开修复面板，没给就只是个静态徽章。
     var onRepairSignature: ((AppItem) -> Void)? = nil
+    @State private var externalAppLocked: Bool?
+
+    private struct LockRequest: Hashable {
+        let path: URL
+        let status: String
+        let needsLock: Bool
+        let version: String?
+    }
 
     /// 所有适用的标签列表
     private var badges: [BadgeConfig] {
@@ -74,8 +82,7 @@ struct StatusBadge: View {
 
         // 1. 链接状态标签
         if app.status == AppStatus.linked {
-            if app.needsLock {
-                let locked = Self.isExternalAppLocked(app: app)
+            if app.needsLock, let locked = externalAppLocked {
                 result.append(BadgeConfig(
                     text: locked ? "锁定迁移" : "非锁定迁移",
                     icon: locked ? "lock.fill" : "lock.open",
@@ -133,7 +140,7 @@ struct StatusBadge: View {
     }
     
     /// 检查外部 app 是否被 uchg 锁定
-    private static func isExternalAppLocked(app: AppItem) -> Bool {
+    nonisolated private static func isExternalAppLocked(app: AppItem) -> Bool {
         let externalPath: String
 
         // 外部 app：直接检查自身
@@ -163,7 +170,7 @@ struct StatusBadge: View {
     }
 
     /// wholeAppSymlink：解析符号链接目标
-    private static func resolveExternalPath(from url: URL) -> String? {
+    nonisolated private static func resolveExternalPath(from url: URL) -> String? {
         guard let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]),
               values.isSymbolicLink == true,
               let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else {
@@ -174,7 +181,7 @@ struct StatusBadge: View {
     }
 
     /// stub portal：从原生 launcher 的 real_app_path.txt 或旧版 bash 脚本提取外部路径
-    private static func resolveExternalPathFromLauncher(app: AppItem) -> String? {
+    nonisolated private static func resolveExternalPathFromLauncher(app: AppItem) -> String? {
         // 新版原生 launcher：从 real_app_path.txt 读取
         let pathFile = app.path.appendingPathComponent("Contents/Resources/real_app_path.txt")
         if let raw = try? String(contentsOf: pathFile, encoding: .utf8),
@@ -194,7 +201,7 @@ struct StatusBadge: View {
     }
 
     /// deepContentsWrapper：解析 Contents/ 符号链接目标
-    private static func resolveExternalPathFromContents(app: AppItem) -> String? {
+    nonisolated private static func resolveExternalPathFromContents(app: AppItem) -> String? {
         let contents = app.path.appendingPathComponent("Contents")
         guard let values = try? contents.resourceValues(forKeys: [.isSymbolicLinkKey]),
               values.isSymbolicLink == true,
@@ -258,6 +265,19 @@ struct StatusBadge: View {
             badges.map { localizedStatusBadgeText($0.text) }.joined(separator: ", ")
         )
         .accessibilityAddTraits(.isStaticText)
+        .task(id: LockRequest(path: app.path, status: app.status, needsLock: app.needsLock, version: app.version)) {
+            externalAppLocked = nil
+            guard app.needsLock, app.status == AppStatus.linked else { return }
+            let inspectedApp = app
+            let worker = Task.detached(priority: .utility) {
+                Self.isExternalAppLocked(app: inspectedApp)
+            }
+            let locked = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: { worker.cancel() }
+            guard !Task.isCancelled else { return }
+            externalAppLocked = locked
+        }
     }
 
     private var signatureAccessibilityLabel: String {

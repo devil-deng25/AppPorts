@@ -14,8 +14,52 @@ actor CustomDirScanner {
         self.fileManager = fileManager
     }
 
-    func scan(configs: [CustomDirConfig], calculateSizes: Bool = false) -> [CustomDirPair] {
-        configs.map { scan(config: $0, calculateSizes: calculateSizes) }
+    private(set) var sizeCacheUpdatedAt: Date?
+
+    func scan(configs: [CustomDirConfig], calculateSizes: Bool = false,
+              forceSizeRefresh: Bool = false) -> [CustomDirPair] {
+        let cache = ToolDirectorySizeCacheStore.customDirectories
+        var snapshot = calculateSizes ? cache.load() : .init()
+        let originalEntries = snapshot.entries
+        var result: [CustomDirPair] = []
+        for config in configs {
+            guard !Task.isCancelled else { return [] }
+            var pair = scan(config: config, calculateSizes: false)
+            if calculateSizes {
+                applyCachedSize(to: &pair.local, snapshot: &snapshot, forceRefresh: forceSizeRefresh)
+                applyCachedSize(to: &pair.external, snapshot: &snapshot, forceRefresh: forceSizeRefresh)
+            }
+            result.append(pair)
+        }
+        guard !Task.isCancelled else { return [] }
+        if calculateSizes {
+            let keys = Set(result.flatMap { [$0.local.id, $0.external.id] })
+            snapshot.entries = snapshot.entries.filter { keys.contains($0.key) }
+            if snapshot.entries != originalEntries { cache.save(snapshot) }
+            sizeCacheUpdatedAt = snapshot.updatedAt
+        }
+        return result
+    }
+
+    private func applyCachedSize(to entry: inout CustomDirEntry,
+                                 snapshot: inout ToolDirectorySizeCacheStore.Snapshot,
+                                 forceRefresh: Bool) {
+        guard !Task.isCancelled, fileManager.fileExists(atPath: entry.url.path),
+              let identity = ToolDirectorySizeCacheStore.identity(for: entry.dataDirItem) else {
+            snapshot.entries.removeValue(forKey: entry.id)
+            return
+        }
+        if !forceRefresh, let cached = snapshot.entries[entry.id], cached.identity == identity {
+            entry.sizeBytes = cached.bytes
+            entry.size = LocalizedByteCountFormatter.string(fromByteCount: cached.bytes)
+            return
+        }
+        snapshot.entries.removeValue(forKey: entry.id)
+        guard applySize(to: &entry), !Task.isCancelled,
+              identity == ToolDirectorySizeCacheStore.identity(for: entry.dataDirItem) else { return }
+        snapshot.entries[entry.id] = .init(identity: identity, sourcePath: entry.url.standardizedFileURL.path,
+            targetPath: entry.url.resolvingSymlinksInPath().standardizedFileURL.path,
+            bytes: entry.sizeBytes, measuredAt: Date())
     }
 
     private func scan(config: CustomDirConfig, calculateSizes: Bool) -> CustomDirPair {
@@ -79,11 +123,16 @@ actor CustomDirScanner {
         return (CustomDirStatus.missing, nil)
     }
 
-    private func applySize(to entry: inout CustomDirEntry) {
-        guard fileManager.fileExists(atPath: entry.url.path) else { return }
-        let sizeBytes = fastDirectorySize(at: entry.url, fileManager: fileManager)
-        entry.sizeBytes = sizeBytes
-        entry.size = LocalizedByteCountFormatter.string(fromByteCount: sizeBytes)
+    @discardableResult
+    private func applySize(to entry: inout CustomDirEntry) -> Bool {
+        guard fileManager.fileExists(atPath: entry.url.path) else { return false }
+        // Our persistent cache controls reuse. A manual refresh must bypass
+        // the shared in-memory directory-size cache as well.
+        let measured = measureDirectorySize(at: entry.url, fileManager: fileManager, useCache: false)
+        entry.sizeBytes = measured.bytes
+        entry.size = LocalizedByteCountFormatter.string(fromByteCount: measured.bytes)
+        if !measured.readIssues.isEmpty { entry.size? += "（统计不完整）".localized }
+        return measured.readIssues.isEmpty
     }
 
     private func isSymbolicLink(at url: URL) -> Bool {

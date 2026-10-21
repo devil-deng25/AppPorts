@@ -177,10 +177,27 @@ struct DataDirOperationButtons: View {
 
     @ViewBuilder
     var body: some View {
-        if DataDirStatus.mountStatuses.contains(item.status) {
+        if !item.weChatSplitMembers.isEmpty {
+            HStack(spacing: 6) {
+                if item.status == DataDirStatus.waitingForUnlock, let onMount {
+                    migrationButton(title: "解锁".localized, icon: "lock.open") { onMount(item) }
+                } else if item.weChatSplitMembers.count < PartialWeChatMigrationPolicy.memberNames.count
+                    || item.weChatSplitMembers.contains(where: { $0.status != DataDirStatus.mounted }) {
+                    migrationButton(title: (item.status == DataDirStatus.local ? "迁移" : "继续").localized,
+                                    icon: "externaldrive.fill.badge.plus") { onMigrate(item) }
+                }
+                if item.weChatSplitMembers.contains(where: { $0.canRestore || $0.recoveryOperationID != nil }),
+                   let onMountRestore {
+                    mountRestoreButton(action: onMountRestore, compact: inline && (
+                        item.weChatSplitMembers.count < PartialWeChatMigrationPolicy.memberNames.count
+                            || item.weChatSplitMembers.contains { $0.status != DataDirStatus.mounted }
+                    ))
+                }
+            }
+        } else if DataDirStatus.mountStatuses.contains(item.status) {
             mountOperationButtons
         } else if !item.isMigratable, item.hasMountTransferRecord, let onMountRestore {
-            mountRestoreButton(action: onMountRestore)
+            mountRestoreButton(action: onMountRestore, compact: inline)
         } else if item.canRestore && (!item.isMigratable || item.status != DataDirStatus.needsNormalization) {
             restoreButton()
         } else if !item.isMigratable {
@@ -270,20 +287,8 @@ struct DataDirOperationButtons: View {
                     .accessibilityLabel("迁移".localized)
                     .help("经典模式：用符号链接迁移（不推荐）".localized)
                 }
-                Button(action: { onMountMigrate(item) }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "externaldrive.fill.badge.plus")
-                        Text(classicModeActive ? "挂载迁移".localized : "迁移".localized)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, inline ? 8 : 10)
-                    .padding(.vertical, inline ? 7 : 5)
-                    .background(
-                        Capsule().fill(Color.accentColor)
-                    )
-                }
-                .buttonStyle(.plain)
+                migrationButton(title: classicModeActive ? "挂载迁移".localized : "迁移".localized,
+                                icon: "externaldrive.fill.badge.plus") { onMountMigrate(item) }
                 .help("在外部存储上创建 APFS 卷并挂载到此目录（实验性）".localized)
             } else if item.requiresMountMigration {
                 Image(systemName: "lock.fill")
@@ -292,23 +297,26 @@ struct DataDirOperationButtons: View {
                     .help("沙盒应用的容器数据不支持符号链接迁移".localized)
             } else {
                 // 本地：显示「迁移」按钮
-                Button(action: { onMigrate(item) }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.right.circle.fill")
-                        Text("迁移".localized)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, inline ? 8 : 10)
-                    .padding(.vertical, inline ? 7 : 5)
-                    .background(
-                        Capsule().fill(Color.accentColor)
-                    )
-                }
-                .buttonStyle(.plain)
+                migrationButton(title: "迁移".localized, icon: "arrow.right.circle.fill") { onMigrate(item) }
                 .help("将数据目录迁移到外部存储".localized)
             }
         }
+    }
+
+    private func migrationButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                Text(title).lineLimit(1)
+            }
+            .fixedSize(horizontal: true, vertical: true)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, inline ? 8 : 10)
+            .padding(.vertical, inline ? 7 : 5)
+            .background(Capsule().fill(Color.accentColor))
+        }
+        .buttonStyle(.plain)
     }
 
     private func restoreButton(compact: Bool = false) -> some View {
@@ -328,9 +336,13 @@ struct DataDirOperationButtons: View {
         .help("将数据目录还原到本地".localized)
     }
 
-    private func mountRestoreButton(action: @escaping (DataDirItem) -> Void) -> some View {
+    private func mountRestoreButton(action: @escaping (DataDirItem) -> Void, compact: Bool = false) -> some View {
         Button(action: { action(item) }) {
-            Label("还原".localized, systemImage: "arrow.uturn.backward.circle.fill")
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                if !compact { Text("还原".localized).lineLimit(1) }
+            }
+                .fixedSize(horizontal: true, vertical: true)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white)
                 .padding(.horizontal, inline ? 8 : 10)
@@ -338,6 +350,7 @@ struct DataDirOperationButtons: View {
                 .background(Capsule().fill(Color.orange))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("还原".localized)
         .help("将数据目录还原到本地".localized)
     }
 
@@ -361,12 +374,12 @@ struct DataDirOperationButtons: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("卸载".localized)
                 .help("卸载外置卷。卸载后应用会看到空目录，请在拔盘前先退出应用".localized)
-            } else if item.status == DataDirStatus.pendingMount, let onMount {
+            } else if [DataDirStatus.pendingMount, DataDirStatus.waitingForUnlock].contains(item.status), let onMount {
                 Button(action: { onMount(item) }) {
                     HStack(spacing: 5) {
                         Image(systemName: "externaldrive.fill.badge.checkmark")
                             .font(.system(size: inline ? 14 : 12))
-                        if !inline { Text("挂载".localized) }
+                        if !inline { Text(item.status == DataDirStatus.waitingForUnlock ? "解锁".localized : "挂载".localized) }
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
@@ -375,7 +388,7 @@ struct DataDirOperationButtons: View {
                     .background(Capsule().fill(Color.purple))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("挂载".localized)
+                .accessibilityLabel(item.status == DataDirStatus.waitingForUnlock ? "解锁".localized : "挂载".localized)
                 .help("把外置卷重新挂载到此目录".localized)
             }
 
@@ -386,7 +399,7 @@ struct DataDirOperationButtons: View {
                     .help("外置盘未连接。连接这块外部存储后会自动接回；如果已经连接仍显示此状态，数据卷可能被改名或删除，请查看挂载迁移文档里的排查步骤".localized)
             }
             if let onMountRestore {
-                mountRestoreButton(action: onMountRestore)
+                mountRestoreButton(action: onMountRestore, compact: inline && item.status != DataDirStatus.mounted)
             }
         }
     }

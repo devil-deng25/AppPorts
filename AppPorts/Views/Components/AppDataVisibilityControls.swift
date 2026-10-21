@@ -4,11 +4,16 @@ import SwiftUI
 struct AppDataVisibilityControls: View {
     @Binding var showZeroByteDirectories: Bool
     @Binding var showLockedStructure: Bool
+    @Binding var showNonMigratableDirectories: Bool
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             zeroByteDirectoriesToggle
             lockedStructureToggle
+            Toggle("显示不支持迁移目录".localized, isOn: $showNonMigratableDirectories)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 12))
+                .fixedSize()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

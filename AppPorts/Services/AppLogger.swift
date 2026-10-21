@@ -73,6 +73,7 @@ final class AppLogger: @unchecked Sendable {
 
     /// 磁盘查询可能等待设备响应，不占用调用者（尤其是主线程）。
     private let diagnosticQueue = DispatchQueue(label: "com.shimoko.AppPorts.logger.diagnostics", qos: .utility)
+    @MainActor private var diagnosticExportInProgress = false
 
     nonisolated(unsafe) private let userDefaults: UserDefaults
     nonisolated private let usesTestLogDirectory: Bool
@@ -239,41 +240,51 @@ final class AppLogger: @unchecked Sendable {
 
     @MainActor
     func exportDiagnosticPackageInteractively() {
-        let savePanel = NSSavePanel()
-        savePanel.title = "导出诊断包".localized
-        savePanel.prompt = "导出".localized
-        savePanel.nameFieldStringValue = defaultDiagnosticArchiveName()
-        savePanel.allowedContentTypes = [UTType.zip]
-        savePanel.canCreateDirectories = true
-
-        guard savePanel.runModal() == .OK, let destinationURL = savePanel.url else {
+        guard !diagnosticExportInProgress else { return }
+        diagnosticExportInProgress = true
+        guard let options = DiagnosticExportDialog.run(defaultFileName: defaultDiagnosticArchiveName()) else {
+            diagnosticExportInProgress = false
             return
         }
-
-        do {
-            let archiveURL = try createDiagnosticArchive()
-
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
+        let destinationURL = options.destinationURL
+        let includeAppInventory = options.includeAppInventory
+        Task { @MainActor in
+            defer { diagnosticExportInProgress = false }
+            do {
+                try await Task.detached(priority: .utility) { [self] in
+                    try exportDiagnosticArchive(to: destinationURL, includeAppInventory: includeAppInventory)
+                }.value
+                NSWorkspace.shared.activateFileViewerSelecting([destinationURL])
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "导出诊断包失败".localized
+                alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: "好的".localized)
+                alert.runModal()
             }
+        }
+    }
 
-            try fileManager.copyItem(at: archiveURL, to: destinationURL)
+    nonisolated private func exportDiagnosticArchive(to destinationURL: URL, includeAppInventory: Bool) throws {
+        do {
+            let archiveURL = try createDiagnosticArchive(includeAppInventory: includeAppInventory)
+            defer { try? fileManager.removeItem(at: archiveURL.deletingLastPathComponent()) }
+            // Foundation writes a temporary sibling first and atomically
+            // replaces the destination only when the new archive is complete.
+            // A failed read/write leaves an existing export untouched.
+            try Data(contentsOf: archiveURL, options: .mappedIfSafe).write(to: destinationURL, options: .atomic)
             logContext(
                 "诊断包导出完成".localized,
                 details: [
                     ("destination", destinationURL.path),
-                    ("redaction_mode", "share_safe")
+                    ("redaction_mode", "share_safe"),
+                    ("app_inventory_included", String(includeAppInventory))
                 ],
                 level: "DIAG"
             )
-            NSWorkspace.shared.activateFileViewerSelecting([destinationURL])
         } catch {
             logError("导出诊断包失败".localized, error: error, errorCode: "LOG-EXPORT-FAILED")
-            let alert = NSAlert()
-            alert.messageText = "导出诊断包失败".localized
-            alert.informativeText = error.localizedDescription
-            alert.addButton(withTitle: "好的".localized)
-            alert.runModal()
+            throw error
         }
     }
 
@@ -895,11 +906,13 @@ final class AppLogger: @unchecked Sendable {
         return "AppPorts-Diagnostic-\(formatter.string(from: Date())).zip"
     }
 
-    nonisolated private func createDiagnosticArchive() throws -> URL {
+    nonisolated private func createDiagnosticArchive(includeAppInventory: Bool) throws -> URL {
         let tempRootURL = fileManager.temporaryDirectory.appendingPathComponent("AppPorts-Diagnostic-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: tempRootURL, withIntermediateDirectories: true)
 
-        let packageURL = try buildDiagnosticPackage(in: tempRootURL)
+        var completed = false
+        defer { if !completed { try? fileManager.removeItem(at: tempRootURL) } }
+        let packageURL = try buildDiagnosticPackage(in: tempRootURL, includeAppInventory: includeAppInventory)
         let archiveURL = tempRootURL.appendingPathComponent("\(packageURL.lastPathComponent).zip")
 
         let process = Process()
@@ -917,10 +930,11 @@ final class AppLogger: @unchecked Sendable {
             )
         }
 
+        completed = true
         return archiveURL
     }
 
-    nonisolated func buildDiagnosticPackage(in rootURL: URL) throws -> URL {
+    nonisolated func buildDiagnosticPackage(in rootURL: URL, includeAppInventory: Bool = false) throws -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let packageURL = rootURL.appendingPathComponent("AppPorts-Diagnostic-\(formatter.string(from: Date()))", isDirectory: true)
@@ -932,7 +946,8 @@ final class AppLogger: @unchecked Sendable {
                 recentOperationSummaries
             )
         }
-        let redactedLogContent = redactedDiagnosticText(from: currentLogContent)
+        let exportLogContent = includeAppInventory ? currentLogContent : removingAppInventoryEntries(from: currentLogContent)
+        let redactedLogContent = redactedDiagnosticText(from: exportLogContent)
         let recentFailures = operationSummaries.filter { ["failed", "rolled_back", "success_with_warning"].contains($0.result) }
 
         let metadata: [String: String] = [
@@ -948,6 +963,7 @@ final class AppLogger: @unchecked Sendable {
             "log_file_name": logFileURL.lastPathComponent,
             "log_file_size": getLogSizeString(),
             "redaction_mode": "share_safe",
+            "app_inventory_included": String(includeAppInventory),
             "recent_operation_count": String(operationSummaries.count),
             "recent_failure_count": String(recentFailures.count)
         ]
@@ -973,6 +989,28 @@ final class AppLogger: @unchecked Sendable {
         )
 
         return packageURL
+    }
+
+    /// 扫描日志逐条列出已安装应用；诊断包只保留操作记录和扫描汇总。
+    /// 同时过滤已有日志，不要求用户清空日志或重新扫描。
+    nonisolated private func removingAppInventoryEntries(from rawText: String) -> String {
+        let prefix = try? NSRegularExpression(pattern: #"^(?:\[[^\]\r\n]*\][ \t]*)+"#)
+        var omittingInventoryEntry = false
+        return rawText.components(separatedBy: "\n").filter { line in
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            let match = prefix?.firstMatch(in: line, range: range)
+            let message: String
+            if let match, let prefixRange = Range(match.range, in: line) {
+                message = String(line[prefixRange.upperBound...])
+                omittingInventoryEntry = false
+            } else {
+                message = line.trimmingCharacters(in: .whitespaces)
+            }
+            if message.hasPrefix("扫描应用:") || message.hasPrefix("扫描应用：") || message.hasPrefix("Scanning app:") {
+                omittingInventoryEntry = true
+            }
+            return !omittingInventoryEntry
+        }.joined(separator: "\n")
     }
 
     nonisolated func redactedDiagnosticText(from rawText: String) -> String {
@@ -1233,6 +1271,7 @@ final class AppLogger: @unchecked Sendable {
             "timezone: \(metadata["timezone"] ?? "unknown")",
             "log_file_size: \(metadata["log_file_size"] ?? "unknown")",
             "redaction_mode: share_safe",
+            "app_inventory_included: \(metadata["app_inventory_included"] ?? "false")",
             "recent_operation_count: \(operationCount)"
         ]
 

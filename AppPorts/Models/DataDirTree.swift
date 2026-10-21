@@ -110,10 +110,12 @@ enum DataDirTree {
     /// Rebuilding after visibility filtering promotes descendants across hidden ancestors;
     /// Row.contextPath supplies the intermediate path that indentation no longer represents.
     static func visibleTree(from items: [DataDirItem], showZeroByteDirectories: Bool,
-                            showLockedStructure: Bool, matchingIDs: Set<String>) -> [DataDirItem] {
+                            showLockedStructure: Bool, matchingIDs: Set<String>,
+                            showNonMigratableDirectories: Bool = true) -> [DataDirItem] {
         let visibleItems = items.filter {
             $0.matchesVisibility(showZeroByteDirectories: showZeroByteDirectories,
-                                 showLockedStructure: showLockedStructure)
+                                 showLockedStructure: showLockedStructure,
+                                 showNonMigratableDirectories: showNonMigratableDirectories)
         }
         return retainingMatches(in: build(from: visibleItems), matchingIDs: matchingIDs)
     }

@@ -11,6 +11,7 @@ final class AppOperationState: ObservableObject {
     static let shared = AppOperationState()
 
     @Published private var activeOperation: UUID?
+    @Published private var migrationCount = 0
     @Published private(set) var recordsRevision: UInt64 = 0
     private var recordObserver: AnyCancellable?
     private var terminationReply: (() -> Void)?
@@ -25,10 +26,17 @@ final class AppOperationState: ObservableObject {
             }
     }
 
-    var isBusy: Bool { activeOperation != nil }
+    var isBusy: Bool { activeOperation != nil || migrationCount > 0 }
+    var blocksInteraction: Bool { activeOperation != nil }
+
+    func setMigrationCount(_ count: Int) {
+        let wasBusy = isBusy
+        migrationCount = count
+        if wasBusy && !isBusy { recordsRevision &+= 1 }
+    }
 
     func begin() -> UUID? {
-        guard activeOperation == nil, terminationReply == nil else { return nil }
+        guard !isBusy, terminationReply == nil else { return nil }
         let token = UUID()
         activeOperation = token
         return token
@@ -44,6 +52,7 @@ final class AppOperationState: ObservableObject {
         let reply = terminationReply
         terminationReply = nil
         reply?()
+        MigrationTaskCenter.shared.schedule()
     }
 
     func registerCancellation(for token: UUID, _ cancel: @escaping () -> Void) {

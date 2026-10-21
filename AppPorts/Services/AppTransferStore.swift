@@ -167,19 +167,28 @@ final class AppTransferStore: @unchecked Sendable {
     /// retained copies and staging objects are deliberately left untouched and
     /// remain the user's to inspect. Callers decide when work is unrecoverable.
     @discardableResult
-    func archive(_ id: UUID) throws -> URL? {
+    func archive(_ id: UUID, incomplete: Bool = false) throws -> URL? {
         lock.lock(); defer { lock.unlock() }
         try recheckWriterAdmission()
         let recordURL = recordURL(id)
         let recordExists = try Self.exists(recordURL)
         let manifests = try manifestURLs(id)
         guard recordExists || !manifests.isEmpty else { return nil }
-        let archive = directoryURL.appendingPathComponent("archived", isDirectory: true)
+        let root = directoryURL.appendingPathComponent("archived", isDirectory: true)
+        let archive = incomplete
+            ? root.appendingPathComponent("unfinished-" + id.uuidString + "-" + UUID().uuidString, isDirectory: true)
+            : root
         try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        if incomplete {
+            let summary = ["operationID": id.uuidString, "status": "incomplete",
+                           "reason": "用户选择忽略错误结束任务", "archivedAt": ISO8601DateFormatter().string(from: Date())]
+            try DurableFileIO.write(try PropertyListEncoder().encode(summary), to: archive.appendingPathComponent("archive-summary.plist"))
+        }
         for url in [recordURL] + manifests where try Self.exists(url) {
             try FileManager.default.moveItem(at: url, to: archive.appendingPathComponent(url.lastPathComponent))
         }
         try DurableFileIO.syncDirectory(at: archive)
+        if incomplete { try DurableFileIO.syncDirectory(at: root) }
         try DurableFileIO.syncDirectory(at: directoryURL)
         NotificationCenter.default.post(name: .appPortsRecordsDidChange, object: nil)
         return archive

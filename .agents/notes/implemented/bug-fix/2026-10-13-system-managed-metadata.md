@@ -15,6 +15,8 @@ Status: implemented
 
 所有采集、回放、比较与删除判断使用同一窄例外；不能为让清理通过而改变持久化内容基线或移除未知属性。还原最新数据仍必须来自当前有效位置。
 
+系统文档跟踪标记 `UF_TRACKED` 同样属于对象本地状态：`TreeCopySession.validateFlags` 接受源端携带它，采集的可移植 flags 只保留 `UF_HIDDEN | UF_NODUMP`，不回放或比较跟踪位。该例外不扩大为接收 `UF_APPEND`、`UF_DATAVAULT` 或未知标记；不支持的位仍拒绝，并报告路径、实际位及允许范围。此规则来自当前复制器实现，此次未执行原生跟踪文件实验。
+
 ## Existing evidence
 
 2026-10-02 的 a6ffc90 已排除精确的 `com.apple.provenance`：原生实验中 fremovexattr 返回成功后该属性仍在，原实现不再复制/删除它，清单可保留诊断值但便携元数据比较排除它。因此 provenance 不是 10 月 13 日首次发现或首次豁免。

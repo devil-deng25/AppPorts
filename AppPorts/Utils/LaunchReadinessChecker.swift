@@ -15,7 +15,7 @@ import Darwin
 /// 三个检查项：
 /// 1. **完全磁盘访问权限**：读取 `~/Library` 下受 TCC 保护的应用数据（邮件、信息等）需要它；
 /// 2. **App 管理权限**（`kTCCServiceSystemPolicyAppBundles`）：替换 `/Applications` 里的应用需要它；
-/// 3. **外部存储格式**：只有沙盒应用的数据（挂载迁移）要求未加密的 APFS；其他情况说明「不影响其他迁移」。
+/// 3. **外部存储格式**：只有沙盒应用的数据（挂载迁移）要求 APFS；其他情况说明「不影响其他迁移」。
 ///
 /// 结果只用于提示，不阻断用户进入主界面：外部存储可以稍后再选。
 struct LaunchReadinessChecker: Sendable {
@@ -74,7 +74,7 @@ struct LaunchReadinessChecker: Sendable {
         case unavailable(path: String)
         /// 已是 APFS，可以挂载迁移
         case apfs
-        /// APFS 但已加密：挂载迁移新建的数据卷不会继承密码，所以不会把数据放到这里
+        /// APFS 已加密：挂载迁移会为新数据卷单独设置密码
         case encryptedAPFS
         /// 不是 APFS，挂载迁移不可用
         case notAPFS(filesystem: String?)
@@ -218,9 +218,9 @@ struct LaunchReadinessChecker: Sendable {
         case .encryptedAPFS:
             return Item(
                 id: ItemID.externalDrive,
-                level: .warning,
+                level: .ok,
                 title: "外部存储".localized,
-                detail: "格式为 APFS（已加密）。应用和普通数据目录可以迁移到这里；沙盒应用的数据（如聊天记录）不会迁移到加密的外部存储，会继续留在本机。".localized,
+                detail: "格式为 APFS（已加密）。可以迁移沙盒应用数据；首次迁移时需为新数据卷设置密码，可选择保存到本机钥匙串。".localized,
                 action: nil
             )
         case .notAPFS(let filesystem):
