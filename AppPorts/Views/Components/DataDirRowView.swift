@@ -179,7 +179,9 @@ struct DataDirOperationButtons: View {
     var body: some View {
         if !item.weChatSplitMembers.isEmpty {
             HStack(spacing: 6) {
-                if item.weChatSplitMembers.count < PartialWeChatMigrationPolicy.memberNames.count
+                if item.status == DataDirStatus.waitingForUnlock, let onMount {
+                    migrationButton(title: "解锁".localized, icon: "lock.open") { onMount(item) }
+                } else if item.weChatSplitMembers.count < PartialWeChatMigrationPolicy.memberNames.count
                     || item.weChatSplitMembers.contains(where: { $0.status != DataDirStatus.mounted }) {
                     migrationButton(title: (item.status == DataDirStatus.local ? "迁移" : "继续").localized,
                                     icon: "externaldrive.fill.badge.plus") { onMigrate(item) }
@@ -302,8 +304,9 @@ struct DataDirOperationButtons: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
-                Text(title)
+                Text(title).lineLimit(1)
             }
+            .fixedSize(horizontal: true, vertical: true)
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(.white)
             .padding(.horizontal, inline ? 8 : 10)
@@ -332,7 +335,11 @@ struct DataDirOperationButtons: View {
 
     private func mountRestoreButton(action: @escaping (DataDirItem) -> Void) -> some View {
         Button(action: { action(item) }) {
-            Label("还原".localized, systemImage: "arrow.uturn.backward.circle.fill")
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                if !inline { Text("还原".localized).lineLimit(1) }
+            }
+                .fixedSize(horizontal: true, vertical: true)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white)
                 .padding(.horizontal, inline ? 8 : 10)
@@ -340,6 +347,7 @@ struct DataDirOperationButtons: View {
                 .background(Capsule().fill(Color.orange))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("还原".localized)
         .help("将数据目录还原到本地".localized)
     }
 
@@ -363,12 +371,12 @@ struct DataDirOperationButtons: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("卸载".localized)
                 .help("卸载外置卷。卸载后应用会看到空目录，请在拔盘前先退出应用".localized)
-            } else if item.status == DataDirStatus.pendingMount, let onMount {
+            } else if [DataDirStatus.pendingMount, DataDirStatus.waitingForUnlock].contains(item.status), let onMount {
                 Button(action: { onMount(item) }) {
                     HStack(spacing: 5) {
                         Image(systemName: "externaldrive.fill.badge.checkmark")
                             .font(.system(size: inline ? 14 : 12))
-                        if !inline { Text("挂载".localized) }
+                        if !inline { Text(item.status == DataDirStatus.waitingForUnlock ? "解锁".localized : "挂载".localized) }
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
@@ -377,7 +385,7 @@ struct DataDirOperationButtons: View {
                     .background(Capsule().fill(Color.purple))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("挂载".localized)
+                .accessibilityLabel(item.status == DataDirStatus.waitingForUnlock ? "解锁".localized : "挂载".localized)
                 .help("把外置卷重新挂载到此目录".localized)
             }
 

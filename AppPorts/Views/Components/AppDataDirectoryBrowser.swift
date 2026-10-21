@@ -344,7 +344,7 @@ struct AppDataDirectoryBrowser<Actions: View>: View {
                 Text(item.description)
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
-                if !item.isMigratable {
+                if item.isMigrationUnsupported {
                     Label((item.nonMigratableReason ?? "此目录不支持迁移").localized, systemImage: "lock")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
@@ -502,7 +502,7 @@ private struct AppDataDirectoryRow<Actions: View>: View {
                             .foregroundColor(isEmphasized ? .white : (isContext ? .secondary : .primary))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        if !row.item.isMigratable {
+                        if row.item.isMigrationUnsupported {
                             Image(systemName: row.item.pathPolicy?.reason == .retainedOriginal ? "doc.on.doc" : "lock")
                                 .font(.system(size: 11))
                                 .foregroundColor(isEmphasized ? .white.opacity(0.85) : .secondary)

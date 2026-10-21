@@ -45,11 +45,13 @@ struct WeChatAccountMigrationService: Sendable {
     init(homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()), store: ContainerMountStore = .shared,
          migrator: (any WeChatAccountMountDriving)? = nil,
          enabled: Bool = false,
-         containerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier) {
+         containerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier,
+         encryption: APFSVolumeEncryption.Credentials? = nil) {
         policy = PartialWeChatMigrationPolicy(homeDirectory: homeDirectory, containerIdentifier: containerIdentifier)
         self.store = store
         self.migrator = migrator ?? ContainerVolumeMigrator(store: store, homeDirectory: homeDirectory,
-                                                          partialWeChatMigrationEnabled: enabled, weChatContainerIdentifier: policy.containerIdentifier)
+                                                          partialWeChatMigrationEnabled: enabled, weChatContainerIdentifier: policy.containerIdentifier,
+                                                          encryption: encryption)
         self.enabled = enabled
     }
 
@@ -85,6 +87,11 @@ struct WeChatAccountMigrationService: Sendable {
     /// The caller owns the application operation and cross-process locks for the whole group.
     func migrate(account: URL, mode: Mode, externalRoot: URL, appName: String,
                  progress: FileCopier.ProgressHandler? = nil) async throws -> [String] {
+        if DataTransferSession.current == nil {
+            return try await DataTransferSession.run {
+                try await migrate(account: account, mode: mode, externalRoot: externalRoot, appName: appName, progress: progress)
+            }
+        }
         try requireAccount(account)
         let current = try state(of: account)
         guard current != .conflict,
@@ -132,10 +139,26 @@ struct WeChatAccountMigrationService: Sendable {
     }
 
     func restoreSplit(account: URL, progress: FileCopier.ProgressHandler? = nil) async throws -> [String] {
+        if DataTransferSession.current == nil {
+            return try await DataTransferSession.run { try await restoreSplit(account: account, progress: progress) }
+        }
         try requireAccount(account)
-        guard try state(of: account) == .split else { throw Failure.restoreFirst }
+        let current = try state(of: account)
+        let members = policy.members(of: account)
+        let memberPaths = Set(members.map(\.path))
+        let rolledBack = try store.transfers().filter {
+            $0.mode == .mount && memberPaths.contains($0.originalPath) && $0.rollbackCompletedAt != nil
+        }
+        // A failed migration can have restored the local entry but still owe volume cleanup.
+        guard current == .split || (current == .local && !rolledBack.isEmpty) else { throw Failure.restoreFirst }
         var warnings: [String] = []
-        for source in policy.members(of: account) {
+        for transfer in rolledBack {
+            try Task.checkCancellation()
+            if let warning = try await migrator.resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: progress) {
+                warnings.append(warning)
+            }
+        }
+        for source in members {
             try Task.checkCancellation()
             // A preparation may not yet have published its mount record.
             if let transfer = try store.transfers().last(where: {
@@ -207,6 +230,7 @@ struct WeChatAccountMigrationService: Sendable {
             item.status = localPreview ? DataDirStatus.local
                 : active.contains(where: { $0.status == DataDirStatus.local }) ? DataDirStatus.pendingCompletion
                 : active.contains(where: { $0.status == DataDirStatus.volumeMissing }) ? DataDirStatus.volumeMissing
+                : active.contains(where: { $0.status == DataDirStatus.waitingForUnlock }) ? DataDirStatus.waitingForUnlock
                 : active.allSatisfy({ $0.status == DataDirStatus.mounted }) ? DataDirStatus.mounted : DataDirStatus.pendingMount
             if let index { result[index] = item } else { result.append(item) }
         }

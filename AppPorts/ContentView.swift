@@ -203,9 +203,10 @@ struct ContentView: View {
 
     @State private var localApps: [AppItem] = []
     @State private var externalApps: [AppItem] = []
-    /// 会话级应用体积缓存（key = AppItem.id，即标准化路径）。
-    /// 独立于 localApps/externalApps（每次扫描都会重建），因此会话内不会因重扫而丢失已算出的体积。
+    /// 应用体积缓存（key = AppItem.id），独立保存并在下次启动恢复。
     @State private var sizeCache: [String: CachedAppSize] = [:]
+    @State private var sizeCacheUpdatedAt: Date?
+    @State private var hasRestoredSizeCache = false
     
     @State private var searchText: String = ""
     @State private var hideMigratedApps = false
@@ -332,6 +333,12 @@ struct ContentView: View {
             // A unit-test host must not scan apps, refresh agents, or observe real volumes.
             guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
             isVisible = true
+            if !hasRestoredSizeCache {
+                let snapshot = AppSizeCacheStore.shared.load()
+                sizeCache = snapshot.entries
+                sizeCacheUpdatedAt = snapshot.updatedAt
+                hasRestoredSizeCache = true
+            }
             // Restore persistence
             if let savedPath = UserDefaults.standard.string(forKey: "ExternalDrivePath") {
                 let url = URL(fileURLWithPath: savedPath)
@@ -857,6 +864,13 @@ struct ContentView: View {
     }
 
     private var appListToolbar: some View {
+        VStack(spacing: 8) {
+            appListFilters
+            appSizeCacheControls
+        }
+    }
+
+    private var appListFilters: some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
@@ -923,6 +937,25 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .fixedSize()
             .disabled(operationState.isBusy || externalDriveURL == nil)
+        }
+    }
+
+    private var appSizeCacheControls: some View {
+        HStack {
+            Group {
+                if let sizeCacheUpdatedAt {
+                    Text("上次缓存时间".localized + "：" + sizeCacheUpdatedAt.formatted(date: .numeric, time: .shortened))
+                } else {
+                    Text("尚无大小缓存".localized)
+                }
+            }
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
+            Spacer()
+            Button("刷新缓存".localized) {
+                scanBothAppsAtomic(forceSizeRefresh: true)
+            }
+            .disabled(operationState.isBusy || localScanState.isScanning || externalScanState.isScanning)
         }
     }
 
@@ -1448,20 +1481,8 @@ struct ContentView: View {
         }
     }
     
-    /// 目录 mtime 仅用于自动扫描的快速缓存判断；手动刷新始终重测包内内容。
-    struct CachedAppSize {
-        let size: String
-        let bytes: Int64
-        let mtime: Date?
-        let isLocalPortal: Bool
-
-        init(size: String, bytes: Int64, mtime: Date?, isLocalPortal: Bool = false) {
-            self.size = size
-            self.bytes = bytes
-            self.mtime = mtime
-            self.isLocalPortal = isLocalPortal
-        }
-    }
+    /// 目录 mtime 仅用于展示缓存判断，手动刷新始终重测包内内容。
+    typealias CachedAppSize = AppSizeCacheStore.Entry
 
     nonisolated func bundleModificationDate(for app: AppItem) -> Date? {
         (try? app.path.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
@@ -1525,6 +1546,11 @@ struct ContentView: View {
         // 空列表或全部命中缓存时也必须结束进度；过期请求不能结束新一轮扫描。
         await MainActor.run {
             guard self.isCurrentScan(request, isLocal: isLocal) else { return }
+            if !misses.isEmpty || request.forceSizeRefresh {
+                let updatedAt = Date()
+                self.sizeCacheUpdatedAt = updatedAt
+                AppSizeCacheStore.shared.save(entries: self.sizeCache, updatedAt: updatedAt)
+            }
             if isLocal {
                 self.localScanState.finish(request)
             } else {
@@ -1533,7 +1559,7 @@ struct ContentView: View {
         }
     }
 
-    /// 统一的体积应用入口：先用会话缓存填充列表后赋值（命中项瞬时显示、无“计算中”闪烁），
+    /// 统一的体积应用入口：先用缓存填充列表后赋值（命中项瞬时显示、无“计算中”闪烁），
     /// 再在后台计算缺失/失效项并写回缓存。所有扫描路径都走这里。
     @MainActor
     private func isCurrentScan(_ request: ScanRequest, isLocal: Bool) -> Bool {
@@ -3036,15 +3062,17 @@ struct ContentView: View {
 
     /// 同轮扫描本地和外部应用，一次性更新仍有效的结果，避免列表跳两下。
     @MainActor
-    private func scanBothAppsAtomic() {
+    private func scanBothAppsAtomic(forceSizeRefresh: Bool = false) {
         guard isVisible else { return }
         guard !operationState.isBusy else {
             needsAppRescan = true
             return
         }
         needsAppRescan = false
-        guard let localRequest = localScanState.begin(externalDirectory: externalDriveURL, customPaths: customLocalScanPaths),
-              let externalRequest = externalScanState.begin(externalDirectory: externalDriveURL, customPaths: customLocalScanPaths) else { return }
+        guard let localRequest = localScanState.begin(externalDirectory: externalDriveURL, customPaths: customLocalScanPaths,
+                                                     isManual: forceSizeRefresh),
+              let externalRequest = externalScanState.begin(externalDirectory: externalDriveURL, customPaths: customLocalScanPaths,
+                                                            isManual: forceSizeRefresh) else { return }
         let externalDir = localRequest.externalDirectory
         let maintenanceGeneration = AppMigrationService.maintenanceGeneration
         Task.detached(priority: .userInitiated) {

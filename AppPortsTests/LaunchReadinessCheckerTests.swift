@@ -105,12 +105,12 @@ struct LaunchReadinessCheckerTests {
         ))
     }
 
-    @Test("加密的 APFS 外部存储提醒沙盒应用数据会留在本机")
+    @Test("加密的 APFS 外部存储支持迁移并提示独立密码")
     func externalDriveEncryptedAPFS() {
         let item = driveItem(state: .encryptedAPFS)
-        #expect(item?.level == .warning)
+        #expect(item?.level == .ok)
         #expect(item?.action == nil)
-        #expect(item?.detail == "格式为 APFS（已加密）。应用和普通数据目录可以迁移到这里；沙盒应用的数据（如聊天记录）不会迁移到加密的外部存储，会继续留在本机。".localized)
+        #expect(item?.detail == "格式为 APFS（已加密）。可以迁移沙盒应用数据；首次迁移时需为新数据卷设置密码，可选择保存到本机钥匙串。".localized)
     }
 
     @Test("读不出文件系统类型时用「未知格式」兜底")

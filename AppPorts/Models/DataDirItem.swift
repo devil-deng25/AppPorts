@@ -132,11 +132,12 @@ enum DataDirStatus {
     static let mounted = "已挂载"
     /// 挂载迁移：外置卷在线但尚未挂载
     static let pendingMount = "待挂载"
+    static let waitingForUnlock = "等待解锁"
     /// 挂载迁移：找不到外置卷（外部存储未连接或卷已删除）
     static let volumeMissing = "卷丢失"
 
     /// 由挂载迁移管理的三种状态
-    static let mountStatuses: Set<String> = [mounted, pendingMount, volumeMissing]
+    static let mountStatuses: Set<String> = [mounted, pendingMount, waitingForUnlock, volumeMissing]
 
     static func localized(_ status: String) -> String {
         switch status {
@@ -158,6 +159,8 @@ enum DataDirStatus {
             return "待完成".localized
         case mounted:
             return "已挂载".localized
+        case waitingForUnlock:
+            return "等待解锁".localized
         case pendingMount:
             return "待挂载".localized
         case volumeMissing:
@@ -266,6 +269,11 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
             || status == DataDirStatus.linked || status == DataDirStatus.needsNormalization
     }
 
+    /// 已迁移或需要恢复的目录不能再次迁移，但不属于“不支持迁移”。
+    var isMigrationUnsupported: Bool {
+        !isMigratable && !canRestore && !hasMountTransferRecord && recoveryOperationID == nil
+    }
+
     /// Standard container shortcuts are user-folder entry points, not app-owned data.
     var isUserDirectoryLink: Bool {
         guard type == .containers, status == DataDirStatus.existingSymlink,
@@ -311,8 +319,8 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
 
     func matchesVisibility(showZeroByteDirectories: Bool, showLockedStructure: Bool,
                            showNonMigratableDirectories: Bool = true) -> Bool {
-        if !isMigratable && !showNonMigratableDirectories { return false }
-        if needsRecoveryOrAttention { return true }
+        if isMigrationUnsupported && !showNonMigratableDirectories { return false }
+        if needsRecoveryOrAttention || hasMountTransferRecord { return true }
         if isUserDirectoryLink { return false }
         if !isMigratable { return showLockedStructure }
         return showZeroByteDirectories || !isEmptyLocalDirectory

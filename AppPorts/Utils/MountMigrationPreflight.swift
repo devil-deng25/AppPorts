@@ -25,7 +25,7 @@ struct MountMigrationPreflight: Sendable {
         case destinationUnavailable
         /// 不是 APFS（exFAT、NTFS、HFS+ 等）；`filesystem` 是 diskutil 给出的原始类型
         case notAPFS(filesystem: String?)
-        /// APFS 但已加密：新建的数据卷不会继承它的密码
+        /// 可以迁移到加密 APFS；开始前需为新数据卷设置密码
         case encrypted
         /// 空间不够
         case insufficientSpace(requiredBytes: Int64, availableBytes: Int64)
@@ -55,7 +55,6 @@ struct MountMigrationPreflight: Sendable {
         guard info.isAPFS, info.apfsContainerReference != nil else {
             return .notAPFS(filesystem: info.filesystemType)
         }
-        guard !info.isEncrypted else { return .encrypted }
         let available = probe.availableCapacity(destination)
         if dataBytes > 0, let available {
             let required = ContainerVolumeMigrator.requiredFreeBytes(forDataBytes: dataBytes)
@@ -63,7 +62,7 @@ struct MountMigrationPreflight: Sendable {
                 return .insufficientSpace(requiredBytes: required, availableBytes: available)
             }
         }
-        return .ready(availableBytes: available)
+        return info.isEncrypted ? .encrypted : .ready(availableBytes: available)
     }
 }
 
@@ -231,20 +230,17 @@ struct MountMigrationGuidance: Equatable {
 
         case .encrypted:
             return MountMigrationGuidance(
-                title: "这块外部存储已加密".localized,
+                title: String(format: "迁移「%@」的数据".localized, appName),
                 icon: "lock.shield",
-                isReady: false,
-                intro: String(format: "挂载迁移会新建一个数据卷，它不会继承这块盘的密码。为了不让「%@」的数据失去加密保护，当前版本不会迁移到加密的外部存储。".localized, appName),
+                isReady: true,
+                intro: "将创建独立加密的数据卷，继续后设置密码。外置盘现有密码和文件保持不变。".localized,
                 bullets: [
-                    keepAsIs,
-                    Bullet(icon: "externaldrive", text: "如果可以接受这部分数据不加密，可以改选一块未加密的 APFS 外部存储".localized)
+                    Bullet(icon: "key", text: "可以选择保存到本机钥匙串，以便登录或连接外置盘后自动解锁。".localized),
+                    Bullet(icon: "lock", text: "未保存密码时，需要手动解锁；后台不会反复弹出密码框。".localized)
                 ],
                 detail: paths,
-                actions: [
-                    Action(kind: .chooseDestination, title: "选择其他位置".localized, isPrimary: false),
-                    Action(kind: .openGuide(page: "why-apfs", anchor: "encrypted-drives"), title: "查看说明".localized, isPrimary: false)
-                ],
-                cancelTitle: "保留现状".localized
+                actions: [Action(kind: .migrate, title: "继续".localized, isPrimary: true)],
+                cancelTitle: "取消".localized
             )
 
         case .insufficientSpace(let required, let available):

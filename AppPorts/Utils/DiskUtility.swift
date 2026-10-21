@@ -41,6 +41,13 @@ struct ShellCommandUnconfirmedTermination: LocalizedError, Sendable {
 /// 可注入的命令执行器；测试用假执行器记录调用顺序并伪造输出。
 protocol ShellCommandRunning: Sendable {
     func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult
+    func run(executable: String, arguments: [String], standardInput: Data, timeout: TimeInterval) async throws -> ShellCommandResult
+}
+
+extension ShellCommandRunning {
+    func run(executable: String, arguments: [String], standardInput: Data, timeout: TimeInterval) async throws -> ShellCommandResult {
+        throw CocoaError(.featureUnsupported)
+    }
 }
 
 /// 用 Process 执行外部命令。超时后终止进程，避免 diskutil 挂死时整个操作卡住。
@@ -50,6 +57,15 @@ struct ProcessCommandRunner: ShellCommandRunning {
     var captureLimit: Int? = nil
 
     func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
+        try await runCommand(executable: executable, arguments: arguments, standardInput: nil, timeout: timeout)
+    }
+
+    func run(executable: String, arguments: [String], standardInput: Data, timeout: TimeInterval) async throws -> ShellCommandResult {
+        guard standardInput.count <= 4096 else { throw CocoaError(.fileWriteInvalidFileName) }
+        return try await runCommand(executable: executable, arguments: arguments, standardInput: standardInput, timeout: timeout)
+    }
+
+    private func runCommand(executable: String, arguments: [String], standardInput: Data?, timeout: TimeInterval) async throws -> ShellCommandResult {
         // Include dispatch queueing and process launch in the caller's time budget.
         let deadline = ProcessInfo.processInfo.systemUptime + max(0, timeout)
         let cancellation = CancellationState()
@@ -58,7 +74,7 @@ struct ProcessCommandRunner: ShellCommandRunning {
             return try await withCheckedThrowingContinuation { continuation in
                 DispatchQueue.global(qos: .utility).async {
                     do { continuation.resume(returning: try Self.execute(executable: executable,
-                        arguments: arguments, deadline: deadline, cancellation: cancellation, captureLimit: captureLimit)) }
+                        arguments: arguments, standardInput: standardInput, deadline: deadline, cancellation: cancellation, captureLimit: captureLimit)) }
                     catch { continuation.resume(throwing: error) }
                 }
             }
@@ -67,7 +83,7 @@ struct ProcessCommandRunner: ShellCommandRunning {
 
     /// Nonblocking pipe reads let one deadline cover the child AND inherited pipes.
     /// This worker never blocks Foundation's process termination callback queue.
-    private static func execute(executable: String, arguments: [String], deadline: TimeInterval,
+    private static func execute(executable: String, arguments: [String], standardInput: Data? = nil, deadline: TimeInterval,
                                 cancellation: CancellationState, captureLimit: Int?) throws -> ShellCommandResult {
         if cancellation.isCancelled { throw CancellationError() }
         guard ProcessInfo.processInfo.systemUptime < deadline else {
@@ -76,7 +92,12 @@ struct ProcessCommandRunner: ShellCommandRunning {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        process.standardInput = FileHandle.nullDevice
+        let input = standardInput == nil ? nil : Pipe()
+        process.standardInput = input?.fileHandleForReading ?? FileHandle.nullDevice
+        defer {
+            try? input?.fileHandleForReading.close()
+            try? input?.fileHandleForWriting.close()
+        }
         let output = Pipe(), error = Pipe()
         process.standardOutput = output
         process.standardError = error
@@ -92,6 +113,21 @@ struct ProcessCommandRunner: ShellCommandRunning {
         }
         try process.run()
         let processReference = reference(process.processIdentifier)
+        if let input, let standardInput {
+            let fd = input.fileHandleForWriting.fileDescriptor
+            _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+            standardInput.withUnsafeBytes { bytes in
+                var offset = 0
+                while offset < bytes.count {
+                    let count = Darwin.write(fd, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                    if count > 0 { offset += count }
+                    else if count < 0 && errno == EINTR { continue }
+                    else { break }
+                }
+            }
+            try? input.fileHandleForWriting.close()
+            try? input.fileHandleForReading.close()
+        }
         try? output.fileHandleForWriting.close()
         try? error.fileHandleForWriting.close()
         var streams = [Data(), Data()]
@@ -152,6 +188,12 @@ struct ProcessCommandRunner: ShellCommandRunning {
             outputWasTruncated: outputWasTruncated, runningProcess: process.isRunning ? processReference : nil)
     }
 
+    static func runSynchronously(executable: String, arguments: [String], timeout: TimeInterval) throws -> ShellCommandResult {
+        try execute(executable: executable, arguments: arguments,
+                    deadline: ProcessInfo.processInfo.systemUptime + timeout,
+                    cancellation: CancellationState(), captureLimit: 65536)
+    }
+
     private static func reference(_ pid: Int32) -> ShellCommandProcessReference {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
@@ -195,6 +237,7 @@ struct DiskUtility: Sendable {
         let apfsContainerReference: String?
         let mountPoint: String?
         var isEncrypted: Bool = false
+        var isLocked: Bool = false
 
         var isAPFS: Bool {
             filesystemType?.lowercased() == "apfs"
@@ -278,7 +321,9 @@ struct DiskUtility: Sendable {
             filesystemType: plist["FilesystemType"] as? String,
             apfsContainerReference: plist["APFSContainerReference"] as? String,
             mountPoint: plist["MountPoint"] as? String,
-            isEncrypted: (plist["Encrypted"] as? Bool == true) || (plist["FileVault"] as? Bool == true)
+            isEncrypted: (plist["Encryption"] as? Bool == true)
+                || (plist["Encrypted"] as? Bool == true) || (plist["FileVault"] as? Bool == true),
+            isLocked: plist["Locked"] as? Bool == true
         )
     }
 
@@ -287,15 +332,17 @@ struct DiskUtility: Sendable {
     /// Use DiskArbitration's normal add-volume operation, as in 1.9.0.
     /// Direct newfs_apfs access works on user-attached images but requires raw
     /// device privileges on physical disks. Application data uses noowners.
-    func createAPFSVolume(inContainer container: String, name: String) async throws -> String {
+    func createAPFSVolume(inContainer container: String, name: String, encryption: APFSVolumeEncryption.Credentials? = nil) async throws -> String {
         guard container.range(of: #"^disk[0-9]+$"#, options: .regularExpression) != nil,
               !name.isEmpty else {
             throw Failure.unexpectedOutput(command: "diskutil apfs addVolume", output: "Invalid container or volume name")
         }
         let before = try await creationContainer(container)
         let arguments = ["apfs", "addVolume", container, "APFS", name, "-nomount"]
+            + (encryption == nil ? [] : ["-stdinpassphrase"])
         let command = "diskutil " + arguments.joined(separator: " ")
-        _ = try await run(arguments)
+        if let encryption { try await runWithPassphrase(arguments, passphrase: encryption.passphrase) }
+        else { _ = try await run(arguments) }
         let after = try await creationContainer(container)
         let previousUUIDs = Set(before.volumes.map(\.uuid))
         let currentUUIDs = Set(after.volumes.map(\.uuid))
@@ -306,6 +353,61 @@ struct DiskUtility: Sendable {
             throw Failure.unexpectedOutput(command: command, output: "Cannot prove exactly one fresh volume in the original APFS container")
         }
         return fresh.device
+    }
+
+    /// Sensitive operations never log output or place credentials in process arguments.
+    private func runWithPassphrase(_ arguments: [String], passphrase: String) async throws {
+        try APFSVolumeEncryption.validate(passphrase)
+        let result = try await runner.run(executable: Self.diskutilPath, arguments: arguments,
+                                          standardInput: Data((passphrase + "\n").utf8), timeout: commandTimeout)
+        if let running = result.runningProcess { throw ShellCommandUnconfirmedTermination(process: running) }
+        guard !result.timedOut, result.status == 0 else {
+            throw APFSVolumeEncryption.Failure.commandFailed
+        }
+    }
+
+    func unlockVolume(_ volume: String, passphrase: String) async throws {
+        // Unlock without mounting; the existing anchored mount protocol chooses the destination.
+        try await runWithPassphrase(["apfs", "unlockVolume", volume, "-user", "disk", "-stdinpassphrase", "-nomount"],
+                                    passphrase: passphrase)
+        let info = try await volumeInfo(for: volume)
+        guard !info.isLocked else { throw APFSVolumeEncryption.Failure.commandFailed }
+        if let uuid = info.volumeUUID { APFSVolumeEncryption.rememberVerifiedPassphrase(passphrase, for: uuid) }
+    }
+
+    func verifyPassphrase(_ volume: String, passphrase: String) async throws {
+        try await runWithPassphrase(["apfs", "unlockVolume", volume, "-user", "disk", "-stdinpassphrase", "-verify"],
+                                    passphrase: passphrase)
+        if let uuid = (try await volumeInfo(for: volume)).volumeUUID {
+            APFSVolumeEncryption.rememberVerifiedPassphrase(passphrase, for: uuid)
+        }
+    }
+
+    func unlockIfNeeded(_ info: VolumeInfo) async throws {
+        guard info.isEncrypted || info.isLocked else { return }
+        guard let uuid = info.volumeUUID else {
+            if info.isLocked { throw APFSVolumeEncryption.Failure.waitingForUnlock(info.deviceIdentifier) }
+            return
+        }
+        // Pin available credentials before copying, even if the volume is currently unlocked.
+        let passphrase = try? APFSVolumeEncryption.reusablePassphrase(for: uuid)
+        guard info.isLocked else { return }
+        guard let passphrase else { throw APFSVolumeEncryption.Failure.waitingForUnlock(uuid) }
+        do { try await unlockVolume(uuid, passphrase: passphrase) }
+        catch is CancellationError { throw CancellationError() }
+        catch let pending as ShellCommandUnconfirmedTermination { throw pending }
+        catch {
+            APFSVolumeEncryption.forgetTransientPassphrase(for: uuid)
+            throw APFSVolumeEncryption.Failure.waitingForUnlock(uuid)
+        }
+    }
+
+    static func isVolumeLocked(_ volume: String) -> Bool {
+        guard let result = try? ProcessCommandRunner.runSynchronously(executable: diskutilPath,
+            arguments: ["info", "-plist", volume], timeout: 15), result.status == 0,
+              let plist = try? PropertyListSerialization.propertyList(from: result.standardOutput, format: nil) as? [String: Any]
+        else { return false }
+        return plist["Locked"] as? Bool == true
     }
 
     private struct CreationContainer {
@@ -480,6 +582,7 @@ struct DiskUtility: Sendable {
             throw Failure.unexpectedOutput(command: "diskutil info", output: "APFS device identity changed for \(volumeUUID)")
         }
         _ = try await run(["apfs", "deleteVolume", device])
+        APFSVolumeEncryption.removeSavedPassphrase(for: volumeUUID)
     }
 
     // MARK: statfs

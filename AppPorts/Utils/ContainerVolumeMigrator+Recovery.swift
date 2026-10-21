@@ -65,29 +65,34 @@ extension ContainerVolumeMigrator {
                                       timeoutNanoseconds: UInt64 = 0) async throws -> AutomaticRecoveryResult {
         let transfer = try store.adoptLegacyRestoreOwnership(transfer)
         let progress = DataTransferSession.progress
+        let session = DataTransferSession.current
         // Disk commands have their own deadlines. A dataset-sized verification
         // must not restart forever because it exceeds a fixed 10/90s budget.
         if timeoutNanoseconds == 0 {
             return try await Task.detached(priority: .userInitiated) {
-                try await DataTransferSession.$progress.withValue(progress) {
-                    try await DataTransferSession.run {
-                        progress?.begin(.recovering)
-                        return try await self.recoverMountOperation(transfer, finishPreparedRestore: finishPreparedRestore)
+                try await DataTransferSession.$current.withValue(session) {
+                    try await DataTransferSession.$progress.withValue(progress) {
+                        try await DataTransferSession.run {
+                            progress?.begin(.recovering)
+                            return try await self.recoverMountOperation(transfer, finishPreparedRestore: finishPreparedRestore)
+                        }
                     }
                 }
             }.value
         }
         return try await Task.detached(priority: .userInitiated) {
-            try await DataTransferSession.$progress.withValue(progress) {
-                progress?.begin(.recovering)
-                return try await withThrowingTaskGroup(of: AutomaticRecoveryResult.self) { group in
-                    group.addTask { try await self.recoverMountOperation(transfer, finishPreparedRestore: finishPreparedRestore) }
-                    group.addTask {
-                        try await Task.sleep(nanoseconds: timeoutNanoseconds)
-                        throw AutomaticRecoveryError.timedOut
+            try await DataTransferSession.$current.withValue(session) {
+                try await DataTransferSession.$progress.withValue(progress) {
+                    progress?.begin(.recovering)
+                    return try await withThrowingTaskGroup(of: AutomaticRecoveryResult.self) { group in
+                        group.addTask { try await self.recoverMountOperation(transfer, finishPreparedRestore: finishPreparedRestore) }
+                        group.addTask {
+                            try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                            throw AutomaticRecoveryError.timedOut
+                        }
+                        defer { group.cancelAll() }
+                        return try await group.next()!
                     }
-                    defer { group.cancelAll() }
-                    return try await group.next()!
                 }
             }
         }.value

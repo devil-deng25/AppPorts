@@ -239,19 +239,11 @@ final class AppLogger: @unchecked Sendable {
 
     @MainActor
     func exportDiagnosticPackageInteractively() {
-        let savePanel = NSSavePanel()
-        savePanel.title = "导出诊断包".localized
-        savePanel.prompt = "导出".localized
-        savePanel.nameFieldStringValue = defaultDiagnosticArchiveName()
-        savePanel.allowedContentTypes = [UTType.zip]
-        savePanel.canCreateDirectories = true
-
-        guard savePanel.runModal() == .OK, let destinationURL = savePanel.url else {
-            return
-        }
+        guard let options = DiagnosticExportDialog.run(defaultFileName: defaultDiagnosticArchiveName()) else { return }
+        let destinationURL = options.destinationURL
 
         do {
-            let archiveURL = try createDiagnosticArchive()
+            let archiveURL = try createDiagnosticArchive(includeAppInventory: options.includeAppInventory)
 
             if fileManager.fileExists(atPath: destinationURL.path) {
                 try fileManager.removeItem(at: destinationURL)
@@ -262,7 +254,8 @@ final class AppLogger: @unchecked Sendable {
                 "诊断包导出完成".localized,
                 details: [
                     ("destination", destinationURL.path),
-                    ("redaction_mode", "share_safe")
+                    ("redaction_mode", "share_safe"),
+                    ("app_inventory_included", String(options.includeAppInventory))
                 ],
                 level: "DIAG"
             )
@@ -895,11 +888,11 @@ final class AppLogger: @unchecked Sendable {
         return "AppPorts-Diagnostic-\(formatter.string(from: Date())).zip"
     }
 
-    nonisolated private func createDiagnosticArchive() throws -> URL {
+    nonisolated private func createDiagnosticArchive(includeAppInventory: Bool) throws -> URL {
         let tempRootURL = fileManager.temporaryDirectory.appendingPathComponent("AppPorts-Diagnostic-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: tempRootURL, withIntermediateDirectories: true)
 
-        let packageURL = try buildDiagnosticPackage(in: tempRootURL)
+        let packageURL = try buildDiagnosticPackage(in: tempRootURL, includeAppInventory: includeAppInventory)
         let archiveURL = tempRootURL.appendingPathComponent("\(packageURL.lastPathComponent).zip")
 
         let process = Process()
@@ -920,7 +913,7 @@ final class AppLogger: @unchecked Sendable {
         return archiveURL
     }
 
-    nonisolated func buildDiagnosticPackage(in rootURL: URL) throws -> URL {
+    nonisolated func buildDiagnosticPackage(in rootURL: URL, includeAppInventory: Bool = false) throws -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let packageURL = rootURL.appendingPathComponent("AppPorts-Diagnostic-\(formatter.string(from: Date()))", isDirectory: true)
@@ -932,7 +925,8 @@ final class AppLogger: @unchecked Sendable {
                 recentOperationSummaries
             )
         }
-        let redactedLogContent = redactedDiagnosticText(from: currentLogContent)
+        let exportLogContent = includeAppInventory ? currentLogContent : removingAppInventoryEntries(from: currentLogContent)
+        let redactedLogContent = redactedDiagnosticText(from: exportLogContent)
         let recentFailures = operationSummaries.filter { ["failed", "rolled_back", "success_with_warning"].contains($0.result) }
 
         let metadata: [String: String] = [
@@ -948,6 +942,7 @@ final class AppLogger: @unchecked Sendable {
             "log_file_name": logFileURL.lastPathComponent,
             "log_file_size": getLogSizeString(),
             "redaction_mode": "share_safe",
+            "app_inventory_included": String(includeAppInventory),
             "recent_operation_count": String(operationSummaries.count),
             "recent_failure_count": String(recentFailures.count)
         ]
@@ -973,6 +968,28 @@ final class AppLogger: @unchecked Sendable {
         )
 
         return packageURL
+    }
+
+    /// 扫描日志逐条列出已安装应用；诊断包只保留操作记录和扫描汇总。
+    /// 同时过滤已有日志，不要求用户清空日志或重新扫描。
+    nonisolated private func removingAppInventoryEntries(from rawText: String) -> String {
+        let prefix = try? NSRegularExpression(pattern: #"^(?:\[[^\]\r\n]*\][ \t]*)+"#)
+        var omittingInventoryEntry = false
+        return rawText.components(separatedBy: "\n").filter { line in
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            let match = prefix?.firstMatch(in: line, range: range)
+            let message: String
+            if let match, let prefixRange = Range(match.range, in: line) {
+                message = String(line[prefixRange.upperBound...])
+                omittingInventoryEntry = false
+            } else {
+                message = line.trimmingCharacters(in: .whitespaces)
+            }
+            if message.hasPrefix("扫描应用:") || message.hasPrefix("扫描应用：") || message.hasPrefix("Scanning app:") {
+                omittingInventoryEntry = true
+            }
+            return !omittingInventoryEntry
+        }.joined(separator: "\n")
     }
 
     nonisolated func redactedDiagnosticText(from rawText: String) -> String {
@@ -1233,6 +1250,7 @@ final class AppLogger: @unchecked Sendable {
             "timezone: \(metadata["timezone"] ?? "unknown")",
             "log_file_size: \(metadata["log_file_size"] ?? "unknown")",
             "redaction_mode: share_safe",
+            "app_inventory_included: \(metadata["app_inventory_included"] ?? "false")",
             "recent_operation_count: \(operationCount)"
         ]
 

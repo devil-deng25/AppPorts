@@ -9,6 +9,8 @@ final class DataTransferSession: @unchecked Sendable {
     @TaskLocal static var progress: DataTransferProgress?
     @TaskLocal private static var phase: Phase?
 
+    let volumePassphrases = APFSVolumeEncryption.makeOperationCache()
+
     private let lock = NSLock()
     private var durations: [Phase: TimeInterval] = [:]
     private var hashReadBytes: Int64 = 0

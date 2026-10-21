@@ -82,6 +82,7 @@ private func sizeCacheKey(for path: String, isMountPoint: Bool) -> NSString {
 
 /// 子目录内容变更也会改变所有父目录的总大小，两种挂载状态的缓存都要失效。
 func invalidateSizeCache(for url: URL) {
+    ToolDirectorySizeCacheStore.shared.invalidate(for: url)
     var path = url.standardizedFileURL.path
     while !path.isEmpty {
         directorySizeCache.removeObject(forKey: sizeCacheKey(for: path, isMountPoint: true))
@@ -205,6 +206,7 @@ actor DataDirScanner {
     private let mountStore: ContainerMountStore
     private let isMountPoint: @Sendable (URL) -> Bool
     private let isVolumeOnline: @Sendable (String) -> Bool
+    private let isVolumeLocked: @Sendable (String) -> Bool
     private let isSandboxedApplication: @Sendable (URL) -> Bool
     /// 本轮扫描开始时读取一次的挂载记录，避免逐路径重复读文件。
     private var mountRecordsByPath: [String: ContainerMountRecord] = [:]
@@ -228,6 +230,7 @@ actor DataDirScanner {
         weChatContainerIdentifier: String = PartialWeChatMigrationPolicy.bundleIdentifier,
         isMountPoint: @escaping @Sendable (URL) -> Bool = { DiskUtility.isMountPoint($0) },
         isVolumeOnline: @escaping @Sendable (String) -> Bool = { DiskUtility.isVolumeOnline($0) },
+        isVolumeLocked: @escaping @Sendable (String) -> Bool = { DiskUtility.isVolumeLocked($0) },
         isSandboxedApplication: @escaping @Sendable (URL) -> Bool = { DataDirScanner.isSandboxedRealApplication($0) }
     ) {
         self.homeDir = homeDir.standardizedFileURL
@@ -236,6 +239,7 @@ actor DataDirScanner {
         self.weChatContainerIdentifier = weChatContainerIdentifier
         self.isMountPoint = isMountPoint
         self.isVolumeOnline = isVolumeOnline
+        self.isVolumeLocked = isVolumeLocked
         self.isSandboxedApplication = isSandboxedApplication
     }
 
@@ -1652,7 +1656,11 @@ actor DataDirScanner {
             if isMountPoint(url) {
                 return (DataDirStatus.mounted, nil)
             }
-            return (isVolumeOnline(record.volumeUUID) ? DataDirStatus.pendingMount : DataDirStatus.volumeMissing, nil)
+            guard isVolumeOnline(record.volumeUUID) else { return (DataDirStatus.volumeMissing, nil) }
+            if record.isEncrypted == true, isVolumeLocked(record.volumeUUID) {
+                return (DataDirStatus.waitingForUnlock, nil)
+            }
+            return (DataDirStatus.pendingMount, nil)
         }
 
         if isSymbolicLinkPath(at: url) {

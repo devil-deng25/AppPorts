@@ -28,9 +28,16 @@ import Combine
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var aboutWindowController = AboutWindowController()
+    fileprivate static weak var mainWindow: NSWindow?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let window = Self.mainWindow else { return true }
+        window.makeKeyAndOrderFront(nil)
+        return false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -216,7 +223,18 @@ private struct MainWindowAppearance: NSViewRepresentable {
     final class WindowView: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            window?.titlebarSeparatorStyle = .none
+            guard let window else { return }
+            window.titlebarSeparatorStyle = .none
+            AppDelegate.mainWindow = window
+            // Preserve the hosting view and its in-memory state when clicking ×.
+            if let closeButton = window.standardWindowButton(.closeButton) {
+                closeButton.target = self
+                closeButton.action = #selector(hideMainWindow)
+            }
+        }
+
+        @objc private func hideMainWindow() {
+            window?.orderOut(nil)
         }
     }
 }

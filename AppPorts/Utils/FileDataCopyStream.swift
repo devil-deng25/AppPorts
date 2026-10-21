@@ -105,7 +105,9 @@ struct FileDataCopyStream {
         var filesystem = statfs()
         guard fstatfs(destination, &filesystem) == 0 else { throw failure() }
         let block = off_t(filesystem.f_bsize)
-        guard block > 0 else { throw TreeCopyError.unsupportedMetadata(path) }
+        guard block > 0 else {
+            throw TreeCopyError.unsupportedMetadata(path, details: "检查目标端存储块大小失败：fstatfs 返回 f_bsize=\(filesystem.f_bsize)，无法处理稀疏文件。")
+        }
         for (start, end) in holes {
             let alignedStart = ((start + block - 1) / block) * block
             let alignedEnd = (end / block) * block

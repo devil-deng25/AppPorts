@@ -50,12 +50,21 @@ struct DataDirsView: View {
     /// 解析应用真实路径（已链接→外部，未链接→本地），不返回假壳路径
     let resolveRealAppURL: (AppItem) throws -> URL
 
+    private struct EncryptedMigrationRequest: Identifiable {
+        let id = UUID()
+        let item: DataDirItem
+        var volumeUUID: String? = nil
+        var retry: (() -> Void)? = nil
+    }
+    @State private var encryptedMigrationRequest: EncryptedMigrationRequest?
+
     // MARK: - 内部状态
     @State private var weChatPreferenceRevision = 0
     @State private var weChatContainerIdentifier = PartialWeChatMigrationPolicy.bundleIdentifier
     @State private var weChatMigrationItem: DataDirItem?
     @State private var weChatMigrationMode: WeChatAccountMigrationService.Mode = .whole
     @State private var dotFolderItems: [DataDirItem] = []
+    @State private var toolSizeCacheUpdatedAt: Date?
     @State private var libraryItems:   [DataDirItem] = []
     @State private var directoryRevealRequest: DataDirTree.RevealRequest?
     @State private var summaryFilter: DataDirTree.SummaryFilter?
@@ -67,6 +76,7 @@ struct DataDirsView: View {
     @AppStorage("showZeroByteDataDirectories") private var showZeroByteDirectories = false
     @AppStorage("showLockedAppDataDirectoryStructure") private var showLockedDirectoryStructure = false
     @AppStorage("showNonMigratableAppDataDirectories") private var showNonMigratableDirectories = false
+    @AppStorage("showNonMigratableToolDirectories") private var showNonMigratableToolDirectories = false
 
     @State private var showAppDataFilters = false
     @State private var selectedPriorityFilters: Set<DataDirPriority> = []
@@ -137,7 +147,7 @@ struct DataDirsView: View {
         }
     }
 
-    private let appDataStatusOrder = ["本地", "已链接", "已挂载", "待挂载", "卷丢失", "待规范", "现有软链", "用户目录入口", "待接回", "待完成", "未找到"]
+    private let appDataStatusOrder = ["本地", "已链接", "已挂载", "待挂载", "等待解锁", "卷丢失", "待规范", "现有软链", "用户目录入口", "待接回", "待完成", "未找到"]
 
     private var partialWeChatMigrationEnabled: Bool {
         _ = weChatPreferenceRevision
@@ -204,13 +214,51 @@ struct DataDirsView: View {
         }
         .onChange(of: refreshTrigger) { _ in
             clearSizeCache()
-            reloadCurrentTab()
+            reloadCurrentTab(forceToolSizeRefresh: true)
         }
         .sheet(item: $weChatMigrationItem) { item in
             WeChatAccountMigrationSheet(item: item, containerIdentifier: weChatContainerIdentifier) { mode in
                 weChatMigrationItem = nil
                 weChatMigrationMode = mode
                 checkMountMigrationDestination(for: item, destination: externalDriveURL)
+            }
+        }
+        .sheet(item: $encryptedMigrationRequest) { request in
+            APFSVolumePasswordSheet(isCreating: request.volumeUUID == nil) { credentials in
+                if let uuid = request.volumeUUID {
+                    let inspection = try ContainerMountStore.shared.recordsForInspection()
+                    if let error = inspection.validationError { throw error }
+                    let records = inspection.mounts + inspection.transfers.compactMap(\.recoveryMountRecord)
+                    guard records.contains(where: { $0.volumeUUID.caseInsensitiveCompare(uuid) == .orderedSame }) else {
+                        throw DataOperationSafety.Failure.conflict(request.item.path.path)
+                    }
+                    // Recovery records can also refer to already removed sibling volumes.
+                    // Unlock only the UUID that blocked this operation; retry checks any remaining member.
+                    let disk = DiskUtility()
+                    let info = try await disk.volumeInfo(for: uuid)
+                    if info.isLocked { try await disk.unlockVolume(uuid, passphrase: credentials.passphrase) }
+                    else { try await disk.verifyPassphrase(uuid, passphrase: credentials.passphrase) }
+                    try APFSVolumeEncryption.save(credentials, for: uuid)
+                    // Split members normally share a password. Verify each online sibling before caching it.
+                    let memberPaths = Set(request.item.weChatSplitMembers.map { $0.path.standardizedFileURL.path })
+                    let siblings = Set(records.filter { memberPaths.contains($0.mountPointPath) }.map(\.volumeUUID))
+                    for sibling in siblings where sibling.caseInsensitiveCompare(uuid) != .orderedSame {
+                        guard let siblingInfo = try? await disk.volumeInfo(for: sibling), siblingInfo.isEncrypted else { continue }
+                        do {
+                            if siblingInfo.isLocked { try await disk.unlockVolume(sibling, passphrase: credentials.passphrase) }
+                            else { try await disk.verifyPassphrase(sibling, passphrase: credentials.passphrase) }
+                        } catch APFSVolumeEncryption.Failure.commandFailed {
+                            // Older members may use a different password; ask only if the retry needs that volume.
+                            continue
+                        }
+                        try APFSVolumeEncryption.save(credentials, for: sibling)
+                    }
+                    encryptedMigrationRequest = nil
+                    DispatchQueue.main.async { request.retry?() }
+                } else {
+                    encryptedMigrationRequest = nil
+                    DispatchQueue.main.async { performMountMigrate(request.item, encryption: credentials) }
+                }
             }
         }
         // 确认弹窗
@@ -266,6 +314,23 @@ struct DataDirsView: View {
                 statsBar(items: filteredDotFolderItems)
             }
 
+            HStack(spacing: 10) {
+                Group {
+                    if let date = toolSizeCacheUpdatedAt {
+                        Text("上次缓存时间".localized + "：" + date.formatted(date: .numeric, time: .shortened))
+                    } else {
+                        Text("尚无大小缓存".localized)
+                    }
+                }
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                Spacer()
+                Button("刷新缓存".localized) { reloadCurrentTab(forceToolSizeRefresh: true) }
+                    .disabled(isScanning)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+
             // 列表
             ZStack {
                 Color(nsColor: .controlBackgroundColor).ignoresSafeArea()
@@ -293,7 +358,7 @@ struct DataDirsView: View {
                                 .padding(.horizontal, 12)
                             }
                         }
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 4)
                     }
                 }
             }
@@ -711,17 +776,26 @@ struct DataDirsView: View {
     }
 
     private func statsBar(items: [DataDirItem]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
                 statsSummary(items: items, allItems: dotFolderItems, readIssues: dotFolderReadIssues)
+                Toggle("显示不可迁移目录".localized, isOn: $showNonMigratableToolDirectories)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 12))
+                    .fixedSize()
                 zeroByteDirectoriesToggle
             }
             if !dotFolderReadIssues.isEmpty {
                 directoryReadWarning(issues: dotFolderReadIssues)
             }
         }
-        .settingsCardBackground(opacity: 0.05)
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.05))
+        .cornerRadius(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
     }
 
     private var appDataVisibilityToggles: some View {
@@ -885,11 +959,14 @@ struct DataDirsView: View {
     }
 
     private var filteredDotFolderItems: [DataDirItem] {
-        dotFolderItems.filter { showZeroByteDirectories || !$0.isEmptyLocalDirectory }
+        dotFolderItems.filter {
+            (showNonMigratableToolDirectories || !$0.isMigrationUnsupported)
+                && (showZeroByteDirectories || !$0.isEmptyLocalDirectory)
+        }
     }
 
     /// 链接状态优先级：已链接、挂载迁移、待规范、现有软链优先展示
-    private let statusPriority: [String] = ["已链接", "已挂载", "待挂载", "卷丢失", "待规范", "现有软链", "用户目录入口", "待接回", "本地", "未找到"]
+    private let statusPriority: [String] = ["已链接", "已挂载", "待挂载", "等待解锁", "卷丢失", "待规范", "现有软链", "用户目录入口", "待接回", "本地", "未找到"]
 
     private func statusSortKey(_ status: String) -> Int {
         statusPriority.firstIndex(of: status) ?? statusPriority.count
@@ -1039,7 +1116,7 @@ struct DataDirsView: View {
 
     // MARK: - 扫描逻辑
 
-    private func reloadCurrentTab() {
+    private func reloadCurrentTab(forceToolSizeRefresh: Bool = false) {
         do {
             dataTransfers = try ContainerMountStore.shared.transfers()
             preservedMaterials = try ContainerMountStore.shared.preservedMaterials()
@@ -1062,7 +1139,7 @@ struct DataDirsView: View {
         )
         if selectedTab == .toolDirs {
             libraryScanToken = UUID()
-            scanDotFolders()
+            scanDotFolders(forceSizeRefresh: forceToolSizeRefresh)
         } else {
             dotFolderScanToken = UUID()
             if let app = selectedApp {
@@ -1073,7 +1150,7 @@ struct DataDirsView: View {
         }
     }
 
-    private func scanDotFolders() {
+    private func scanDotFolders(forceSizeRefresh: Bool = false) {
         directoryScanTask?.cancel()
         let scanToken = UUID()
         dotFolderScanToken = scanToken
@@ -1092,11 +1169,27 @@ struct DataDirsView: View {
             let scanner = DataDirScanner()
             let items = await scanner.scanKnownDotFolders(externalRootURL: selectedExternalRoot)
             guard !Task.isCancelled else { return }
-            let initialItems = items
-
+            var snapshot = ToolDirectorySizeCacheStore.shared.load()
+            let identities = items.map { ToolDirectorySizeCacheStore.identity(for: $0) }
+            var initialItems = items
+            var missingIndices: [Int] = []
+            for i in items.indices {
+                let key = items[i].path.standardizedFileURL.path
+                if !forceSizeRefresh, let identity = identities[i],
+                   let cached = snapshot.entries[key], cached.identity == identity {
+                    initialItems[i].applySize(DirectorySizeResult(bytes: cached.bytes))
+                } else {
+                    snapshot.entries.removeValue(forKey: key)
+                    missingIndices.append(i)
+                }
+            }
+            let displayedItems = initialItems
+            let pendingIndices = missingIndices
+            let previousCacheTime = snapshot.updatedAt
             await MainActor.run {
                 guard self.dotFolderScanToken == scanToken else { return }
-                self.dotFolderItems = initialItems
+                self.dotFolderItems = displayedItems
+                self.toolSizeCacheUpdatedAt = previousCacheTime
             }
             AppLogger.shared.logContext(
                 "工具目录扫描完成",
@@ -1108,15 +1201,15 @@ struct DataDirsView: View {
             )
 
             guard !Task.isCancelled else { return }
-            // 每次扫描重新测量，应用运行期间的写入不能沿用上次大小。
+            // 只测量缓存缺失或用户要求刷新的目录；目录状态仍每次重新检查。
             let sizedItems = await withTaskGroup(of: (Int, DirectorySizeResult).self) { group in
                 var results: [(Int, DirectorySizeResult)] = []
-                var iterator = items.indices.makeIterator()
+                var iterator = pendingIndices.makeIterator()
                 var active = 0
                 let maxConcurrency = 4
 
                 // 启动初始批次
-                for _ in 0..<min(maxConcurrency, items.count) {
+                for _ in 0..<min(maxConcurrency, pendingIndices.count) {
                     guard let i = iterator.next() else { break }
                     let measuredItem = items[i]
                     group.addTask { (i, measureDataDirectorySize(for: measuredItem)) }
@@ -1136,8 +1229,21 @@ struct DataDirsView: View {
                 return results
             }
 
+            guard !Task.isCancelled else { return }
+            for (i, result) in sizedItems {
+                guard result.isComplete, let identity = identities[i],
+                      identity == ToolDirectorySizeCacheStore.identity(for: items[i]),
+                      let target = items[i].sizeMeasurementURL else { continue }
+                let path = items[i].path.standardizedFileURL.path
+                snapshot.entries[path] = .init(identity: identity, sourcePath: path,
+                    targetPath: target.resolvingSymlinksInPath().standardizedFileURL.path,
+                    bytes: result.bytes, measuredAt: Date())
+            }
+            let completedSnapshot = snapshot
             await MainActor.run {
                 guard self.dotFolderScanToken == scanToken else { return }
+                if !pendingIndices.isEmpty { ToolDirectorySizeCacheStore.shared.save(completedSnapshot) }
+                self.toolSizeCacheUpdatedAt = completedSnapshot.updatedAt
                 withAnimation {
                     for (i, result) in sizedItems {
                         guard i < self.dotFolderItems.count else { continue }
@@ -1798,7 +1904,9 @@ struct DataDirsView: View {
                     pendingMountMigrationItem = nil
                     switch action.kind {
                     case .migrate:
-                        performMountMigrate(item)
+                        if case .encrypted = outcome {
+                            encryptedMigrationRequest = EncryptedMigrationRequest(item: item)
+                        } else { performMountMigrate(item) }
                     case .chooseDestination:
                         if let chosenDestination = onSelectExternalDrive() {
                             checkMountMigrationDestination(for: item, destination: chosenDestination)
@@ -1813,13 +1921,13 @@ struct DataDirsView: View {
         )
     }
 
-    private func performMountMigrate(_ item: DataDirItem) {
+    private func performMountMigrate(_ item: DataDirItem, encryption: APFSVolumeEncryption.Credentials? = nil) {
         if weChatMigrationMode == .split, selectedWeChatPolicy.isAccount(item.path) {
-            performWeChatSplitOperation(item, restoring: false)
+            performWeChatSplitOperation(item, restoring: false, encryption: encryption)
             return
         }
         guard let dest = externalDriveURL else { return }
-        if requestAssociatedAppExit(for: item, continuing: { performMountMigrate(item) }) { return }
+        if requestAssociatedAppExit(for: item, continuing: { performMountMigrate(item, encryption: encryption) }) { return }
         guard let operationToken = AppOperationState.shared.begin() else { return }
         progressTitle = String(format: "正在挂载迁移「%@」".localized, item.name)
         transferProgress = DataTransferProgress()
@@ -1859,8 +1967,8 @@ struct DataDirsView: View {
                 showError = true
                 return
             }
-            if requestAssociatedAppExit(for: item, associatedApp: capturedApp, continuing: { performMountMigrate(item) }) { return }
-            let migrator = ContainerVolumeMigrator()
+            if requestAssociatedAppExit(for: item, associatedApp: capturedApp, continuing: { performMountMigrate(item, encryption: encryption) }) { return }
+            let migrator = ContainerVolumeMigrator(encryption: encryption)
             do {
                 let result = try await transferProgress.track { handler in
                     try await migrator.migrateAndComplete(
@@ -1890,14 +1998,16 @@ struct DataDirsView: View {
                 )
                 await MainActor.run {
                     self.reloadCurrentTab()
-                    self.presentAPFSFailure(error, item: item, retry: { performMountMigrate(item) })
+                    self.presentAPFSFailure(error, item: item, retry: { performMountMigrate(item, encryption: encryption) })
                 }
             }
         }
     }
 
     private func performMount(_ item: DataDirItem) {
-        guard let record = ContainerMountStore.shared.record(forMountPoint: item.path) else {
+        let paths = item.weChatSplitMembers.isEmpty ? [item.path] : item.weChatSplitMembers.map(\.path)
+        let records = paths.compactMap { ContainerMountStore.shared.record(forMountPoint: $0) }
+        guard !records.isEmpty else {
             errorMessage = "找不到该目录的挂载记录".localized
             showError = true
             return
@@ -1926,7 +2036,8 @@ struct DataDirsView: View {
             }
             do {
                 try await transferProgress.track { _ in
-                    try await ContainerVolumeMigrator().mount(record: record)
+                    let migrator = ContainerVolumeMigrator()
+                    for record in records { try await migrator.mount(record: record) }
                 }
                 await MainActor.run { self.reloadCurrentTab() }
             } catch {
@@ -1934,12 +2045,12 @@ struct DataDirsView: View {
                     "挂载容器卷失败",
                     error: error,
                     errorCode: "CONTAINER-MOUNT-FAILED",
-                    context: [("item_name", item.name), ("volume", record.volumeName)],
+                    context: [("item_name", item.name), ("volume", records.map(\.volumeName).joined(separator: ", "))],
                     relatedURLs: [("mount_point", item.path)]
                 )
                 await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.showError = true
+                    self.reloadCurrentTab()
+                    self.presentAPFSFailure(error, item: item, retry: { performMount(item) })
                 }
             }
         }
@@ -2105,8 +2216,9 @@ struct DataDirsView: View {
         }
     }
 
-    private func performWeChatSplitOperation(_ item: DataDirItem, restoring: Bool) {
-        if requestAssociatedAppExit(for: item, continuing: { performWeChatSplitOperation(item, restoring: restoring) }) { return }
+    private func performWeChatSplitOperation(_ item: DataDirItem, restoring: Bool,
+                                               encryption: APFSVolumeEncryption.Credentials? = nil) {
+        if requestAssociatedAppExit(for: item, continuing: { performWeChatSplitOperation(item, restoring: restoring, encryption: encryption) }) { return }
         guard let token = operationState.begin() else { return }
         let destination = externalDriveURL
         progressTitle = restoring ? "正在还原微信账号数据".localized : "正在拆分迁移微信账号数据".localized
@@ -2126,8 +2238,8 @@ struct DataDirsView: View {
             do {
                 guard acquired else { throw DataOperationSafety.Failure.occupied(item.path.path) }
                 if requestAssociatedAppExit(for: item, associatedApp: capturedApp,
-                    continuing: { performWeChatSplitOperation(item, restoring: restoring) }) { return }
-                let service = WeChatAccountMigrationService(enabled: splitEnabled, containerIdentifier: containerIdentifier)
+                    continuing: { performWeChatSplitOperation(item, restoring: restoring, encryption: encryption) }) { return }
+                let service = WeChatAccountMigrationService(enabled: splitEnabled, containerIdentifier: containerIdentifier, encryption: encryption)
                 let warnings = try await transferProgress.track { handler in
                     if restoring { return try await service.restoreSplit(account: item.path, progress: handler) }
                     guard let destination else { throw DataOperationSafety.Failure.inspection("请先选择外部存储路径".localized) }
@@ -2142,13 +2254,21 @@ struct DataDirsView: View {
             } catch {
                 reloadCurrentTab()
                 presentAPFSFailure(error, item: item,
-                    retry: { performWeChatSplitOperation(item, restoring: restoring) })
+                    retry: { performWeChatSplitOperation(item, restoring: restoring, encryption: encryption) })
             }
         }
     }
 
     private func presentAPFSFailure(_ error: Error, item: DataDirItem, record: ContainerMountRecord? = nil,
                                     retry: @escaping () -> Void) {
+        if case APFSVolumeEncryption.Failure.waitingForUnlock(let uuid) = error {
+            confirmRequest = WarningSheetRequest(title: "等待解锁".localized, tint: .orange,
+                intro: error.localizedDescription, cancelTitle: "稍后".localized,
+                actions: [WarningAction("解锁数据卷".localized, style: .preferred) {
+                    encryptedMigrationRequest = EncryptedMigrationRequest(item: item, volumeUUID: uuid, retry: retry)
+                }])
+            return
+        }
         let record = record ?? (try? ContainerMountStore.shared.recordForRestore(at: item.path))
         var actions: [WarningAction] = []
         if DataOperationIssue.needsAccessPermission(error) {
