@@ -414,6 +414,7 @@ struct DataDirsView: View {
                 }
             }
             .frame(minWidth: 200, maxWidth: 280)
+            .frame(maxHeight: .infinity, alignment: .top)
             .onChange(of: selectedApp?.path) { _ in
                 selectedAppIsWeChat = false
                 directorySearchText = ""
@@ -529,7 +530,9 @@ struct DataDirsView: View {
                 }
             }
             .frame(minWidth: 340, maxWidth: .infinity)
+            .frame(maxHeight: .infinity, alignment: .top)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
