@@ -581,6 +581,21 @@ struct AppMigrationService {
         return try await transferTransaction(retrying: true).resume(operationID, progress: progressHandler)
     }
 
+    /// User-requested recovery bypasses content verification, never the operation locks.
+    func recoverTransferIgnoringErrors(operationID: UUID, restore: Bool,
+                                       progress: DataTransferProgress) async throws -> String {
+        try await Self.mutationCoordinator.begin()
+        defer { Self.mutationCoordinator.end() }
+        let operationLock = makeOperationLock()
+        guard await operationLock.acquire(timeout: OperationLock.appWaitTimeout) else {
+            throw AppTransferTransaction.failure(operationLock.admissionFailureReason
+                ?? "其他操作正在使用应用记录，请稍后重试。".localized, at: transferStore.directoryURL)
+        }
+        defer { operationLock.release() }
+        return try await AppTransferForceRecovery(store: transferStore).run(
+            operationID: operationID, restore: restore, progress: progress)
+    }
+
     @discardableResult
     func cancelTransfer(operationID: UUID) async throws -> AppTransferResult {
         try await Self.mutationCoordinator.begin()

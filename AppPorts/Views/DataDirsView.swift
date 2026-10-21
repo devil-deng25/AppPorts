@@ -27,6 +27,7 @@ struct DataDirsView: View {
     @ObservedObject private var operationState = AppOperationState.shared
 
     // MARK: - 外部依赖
+    var isActive: Bool = true
     /// 外部存储路径（共用 ContentView 中的选择）
     let externalDriveURL: URL?
     /// 本地已扫描的应用列表（供用户选择查关联目录用）
@@ -66,6 +67,7 @@ struct DataDirsView: View {
     @State private var dotFolderItems: [DataDirItem] = []
     @State private var toolSizeCacheUpdatedAt: Date?
     @State private var libraryItems:   [DataDirItem] = []
+    @State private var migratedAppDataIDs: Set<String> = []
     @State private var directoryRevealRequest: DataDirTree.RevealRequest?
     @State private var summaryFilter: DataDirTree.SummaryFilter?
     @State private var dotFolderReadIssues: [DataDirReadIssue] = []
@@ -83,11 +85,6 @@ struct DataDirsView: View {
     @State private var selectedStatusFilters: Set<String> = []
     @State private var selectedTypeFilters: Set<DataDirType> = []
     @State private var selectedAppDataSortMode: AppDataSortMode = .defaultOrder
-
-    // 进度弹窗
-    @State private var showProgress = false
-    @State private var progressTitle = ""
-    @State private var transferProgress = DataTransferProgress()
 
     // 确认弹窗
     @State private var confirmRequest: WarningSheetRequest?
@@ -207,7 +204,7 @@ struct DataDirsView: View {
                 appDirsContent
             }
         }
-        .disabled(operationState.isBusy)
+        .disabled(operationState.blocksInteraction)
         .onAppear {
             guard !hasLoadedDirectories else { return }
             hasLoadedDirectories = true
@@ -219,13 +216,15 @@ struct DataDirsView: View {
             reloadCurrentTab()
         }
         .onDisappear {
-            recordRefreshTask?.cancel()
-            recordRefreshToken = UUID()
-            if isScanning { hasLoadedDirectories = false }
-            directoryScanTask?.cancel()
-            dotFolderScanToken = UUID()
-            libraryScanToken = UUID()
-            isScanning = false
+            suspendDirectoryScans()
+        }
+        .onChange(of: isActive) { active in
+            if active {
+                hasLoadedDirectories = true
+                reloadCurrentTab()
+            } else {
+                suspendDirectoryScans()
+            }
         }
         .onChange(of: refreshTrigger) { _ in
             clearSizeCache()
@@ -312,18 +311,7 @@ struct DataDirsView: View {
         } message: {
             Text(cleanupWarning?.message ?? "")
         }
-        // 进度覆盖层
-        .overlay {
-            if showProgress {
-                ZStack {
-                    Color.black.opacity(0.3).ignoresSafeArea()
-                    DataDirProgressOverlay(
-                        title: progressTitle,
-                        progress: transferProgress
-                    )
-                }
-            }
-        }
+
     }
 
     // MARK: - 工具目录 Tab
@@ -405,13 +393,15 @@ struct DataDirsView: View {
                     let filteredApps = localApps.filter { app in
                         !app.isFolder && (appSearchText.isEmpty || app.displayName.localizedCaseInsensitiveContains(appSearchText) || app.name.localizedCaseInsensitiveContains(appSearchText))
                     }
+                    let orderedApps = filteredApps.filter { migratedAppDataIDs.contains($0.id) }
+                        + filteredApps.filter { !migratedAppDataIDs.contains($0.id) }
                     ScrollView {
                         LazyVStack(spacing: 4) {
-                            ForEach(filteredApps, id: \.id) { app in
+                            ForEach(orderedApps, id: \.id) { app in
                                 Button {
                                     selectedApp = app
                                 } label: {
-                                    AppListRow(app: app, isSelected: selectedApp?.id == app.id)
+                                    AppListRow(app: app, isSelected: selectedApp?.id == app.id, hasMigratedData: migratedAppDataIDs.contains(app.id))
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel(app.displayName)
@@ -442,7 +432,8 @@ struct DataDirsView: View {
             }
             .onChange(of: localApps) { newApps in
                 // 重签名/迁移后刷新 selectedApp，避免持有旧的 isResigned 等字段
-                // 更新应用展示信息，不因后台列表更新重新扫描数据目录。
+                // 更新应用展示信息和迁移标记，不因后台列表更新重新扫描数据目录。
+                refreshOperationRecords()
                 if let selected = selectedApp,
                    let refreshed = newApps.first(where: { $0.path == selected.path }) {
                     selectedApp = refreshed
@@ -1155,16 +1146,32 @@ struct DataDirsView: View {
     // MARK: - 扫描逻辑
 
     private func refreshOperationRecords() {
+        guard isActive else { return }
         recordRefreshTask?.cancel()
         let token = UUID()
         recordRefreshToken = token
+        let apps = localApps
         recordRefreshTask = Task.detached(priority: .utility) {
             do {
                 // 迁移记录含大目录的校验清单，解析和等待记录锁不能占用主线程。
                 let inspection = try ContainerMountStore.shared.recordsForInspection()
+                // 使用持久化的数据迁移记录，不扫描各应用目录，也不把应用本体迁移当作数据迁移。
+                let identifiers = Set(inspection.mounts.compactMap(\.bundleIdentifier)
+                    + inspection.managedLinks.compactMap(\.bundleIdentifier))
+                var migratedIDs: Set<String> = []
+                if !identifiers.isEmpty {
+                    for app in apps where !app.isFolder {
+                        guard !Task.isCancelled else { return }
+                        if let identifier = CodeSigner.bundleIdentifier(at: app.displayURL), identifiers.contains(identifier) {
+                            migratedIDs.insert(app.id)
+                        }
+                    }
+                }
+                let migratedSnapshot = migratedIDs
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     guard self.recordRefreshToken == token else { return }
+                    self.migratedAppDataIDs = migratedSnapshot
                     self.dataTransfers = inspection.transfers
                     self.preservedMaterials = inspection.preservedMaterials
                     self.pendingCleanups = inspection.cleanups
@@ -1184,7 +1191,18 @@ struct DataDirsView: View {
         }
     }
 
+    private func suspendDirectoryScans() {
+        recordRefreshTask?.cancel()
+        recordRefreshToken = UUID()
+        if isScanning { hasLoadedDirectories = false }
+        directoryScanTask?.cancel()
+        dotFolderScanToken = UUID()
+        libraryScanToken = UUID()
+        isScanning = false
+    }
+
     private func reloadCurrentTab(forceToolSizeRefresh: Bool = false) {
+        guard isActive else { return }
         if selectedTab == .appDirs {
             refreshOperationRecords()
         } else {
@@ -1213,6 +1231,7 @@ struct DataDirsView: View {
     }
 
     private func scanDotFolders(forceSizeRefresh: Bool = false) {
+        guard isActive else { return }
         directoryScanTask?.cancel()
         let scanToken = UUID()
         dotFolderScanToken = scanToken
@@ -1319,6 +1338,7 @@ struct DataDirsView: View {
     }
 
     private func scanLibraryDirs(for app: AppItem) {
+        guard isActive else { return }
         directoryScanTask?.cancel()
         let scanToken = UUID()
         libraryScanToken = scanToken
@@ -1613,44 +1633,49 @@ struct DataDirsView: View {
 
     // MARK: - 执行操作
 
-    private func performMigrate(_ item: DataDirItem, to dest: URL, associatedApp: AppItem? = nil) {
-        if let runningAppName = runningAssociatedAppName(for: item, associatedApp: associatedApp) {
-            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再迁移其数据目录。".localized, runningAppName)
+    private func submitDataTask(_ item: DataDirItem, title: String, destinations: [URL] = [],
+                                associatedApp: AppItem? = nil, mount: Bool = false,
+                                requireAppStopped: Bool = true,
+                                recovery: (@MainActor (Error) -> Void)? = nil,
+                                operation: @escaping @Sendable (DataTransferProgress) async throws -> String?) {
+        let app = associatedApp ?? (selectedTab == .appDirs ? selectedApp : nil)
+        if requireAppStopped, let name = runningAssociatedAppName(for: item, associatedApp: app) {
+            errorMessage = String(format: "「%@」正在运行中，请先退出应用。".localized, name)
             showError = true
             return
         }
-        guard let operationToken = operationState.begin() else { return }
-        progressTitle = String(format: "正在迁移「%@」".localized, item.name)
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        let task = Task { @MainActor in
-            let operationLock = OperationLock()
-            let acquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                showProgress = false
-                if acquired { operationLock.release() }
-                operationState.finish(operationToken)
-            }
-            do {
-                guard acquired else { throw DataOperationSafety.Failure.occupied(item.path.path) }
-                let result = try await DataMigrationWorkflow.run(validateBeforeMigration: {
-                    if runningAssociatedAppName(for: item, associatedApp: associatedApp) != nil {
+        var paths = [item.path] + destinations + item.weChatSplitMembers.map(\.path)
+        if let target = item.linkedDestination { paths.append(target) }
+        if let app { paths += [app.path, app.displayURL] }
+        var keys: Set<String> = mount ? ["apfs-layout"] : []
+        let identifier = app.flatMap({ CodeSigner.bundleIdentifier(at: $0.displayURL) }) ?? item.associatedBundleIdentifier
+        if let identifier {
+            keys.insert("application:" + identifier)
+        }
+        let category: MigrationCategory = item.type == .dotFolder ? .tools : .appData
+        let taskTitle = title.contains(item.name) ? title : title + " · " + item.name
+        MigrationTaskCenter.shared.submit(title: taskTitle, category: category,
+            resources: MigrationResources(paths: paths, keys: keys),
+            recovery: recovery, operation: { progress in
+                try await MigrationExecution.control?.checkpointAsync()
+                if requireAppStopped {
+                    if await MigrationApplicationState.isRunning(appURL: app?.displayURL, bundleIdentifier: identifier) {
                         throw AppMoverError.appIsRunning
                     }
-                }, migrate: {
-                    try await transferProgress.track { handler in
-                        try await DataDirMover().migrateAndComplete(item: item, to: dest, progressHandler: handler)
-                    }
-                })
-                reloadCurrentTab()
-                presentDataCompletionWarnings([result.cleanupWarning])
-            } catch {
-                reloadCurrentTab()
-                errorMessage = error.localizedDescription
-                showError = true
-            }
+                }
+                progress.setDirectory(item.path)
+                return try await operation(progress)
+            }, completion: { reloadCurrentTab() })
+    }
+
+
+    private func performMigrate(_ item: DataDirItem, to dest: URL, associatedApp: AppItem? = nil) {
+        submitDataTask(item, title: String(format: "正在迁移「%@」".localized, item.name),
+                       destinations: [dest.appendingPathComponent(item.path.lastPathComponent)], associatedApp: associatedApp) { progress in
+            let result = try await DataDirMover().migrateAndComplete(item: item, to: dest,
+                progressHandler: { progress.update($0) })
+            return result.cleanupWarning
         }
-        operationState.registerCancellation(for: operationToken) { task.cancel() }
     }
 
     private func presentMigrationConfirmation(for item: DataDirItem, destinationPath: URL, associatedApp: AppItem? = nil) {
@@ -1713,187 +1738,29 @@ struct DataDirsView: View {
     }
 
     private func performRestore(_ item: DataDirItem) {
-        if let runningAppName = runningAssociatedAppName(for: item) {
-            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再还原其数据目录。".localized, runningAppName)
-            showError = true
-            return
-        }
-        guard let operationToken = AppOperationState.shared.begin() else { return }
-        progressTitle = String(format: "正在还原「%@」".localized, item.name)
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        let operationID = AppLogger.shared.makeOperationID(prefix: "view-data-restore")
-        AppLogger.shared.logContext(
-            "用户确认还原数据目录",
-            details: [
-                ("operation_id", operationID),
-                ("item_name", item.name),
-                ("type", item.type.rawValue),
-                ("local_path", item.path.path),
-                ("linked_destination", item.linkedDestination?.path)
-            ] + appContextFields()
-        )
-
-        operationState.startTask(for: operationToken) { @MainActor in
-            let operationLock = OperationLock()
-            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                showProgress = false
-                if lockAcquired { operationLock.release() }
-                AppOperationState.shared.finish(operationToken)
-            }
-            let mover = DataDirMover()
-            do {
-                guard lockAcquired else { throw DataOperationSafety.Failure.occupied(item.path.path) }
-                let result = try await transferProgress.track { handler in
-                    try await mover.restoreAndComplete(item: item, progressHandler: handler)
-                }
-
-                AppLogger.shared.logContext(
-                    "数据目录还原成功",
-                    details: [("operation_id", operationID), ("item_name", item.name)]
-                )
-                await MainActor.run {
-                    self.reloadCurrentTab()
-                    self.presentDataCompletionWarnings([result.cleanupWarning])
-                }
-            } catch {
-                AppLogger.shared.logError(
-                    "数据目录还原失败",
-                    error: error,
-                    context: [("operation_id", operationID), ("item_name", item.name)],
-                    relatedURLs: [("local", item.path)]
-                )
-                await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.showError = true
-                }
-            }
+        submitDataTask(item, title: String(format: "正在还原「%@」".localized, item.name)) { progress in
+            let result = try await DataDirMover().restoreAndComplete(item: item,
+                progressHandler: { progress.update($0) })
+            return result.cleanupWarning
         }
     }
 
     private func performManageExistingLink(_ item: DataDirItem, target: URL) {
-        if let runningAppName = runningAssociatedAppName(for: item) {
-            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再整理其数据目录。".localized, runningAppName)
-            showError = true
-            return
-        }
-        guard let operationToken = AppOperationState.shared.begin() else { return }
-        progressTitle = "整理已链接目录".localized
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        let operationID = AppLogger.shared.makeOperationID(prefix: "view-data-manage-link")
-        AppLogger.shared.logContext(
-            "用户确认接管现有软链",
-            details: [
-                ("operation_id", operationID),
-                ("item_name", item.name),
-                ("local_path", item.path.path),
-                ("target", target.path)
-            ] + appContextFields()
-        )
-        operationState.startTask(for: operationToken) { @MainActor in
-            let operationLock = OperationLock()
-            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                if lockAcquired { operationLock.release() }
-                showProgress = false
-                AppOperationState.shared.finish(operationToken)
-            }
-            guard lockAcquired else {
-                errorMessage = operationLock.admissionFailureReason ?? "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
-                showError = true
-                return
-            }
-            let mover = DataDirMover()
-            let normalizedTarget = normalizedManagementDestination(for: item, currentTarget: target)
-            do {
-                let result = try await transferProgress.track { handler in
-                    try await mover.normalizeManagedLinkAndComplete(
-                        localPath: item.path,
-                        currentExternalPath: target,
-                        normalizedExternalPath: normalizedTarget,
-                        progressHandler: handler
-                    )
-                }
-
-                await MainActor.run {
-                    self.reloadCurrentTab()
-                    self.presentDataCompletionWarnings([result.cleanupWarning])
-                }
-            } catch {
-                AppLogger.shared.logError(
-                    "接管现有软链失败",
-                    error: error,
-                    context: [("operation_id", operationID), ("item_name", item.name)],
-                    relatedURLs: [("local", item.path), ("target", target)]
-                )
-                await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.showError = true
-                }
-            }
+        let normalizedTarget = normalizedManagementDestination(for: item, currentTarget: target)
+        submitDataTask(item, title: "整理已链接目录".localized,
+                       destinations: [target, normalizedTarget]) { progress in
+            let result = try await DataDirMover().normalizeManagedLinkAndComplete(
+                localPath: item.path, currentExternalPath: target, normalizedExternalPath: normalizedTarget,
+                progressHandler: { progress.update($0) })
+            return result.cleanupWarning
         }
     }
 
     private func performRelinkExternalData(_ item: DataDirItem, target: URL) {
-        if let runningAppName = runningAssociatedAppName(for: item) {
-            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再接回其数据目录。".localized, runningAppName)
-            showError = true
-            return
-        }
-        guard let operationToken = AppOperationState.shared.begin() else { return }
-        progressTitle = "接回外部数据".localized
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        let operationID = AppLogger.shared.makeOperationID(prefix: "view-data-relink")
-        AppLogger.shared.logContext(
-            "用户确认接回外部数据",
-            details: [
-                ("operation_id", operationID),
-                ("item_name", item.name),
-                ("local_path", item.path.path),
-                ("target", target.path)
-            ] + appContextFields()
-        )
-        operationState.startTask(for: operationToken) { @MainActor in
-            let operationLock = OperationLock()
-            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                if lockAcquired { operationLock.release() }
-                showProgress = false
-                AppOperationState.shared.finish(operationToken)
-            }
-            guard lockAcquired else {
-                errorMessage = operationLock.admissionFailureReason ?? "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
-                showError = true
-                return
-            }
-            let mover = DataDirMover()
-            do {
-                try await transferProgress.track { _ in
-                    try await mover.createLink(localPath: item.path, externalPath: target,
-                        bundleIdentifier: item.associatedBundleIdentifier, appName: item.associatedAppName)
-                }
-                AppLogger.shared.logContext(
-                    "接回外部数据成功",
-                    details: [("operation_id", operationID), ("item_name", item.name)]
-                )
-                await MainActor.run {
-                    self.reloadCurrentTab()
-                }
-            } catch {
-                AppLogger.shared.logError(
-                    "接回外部数据失败",
-                    error: error,
-                    context: [("operation_id", operationID), ("item_name", item.name)],
-                    relatedURLs: [("local", item.path), ("target", target)]
-                )
-                await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.showError = true
-                }
-            }
+        submitDataTask(item, title: "接回外部数据".localized, destinations: [target]) { _ in
+            try await DataDirMover().createLink(localPath: item.path, externalPath: target,
+                bundleIdentifier: item.associatedBundleIdentifier, appName: item.associatedAppName)
+            return nil
         }
     }
 
@@ -1925,7 +1792,7 @@ struct DataDirsView: View {
             // 先只读检查目标盘（格式、加密、空间），再决定给确认框还是给引导。
             let outcome = await MountMigrationPreflight().evaluate(destination: destination, dataBytes: item.sizeBytes)
             isCheckingMountDestination = false
-            guard selectedApp?.id == sourceAppID, !operationState.isBusy else { return }
+            guard selectedApp?.id == sourceAppID, !operationState.blocksInteraction else { return }
             AppLogger.shared.logContext(
                 "挂载迁移前检查目标盘",
                 details: [
@@ -1990,79 +1857,17 @@ struct DataDirsView: View {
         }
         guard let dest = externalDriveURL else { return }
         if requestAssociatedAppExit(for: item, continuing: { performMountMigrate(item, encryption: encryption) }) { return }
-        guard let operationToken = AppOperationState.shared.begin() else { return }
-        progressTitle = String(format: "正在挂载迁移「%@」".localized, item.name)
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        let operationID = AppLogger.shared.makeOperationID(prefix: "view-container-mount-migrate")
-        let capturedApp = selectedApp
-        let appName = capturedApp?.displayName ?? item.name
-        let bundleID = capturedApp.flatMap { app in
-            (try? resolveRealAppURL(app)).flatMap { CodeSigner.bundleIdentifier(at: $0) }
-        }
-        AppLogger.shared.logContext(
-            "用户确认挂载迁移容器数据目录",
-            details: [
-                ("operation_id", operationID),
-                ("item_name", item.name),
-                ("type", item.type.rawValue),
-                ("source", item.path.path),
-                ("external_root", dest.path)
-            ] + appContextFields(for: capturedApp)
-        )
-
-        operationState.startTask(for: operationToken) { @MainActor in
-            // 挂载代理也监听 /Volumes：等它跑完再动手，避免两边抢同一个挂载点。
-            let operationLock = OperationLock()
-            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                showProgress = false
-                AppOperationState.shared.finish(operationToken)
-                if lockAcquired { operationLock.release() }
-            }
-            if !lockAcquired {
-                AppLogger.shared.logContext(
-                    "容器操作未取得跨进程锁",
-                    details: [("item_name", item.name), ("reason", "挂载代理正在运行")]
-                )
-                errorMessage = operationLock.admissionFailureReason ?? "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
-                showError = true
-                return
-            }
-            if requestAssociatedAppExit(for: item, associatedApp: capturedApp, continuing: { performMountMigrate(item, encryption: encryption) }) { return }
-            let migrator = ContainerVolumeMigrator(encryption: encryption)
-            do {
-                let result = try await transferProgress.track { handler in
-                    try await migrator.migrateAndComplete(
-                        item: item,
-                        externalRootURL: dest,
-                        appName: appName,
-                        bundleIdentifier: bundleID,
-                        progressHandler: handler
-                    )
-                }
-
-                AppLogger.shared.logContext(
-                    "挂载迁移成功",
-                    details: [("operation_id", operationID), ("item_name", item.name), ("volume", result.record.volumeName)]
-                )
-                await MainActor.run {
-                    self.reloadCurrentTab()
-                    self.presentCleanupWarning(result.cleanupWarning)
-                }
-            } catch {
-                AppLogger.shared.logError(
-                    "挂载迁移失败",
-                    error: error,
-                    errorCode: "CONTAINER-MOUNT-MIGRATE-FAILED",
-                    context: [("operation_id", operationID), ("item_name", item.name)],
-                    relatedURLs: [("source", item.path)]
-                )
-                await MainActor.run {
-                    self.reloadCurrentTab()
-                    self.presentAPFSFailure(error, item: item, retry: { performMountMigrate(item, encryption: encryption) })
-                }
-            }
+        let app = selectedApp
+        let name = app?.displayName ?? item.name
+        let bundleID = app.flatMap { (try? resolveRealAppURL($0)).flatMap { CodeSigner.bundleIdentifier(at: $0) } }
+        submitDataTask(item, title: String(format: "正在挂载迁移「%@」".localized, item.name),
+                       mount: true, recovery: { error in
+            presentAPFSFailure(error, item: item, retry: { performMountMigrate(item, encryption: encryption) })
+        }) { progress in
+            let result = try await ContainerVolumeMigrator(encryption: encryption).migrateAndComplete(
+                item: item, externalRootURL: dest, appName: name, bundleIdentifier: bundleID,
+                progressHandler: { progress.update($0) })
+            return result.cleanupWarning?.message
         }
     }
 
@@ -2074,107 +1879,29 @@ struct DataDirsView: View {
             showError = true
             return
         }
-        guard let operationToken = AppOperationState.shared.begin() else { return }
-        progressTitle = String(format: "正在挂载「%@」".localized, item.name)
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        operationState.startTask(for: operationToken) { @MainActor in
-            // 挂载代理也监听 /Volumes：等它跑完再动手，避免两边抢同一个挂载点。
-            let operationLock = OperationLock()
-            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                showProgress = false
-                AppOperationState.shared.finish(operationToken)
-                if lockAcquired { operationLock.release() }
+        submitDataTask(item, title: String(format: "正在挂载「%@」".localized, item.name),
+                       mount: true, requireAppStopped: false, recovery: { error in
+            presentAPFSFailure(error, item: item, retry: { performMount(item) })
+        }) { _ in
+            let migrator = ContainerVolumeMigrator()
+            for record in records {
+                try await MigrationExecution.control?.checkpointAsync()
+                try Task.checkCancellation()
+                try await migrator.mount(record: record)
             }
-            if !lockAcquired {
-                AppLogger.shared.logContext(
-                    "容器操作未取得跨进程锁",
-                    details: [("item_name", item.name), ("reason", "挂载代理正在运行")]
-                )
-                errorMessage = operationLock.admissionFailureReason ?? "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
-                showError = true
-                return
-            }
-            do {
-                try await transferProgress.track { _ in
-                    let migrator = ContainerVolumeMigrator()
-                    for record in records { try await migrator.mount(record: record) }
-                }
-                await MainActor.run { self.reloadCurrentTab() }
-            } catch {
-                AppLogger.shared.logError(
-                    "挂载容器卷失败",
-                    error: error,
-                    errorCode: "CONTAINER-MOUNT-FAILED",
-                    context: [("item_name", item.name), ("volume", records.map(\.volumeName).joined(separator: ", "))],
-                    relatedURLs: [("mount_point", item.path)]
-                )
-                await MainActor.run {
-                    self.reloadCurrentTab()
-                    self.presentAPFSFailure(error, item: item, retry: { performMount(item) })
-                }
-            }
+            return nil
         }
     }
 
     private func performUnmount(_ item: DataDirItem) {
-        if let runningAppName = runningAssociatedAppName(for: item) {
-            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再卸载其数据卷。".localized, runningAppName)
-            showError = true
-            return
-        }
         guard let record = ContainerMountStore.shared.record(forMountPoint: item.path) else {
             errorMessage = "找不到该目录的挂载记录".localized
             showError = true
             return
         }
-        guard let operationToken = AppOperationState.shared.begin() else { return }
-        progressTitle = String(format: "正在卸载「%@」".localized, item.name)
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        let capturedApp = selectedApp
-        operationState.startTask(for: operationToken) { @MainActor in
-            // 挂载代理也监听 /Volumes：等它跑完再动手，避免两边抢同一个挂载点。
-            let operationLock = OperationLock()
-            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                showProgress = false
-                AppOperationState.shared.finish(operationToken)
-                if lockAcquired { operationLock.release() }
-            }
-            if !lockAcquired {
-                AppLogger.shared.logContext(
-                    "容器操作未取得跨进程锁",
-                    details: [("item_name", item.name), ("reason", "挂载代理正在运行")]
-                )
-                errorMessage = operationLock.admissionFailureReason ?? "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
-                showError = true
-                return
-            }
-            if let runningAppName = runningAssociatedAppName(for: item, associatedApp: capturedApp) {
-                errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再卸载其数据卷。".localized, runningAppName)
-                showError = true
-                return
-            }
-            do {
-                try await transferProgress.track { _ in
-                    try await ContainerVolumeMigrator().unmount(record: record)
-                }
-                await MainActor.run { self.reloadCurrentTab() }
-            } catch {
-                AppLogger.shared.logError(
-                    "卸载容器卷失败",
-                    error: error,
-                    errorCode: "CONTAINER-UNMOUNT-FAILED",
-                    context: [("item_name", item.name), ("volume", record.volumeName)],
-                    relatedURLs: [("mount_point", item.path)]
-                )
-                await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.showError = true
-                }
-            }
+        submitDataTask(item, title: String(format: "正在卸载「%@」".localized, item.name), mount: true) { _ in
+            try await ContainerVolumeMigrator().unmount(record: record)
+            return nil
         }
     }
 
@@ -2209,115 +1936,44 @@ struct DataDirsView: View {
 
     private func performMountRestore(_ item: DataDirItem, record: ContainerMountRecord) {
         if requestAssociatedAppExit(for: item, continuing: { performMountRestore(item, record: record) }) { return }
-        guard let operationToken = AppOperationState.shared.begin() else { return }
-        progressTitle = String(format: "正在还原「%@」".localized, item.name)
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        let operationID = AppLogger.shared.makeOperationID(prefix: "view-container-mount-restore")
-        let capturedApp = selectedApp
-        AppLogger.shared.logContext(
-            "用户确认还原挂载迁移目录",
-            details: [
-                ("operation_id", operationID),
-                ("item_name", item.name),
-                ("mount_point", item.path.path),
-                ("volume", record.volumeName)
-            ] + appContextFields()
-        )
-
-        operationState.startTask(for: operationToken) { @MainActor in
-            // 挂载代理也监听 /Volumes：等它跑完再动手，避免两边抢同一个挂载点。
-            let operationLock = OperationLock()
-            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                showProgress = false
-                AppOperationState.shared.finish(operationToken)
-                if lockAcquired { operationLock.release() }
-            }
-            if !lockAcquired {
-                AppLogger.shared.logContext(
-                    "容器操作未取得跨进程锁",
-                    details: [("item_name", item.name), ("reason", "挂载代理正在运行")]
-                )
-                let reason = operationLock.admissionFailureReason ?? "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
-                presentAPFSFailure(NSError(domain: "AppPorts.DataOperation", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: reason]), item: item, record: record,
-                    retry: { performMountRestore(item, record: record) })
-                return
-            }
-            if requestAssociatedAppExit(for: item, associatedApp: capturedApp,
-                continuing: { performMountRestore(item, record: record) }) { return }
-            do {
-                let warning = try await transferProgress.track { handler in
-                    try await ContainerVolumeMigrator().restoreAndComplete(record: record,
-                        estimatedTotalBytes: item.sizeBytes, progressHandler: handler)
-                }
-
-                AppLogger.shared.logContext(
-                    "挂载迁移目录还原成功",
-                    details: [("operation_id", operationID), ("item_name", item.name)]
-                )
-                await MainActor.run {
-                    self.reloadCurrentTab()
-                    self.presentCleanupWarning(warning)
-                }
-            } catch {
-                AppLogger.shared.logError(
-                    "挂载迁移目录还原失败",
-                    error: error,
-                    errorCode: "CONTAINER-MOUNT-RESTORE-FAILED",
-                    context: [("operation_id", operationID), ("item_name", item.name)],
-                    relatedURLs: [("mount_point", item.path)]
-                )
-                await MainActor.run {
-                    self.reloadCurrentTab()
-                    self.presentAPFSFailure(error, item: item, record: record,
-                        retry: { performMountRestore(item, record: record) })
-                }
-            }
+        submitDataTask(item, title: String(format: "正在还原「%@」".localized, item.name),
+                       mount: true, recovery: { error in
+            presentAPFSFailure(error, item: item, record: record,
+                retry: { performMountRestore(item, record: record) })
+        }) { progress in
+            try await ContainerVolumeMigrator().restoreAndComplete(record: record,
+                estimatedTotalBytes: item.sizeBytes, progressHandler: { progress.update($0) })?.message
         }
     }
 
     private func performWeChatSplitOperation(_ item: DataDirItem, restoring: Bool,
                                                encryption: APFSVolumeEncryption.Credentials? = nil) {
-        if requestAssociatedAppExit(for: item, continuing: { performWeChatSplitOperation(item, restoring: restoring, encryption: encryption) }) { return }
-        guard let token = operationState.begin() else { return }
+        if requestAssociatedAppExit(for: item, continuing: {
+            performWeChatSplitOperation(item, restoring: restoring, encryption: encryption)
+        }) { return }
         let destination = externalDriveURL
-        progressTitle = restoring ? "正在还原微信账号数据".localized : "正在拆分迁移微信账号数据".localized
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        let capturedApp = selectedApp
+        let appName = selectedApp?.displayName ?? item.name
         let splitEnabled = partialWeChatMigrationEnabled
         let containerIdentifier = weChatContainerIdentifier
-        operationState.startTask(for: token) { @MainActor in
-            let lock = OperationLock()
-            let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
-            defer {
-                if acquired { lock.release() }
-                showProgress = false
-                operationState.finish(token)
+        let members = selectedWeChatPolicy.members(of: item.path)
+        submitDataTask(item, title: restoring ? "正在还原微信账号数据".localized : "正在拆分迁移微信账号数据".localized,
+                       destinations: members, mount: true, recovery: { error in
+            presentAPFSFailure(error, item: item, retry: {
+                performWeChatSplitOperation(item, restoring: restoring, encryption: encryption)
+            })
+        }) { progress in
+            progress.configureUnits(members)
+            let service = WeChatAccountMigrationService(enabled: splitEnabled,
+                containerIdentifier: containerIdentifier, encryption: encryption)
+            let warnings: [String]
+            if restoring {
+                warnings = try await service.restoreSplit(account: item.path, progress: { progress.update($0) })
+            } else {
+                guard let destination else { throw DataOperationSafety.Failure.inspection("请先选择外部存储路径".localized) }
+                warnings = try await service.migrate(account: item.path, mode: .split, externalRoot: destination,
+                    appName: appName, progress: { progress.update($0) })
             }
-            do {
-                guard acquired else { throw DataOperationSafety.Failure.occupied(item.path.path) }
-                if requestAssociatedAppExit(for: item, associatedApp: capturedApp,
-                    continuing: { performWeChatSplitOperation(item, restoring: restoring, encryption: encryption) }) { return }
-                let service = WeChatAccountMigrationService(enabled: splitEnabled, containerIdentifier: containerIdentifier, encryption: encryption)
-                let warnings = try await transferProgress.track { handler in
-                    if restoring { return try await service.restoreSplit(account: item.path, progress: handler) }
-                    guard let destination else { throw DataOperationSafety.Failure.inspection("请先选择外部存储路径".localized) }
-                    return try await service.migrate(account: item.path, mode: .split, externalRoot: destination,
-                        appName: capturedApp?.displayName ?? item.name, progress: handler)
-                }
-                if !warnings.isEmpty {
-                    dataCompletionWarning = warnings.joined(separator: "\n")
-                    showDataCompletionWarning = true
-                }
-                reloadCurrentTab()
-            } catch {
-                reloadCurrentTab()
-                presentAPFSFailure(error, item: item,
-                    retry: { performWeChatSplitOperation(item, restoring: restoring, encryption: encryption) })
-            }
+            return warnings.isEmpty ? nil : warnings.joined(separator: "\n")
         }
     }
 
@@ -2414,19 +2070,12 @@ struct DataDirsView: View {
             item.associatedBundleIdentifier = identifier
             if requestAssociatedAppExit(for: item, useSelectedApp: false, continuing: { retryPendingOperations(operationID: operationID) }) { return }
         }
-        guard let token = operationState.begin() else { return }
-        transferProgress = DataTransferProgress()
-        showProgress = true
-        progressTitle = "正在继续处理".localized
-        operationState.startTask(for: token) { @MainActor in
-            let warnings = await OperationMaintenance.shared.runDataOperations(retryOperationID: operationID) { progress in
-                await MainActor.run { transferProgress = progress }
-            }
-            showProgress = false
-            operationState.finish(token)
-            reloadCurrentTab()
-            presentDataCompletionWarnings(warnings)
-        }
+        MigrationTaskCenter.shared.submit(title: "正在继续处理".localized, category: .appData,
+            resources: MigrationResources(paths: [], keys: ["all-file-operations"]), operation: { _ in
+                let warnings = await OperationMaintenance.shared.runManagedDataOperations(retryOperationID: operationID)
+                try Task.checkCancellation()
+                return warnings.isEmpty ? nil : warnings.joined(separator: "\n\n")
+            }, completion: { reloadCurrentTab() })
     }
 
     private func suggestedDestinationPath(for item: DataDirItem, under externalRoot: URL) -> URL {
@@ -2542,6 +2191,7 @@ struct DataDirsView: View {
 private struct AppListRow: View {
     let app: AppItem
     let isSelected: Bool
+    let hasMigratedData: Bool
 
     @State private var isHovered = false
 
@@ -2575,7 +2225,17 @@ private struct AppListRow: View {
                     .help("Electron 应用".localized)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
+            if hasMigratedData {
+                Text("已迁移".localized)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.purple)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(Color.purple.opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
+                    .fixedSize()
+                    .help("此应用已有数据目录迁移到外置盘".localized)
+            }
         }
         .frame(height: 32)
         .padding(.vertical, 7)

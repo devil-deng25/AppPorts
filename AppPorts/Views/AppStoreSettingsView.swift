@@ -36,6 +36,7 @@ import SwiftUI
 ///
 /// - Note: 设置使用 `@AppStorage` 自动持久化到 UserDefaults
 struct AppStoreSettingsView: View {
+    @AppStorage(MigrationTaskHistoryStore.clearCompletedOnExitKey) private var clearCompletedTasksOnExit = true
     /// 是否允许迁移 Mac App Store 应用
     @AppStorage("allowAppStoreMigration") private var allowAppStoreMigration = false
     
@@ -212,6 +213,13 @@ struct AppStoreSettingsView: View {
                 .cornerRadius(12)
             }
             
+            Toggle("退出后清理已完成的任务列表".localized, isOn: $clearCompletedTasksOnExit)
+                .toggleStyle(.checkbox)
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03))
+                .cornerRadius(12)
+
             // 日志设置
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 12) {

@@ -64,7 +64,7 @@ actor FileCopier {
         removeQuarantine: Bool = false,
         progressHandler: ProgressHandler?
     ) async throws -> Int64 {
-        try Task.checkCancellation()
+        try MigrationExecution.checkpoint()
         let source = source.standardizedFileURL
         let destination = destination.standardizedFileURL
         let operationID = AppLogger.shared.makeOperationID(prefix: "file-copy")
@@ -136,7 +136,7 @@ actor FileCopier {
                 throw CocoaError(.fileReadUnknown, userInfo: [NSFilePathErrorKey: source.path])
             }
 
-            try Task.checkCancellation()
+            try MigrationExecution.checkpoint()
             await progressHandler?(Progress(copiedBytes: state.copiedBytes, totalBytes: state.copiedBytes, currentFile: ""))
             AppLogger.shared.logContext(
                 "FileCopier 完成复制",
@@ -304,7 +304,7 @@ actor FileCopier {
             var pendingCopies = 0
             do {
                 while let item = enumerator.nextObject() as? URL {
-                    try Task.checkCancellation()
+                    try MigrationExecution.checkpoint()
                     let values = try item.resourceValues(forKeys: Set(keys))
                     if Self.isManagedLinkMetadataFile(item.lastPathComponent) {
                         if values.fileResourceType == .directory { enumerator.skipDescendants() }
@@ -361,7 +361,7 @@ actor FileCopier {
         var groupRestoreFailures = 0
         var firstGroupRestoreError: (path: String, code: Int32)?
         for directory in directories.reversed() {
-            try Task.checkCancellation()
+            try MigrationExecution.checkpoint()
             // mkdir 默认继承目标父目录的组，需恢复源目录的组归属。
             // 网络卷可能不支持 chgrp；属组单独尽力保留，不让它阻断数据复制。
             // chown 可能清除 setgid，所以必须先于后面的 mode 恢复执行。
@@ -438,11 +438,11 @@ actor FileCopier {
         removeQuarantine: Bool,
         operation: CopyOperation
     ) async throws -> CopiedFile {
-        try Task.checkCancellation()
+        try MigrationExecution.checkpoint()
         // FileManager 的原生复制保留权限、日期和扩展属性，无需再次 stat/chmod。
         try await operation(source, destination)
         if removeQuarantine { removeCopiedQuarantine(from: source, to: destination) }
-        try Task.checkCancellation()
+        try MigrationExecution.checkpoint()
         return CopiedFile(bytes: size, name: source.lastPathComponent)
     }
 
@@ -455,7 +455,7 @@ actor FileCopier {
     nonisolated private static func copyWithRetry(at source: URL, to destination: URL) async throws {
         let fileManager = FileManager.default
         for attempt in 1...3 {
-            try Task.checkCancellation()
+            try MigrationExecution.checkpoint()
             do {
                 try fileManager.copyItem(at: source, to: destination)
                 return

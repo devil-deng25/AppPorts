@@ -1269,7 +1269,7 @@ final class AppTransferTransaction {
     /// re-checks the target immediately before a plain `rename`, which keeps the
     /// "do not overwrite" contract even though the check and the rename are not a
     /// single atomic operation.
-    private static func moveExclusively(_ source: URL, _ target: URL) throws {
+    static func moveExclusively(_ source: URL, _ target: URL) throws {
         if renameatx_np(AT_FDCWD, source.path, AT_FDCWD, target.path, UInt32(RENAME_EXCL)) == 0 { return }
         let code = errno
         guard code == ENOTSUP || code == EINVAL else {

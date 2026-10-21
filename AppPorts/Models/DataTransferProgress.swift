@@ -75,10 +75,20 @@ final class DataTransferProgress: @unchecked Sendable {
         var directoryPath = ""
         var currentFile = ""
         var completedItems = 0
+        var expectedItems = 0
         var readBytes: Int64 = 0
         var copiedBytes: Int64 = 0
         var totalBytes: Int64 = 0
         var copyBytesPerSecond: Double?
+        // Weighted whole-operation progress. A scan or signature check before
+        // copying cannot jump into the post-copy verification part of the bar.
+        var unitFraction: Double = 0
+        var unitIndex = 0
+        var unitCount = 1
+        var overallFraction: Double {
+            (Double(unitIndex) + unitFraction) / Double(max(1, unitCount))
+        }
+        var hasStartedCopy = false
         var startedAt: TimeInterval
         var stageStartedAt: TimeInterval
         var lastActivityAt: TimeInterval
@@ -105,6 +115,9 @@ final class DataTransferProgress: @unchecked Sendable {
     private var state: Snapshot
     private var rateSampleTime: TimeInterval
     private var rateSampleBytes: Int64 = 0
+    private var unitPaths: [String] = []
+    private var verificationStart: Double = 0.60
+    private var verificationWeight: Double = 0.12
 
     init(clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.clock = clock
@@ -128,17 +141,46 @@ final class DataTransferProgress: @unchecked Sendable {
         }
     }
 
+    func configureUnits(_ urls: [URL]) {
+        lock.lock(); defer { lock.unlock() }
+        unitPaths = urls.map { $0.standardizedFileURL.path }
+        state.unitCount = max(1, unitPaths.count)
+        state.unitIndex = 0
+        state.unitFraction = 0
+    }
+
     func setDirectory(_ url: URL, onlyIfUnset: Bool = false) {
         lock.lock(); defer { lock.unlock() }
-        if !onlyIfUnset || state.directoryPath.isEmpty { state.directoryPath = url.standardizedFileURL.path }
+        let path = url.standardizedFileURL.path
+        if !onlyIfUnset || state.directoryPath.isEmpty {
+            state.directoryPath = path
+            if let index = unitPaths.firstIndex(of: path), index > state.unitIndex {
+                state.unitIndex = index
+                state.unitFraction = 0
+                state.hasStartedCopy = false
+            }
+        }
     }
 
     func verify(_ purpose: DataTransferVerification) {
         lock.lock(); defer { lock.unlock() }
         transition(to: .verifying, detail: purpose.explanation, title: purpose.title, at: clock())
+        switch purpose {
+        case .copiedData: verificationStart = 0.60; verificationWeight = 0.12
+        case .sourceUnchanged: verificationStart = 0.72; verificationWeight = 0.08
+        case .beforeSwitch, .appBeforeSwitch, .replacement: verificationStart = 0.80; verificationWeight = 0.06
+        case .activeData: verificationStart = 0.90; verificationWeight = 0.04
+        case .retainedCopy: verificationStart = 0.94; verificationWeight = 0.05
+        }
+        if state.hasStartedCopy { state.unitFraction = max(state.unitFraction, verificationStart) }
     }
 
     func begin(_ stage: DataTransferStage, detail: String = "", currentFile: String = "", title: String = "") {
+        if stage == .switching || stage == .recovering {
+            MigrationExecution.control?.setCriticalSection(true)
+        } else if stage == .cleaning {
+            MigrationExecution.control?.setCriticalSection(false)
+        }
         lock.lock(); defer { lock.unlock() }
         transition(to: stage, detail: detail, title: title, at: clock())
         if !currentFile.isEmpty, currentFile != state.currentFile {
@@ -170,13 +212,18 @@ final class DataTransferProgress: @unchecked Sendable {
         }
         state.copiedBytes = bytes
         state.totalBytes = max(0, progress.totalBytes)
+        if state.totalBytes > 0 {
+            state.unitFraction = max(state.unitFraction,
+                0.20 + 0.35 * min(1, Double(bytes) / Double(state.totalBytes)))
+        }
     }
 
     /// A traversal resets its counters even when several verification passes
     /// run in the same stage. Count work from this pass, not unique user files.
-    func startTraversal(at root: URL) {
+    func startTraversal(at root: URL, expectedItems: Int = 0) {
         lock.lock(); defer { lock.unlock() }
         state.completedItems = 0
+        state.expectedItems = max(0, expectedItems)
         state.readBytes = 0
         state.stageStartedAt = clock()
         state.currentFile = root.lastPathComponent
@@ -188,18 +235,36 @@ final class DataTransferProgress: @unchecked Sendable {
         if let file, !file.isEmpty { state.currentFile = file }
         state.readBytes += max(0, bytesRead)
         if completedItem { state.completedItems += 1 }
+        if state.stage == .verifying, state.hasStartedCopy, state.expectedItems > 0 {
+            let fraction = min(1, Double(state.completedItems) / Double(state.expectedItems))
+            state.unitFraction = max(state.unitFraction, verificationStart + verificationWeight * fraction)
+        }
         state.lastActivityAt = clock()
     }
 
     private func transition(to stage: DataTransferStage, detail: String, title: String = "", at now: TimeInterval) {
         guard stage != state.stage || detail != state.detail || title != state.stepTitle else { return }
         state.stage = stage
+        let floor: Double
+        switch stage {
+        case .waiting: floor = 0
+        case .preparing: floor = 0.01
+        case .scanning: floor = state.hasStartedCopy ? state.unitFraction : 0.05
+        case .copying: state.hasStartedCopy = true; floor = 0.20
+        case .synchronizing: floor = state.hasStartedCopy ? 0.55 : 0.03
+        case .verifying: floor = state.hasStartedCopy ? 0.60 : 0.03
+        case .switching: floor = 0.88
+        case .cleaning: floor = 0.94
+        case .recovering: floor = state.unitFraction
+        }
+        state.unitFraction = max(state.unitFraction, floor)
         state.detail = detail
         state.stepTitle = title
         state.stageStartedAt = now
         state.lastActivityAt = now
         state.currentFile = ""
         state.completedItems = 0
+        state.expectedItems = 0
         state.readBytes = 0
         state.copyBytesPerSecond = nil
         rateSampleTime = now

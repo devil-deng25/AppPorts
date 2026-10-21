@@ -86,6 +86,12 @@ actor OperationMaintenance {
         return warnings
     }
 
+    /// A managed retry retains the caller's progress and cancellation context.
+    /// It is scheduled exclusively against all other foreground file jobs.
+    func runManagedDataOperations(retryOperationID: UUID? = nil) async -> [String] {
+        await Self.finishDataOperations(interactive: true, retryOperationID: retryOperationID)
+    }
+
     private static func finishDataOperations(interactive: Bool = false, retryOperationID: UUID? = nil) async -> [String] {
         let lock = OperationLock()
         guard await lock.acquire(timeout: OperationLock.appWaitTimeout) else {

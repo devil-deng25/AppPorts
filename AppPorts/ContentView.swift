@@ -195,6 +195,7 @@ private struct MarkdownTextView: NSViewRepresentable {
 struct ContentView: View {
 
     @ObservedObject private var operationState = AppOperationState.shared
+    @ObservedObject private var migrationTasks = MigrationTaskCenter.shared
     private typealias ScanRequest = AppListScanState.Request
     @State private var localScanState = AppListScanState()
     @State private var externalScanState = AppListScanState()
@@ -304,6 +305,10 @@ struct ContentView: View {
     // MARK: - Tab
     enum MainTab { case apps, dataDirs, customDirs }
     @State private var mainTab: MainTab = .apps
+    @State private var hasOpenedDataDirs = false
+    @State private var hasOpenedCustomDirs = false
+    @State private var operationTab: MainTab?
+    @State private var operationDataTab: DataDirsView.DataTab?
     @State private var selectedDataDirsTab: DataDirsView.DataTab = .toolDirs
     @State private var selectedDataDirsApp: AppItem? = nil
     @State private var isDataDirsScanning = false
@@ -422,11 +427,34 @@ struct ContentView: View {
                 remountContainerVolumes(trigger: "retry")
             }
         }
+        .onChange(of: migrationTasks.recoveryJobID) { id in
+            guard let id, let job = migrationTasks.jobs.first(where: { $0.id == id }) else { return }
+            migrationTasks.detailID = nil
+            migrationTasks.showsList = false
+            migrationTasks.recoveryJobID = nil
+            switch job.category {
+            case .apps: mainTab = .apps
+            case .appData: selectedDataDirsTab = .appDirs; mainTab = .dataDirs
+            case .tools: selectedDataDirsTab = .toolDirs; mainTab = .dataDirs
+            case .directories: mainTab = .customDirs
+            }
+            Task { @MainActor in
+                await Task.yield()
+                job.recoveryAction?()
+            }
+        }
         .onChange(of: operationState.recordsRevision) { _ in
             guard isVisible else { return }
             scanBothAppsAtomic()
         }
         .onChange(of: operationState.isBusy) { isBusy in
+            if isBusy {
+                operationTab = mainTab
+                operationDataTab = mainTab == .dataDirs ? selectedDataDirsTab : nil
+            } else {
+                operationTab = nil
+                operationDataTab = nil
+            }
             if !isBusy { remountContainerVolumes(trigger: "operation-finished") }
             // 补上操作期间延后的监控刷新，也初始化操作期间新打开的窗口。
             if !isBusy, needsAppRescan || localScanState.request == nil || externalScanState.request == nil {
@@ -492,6 +520,15 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showAppStoreSettings) {
             AppStoreSettingsView()
+        }
+        .overlay {
+            if let job = migrationTasks.detail {
+                ZStack {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                    MigrationTaskDetail(job: job)
+                }
+                .zIndex(10)
+            }
         }
         // 进度覆盖层
         .overlay {
@@ -741,32 +778,64 @@ struct ContentView: View {
             // MARK: - Top Toolbar
             topToolbar
 
-            // MARK: - 主内容区（Tab 切换）
-            if mainTab == .dataDirs {
-                DataDirsView(
-                    externalDriveURL: externalDriveURL,
-                    localApps: localApps,
-                    selectedTab: $selectedDataDirsTab,
-                    selectedApp: $selectedDataDirsApp,
-                    isScanning: $isDataDirsScanning,
-                    classicModeActive: classicModeActive,
-                    refreshTrigger: dataDirsRefreshTrigger,
-                    onSelectExternalDrive: openPanelForExternalDrive,
-                    onRepairSignature: { app in signatureRepairApp = app },
-                    onResignApp: { app in performSingleResign(app: app) },
-                    resolveRealAppURL: resolveRealAppURL(for:)
-                )
-            } else if mainTab == .customDirs {
-                CustomDirsView()
-                    .disabled(operationState.isBusy)
-            } else {
-
-            HSplitView {
-                localAppsPane
-                externalAppsPane
+            if operationState.blocksInteraction, let operationTab,
+               mainTab != operationTab || (mainTab == .dataDirs && selectedDataDirsTab != operationDataTab) {
+                HStack {
+                    Text("任务正在处理中".localized)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("查看进度".localized) {
+                        if let operationDataTab { selectedDataDirsTab = operationDataTab }
+                        mainTab = operationTab
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
-            .disabled(operationState.isBusy) // end HSplitView for mainTab == .apps
-            } // end else for mainTab == .apps
+
+            // MARK: - 主内容区（Tab 切换）
+            // Keep visited pages alive so switching tabs cannot discard an active
+            // operation's progress, result alerts, or batch state. Hidden pages
+            // suspend their list scans through isActive.
+            ZStack {
+                if mainTab == .dataDirs || hasOpenedDataDirs {
+                    DataDirsView(
+                        isActive: mainTab == .dataDirs,
+                        externalDriveURL: externalDriveURL,
+                        localApps: localApps,
+                        selectedTab: $selectedDataDirsTab,
+                        selectedApp: $selectedDataDirsApp,
+                        isScanning: $isDataDirsScanning,
+                        classicModeActive: classicModeActive,
+                        refreshTrigger: dataDirsRefreshTrigger,
+                        onSelectExternalDrive: openPanelForExternalDrive,
+                        onRepairSignature: { app in signatureRepairApp = app },
+                        onResignApp: { app in performSingleResign(app: app) },
+                        resolveRealAppURL: resolveRealAppURL(for:)
+                    )
+                    .opacity(mainTab == .dataDirs ? 1 : 0)
+                    .allowsHitTesting(mainTab == .dataDirs)
+                    .accessibilityHidden(mainTab != .dataDirs)
+                }
+                if mainTab == .customDirs || hasOpenedCustomDirs {
+                    CustomDirsView(isActive: mainTab == .customDirs)
+                        .disabled(operationState.blocksInteraction)
+                        .opacity(mainTab == .customDirs ? 1 : 0)
+                        .allowsHitTesting(mainTab == .customDirs)
+                        .accessibilityHidden(mainTab != .customDirs)
+                }
+                if mainTab == .apps {
+                    HSplitView {
+                        localAppsPane
+                        externalAppsPane
+                    }
+                    .disabled(operationState.blocksInteraction)
+                }
+            }
+        }
+        .onChange(of: mainTab) { tab in
+            if tab == .dataDirs { hasOpenedDataDirs = true }
+            if tab == .customDirs { hasOpenedCustomDirs = true }
         }
         .background(Color(nsColor: .controlBackgroundColor))
     }
@@ -807,9 +876,10 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 primaryNavigation
                 Spacer(minLength: 12)
+                MigrationTaskToolbarButton()
                 if mainTab == .dataDirs {
                     dataDirsToolbarControls
-                        .disabled(operationState.isBusy)
+                        .disabled(operationState.blocksInteraction)
                 }
                 Button(action: { showAppStoreSettings = true }) {
                     Label("设置".localized, systemImage: "gearshape")
@@ -821,7 +891,7 @@ struct ContentView: View {
                 .buttonStyle(.borderless)
                 .foregroundColor(.secondary)
                 .keyboardShortcut(",", modifiers: .command)
-                .disabled(operationState.isBusy)
+                .disabled(operationState.blocksInteraction)
                 .help("设置".localized + " (⌘,)")
                 .accessibilityLabel("设置".localized)
             }
@@ -830,7 +900,7 @@ struct ContentView: View {
 
             if mainTab == .apps {
                 appListToolbar
-                    .disabled(operationState.isBusy)
+                    .disabled(operationState.blocksInteraction)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
             }
@@ -1859,6 +1929,48 @@ struct ContentView: View {
         )
     }
 
+    private func enqueueAppTransfer(_ app: AppItem, destination: URL, restoring: Bool = false,
+                                    wholeSymlink: Bool = false, lockExternal: Bool = true,
+                                    replacementChoice: AppMigrationService.ReplacementChoice? = nil,
+                                    presentDetails: Bool = true) {
+        let title = (restoring ? "正在还原应用".localized : "正在迁移应用".localized) + " · " + app.displayName
+        MigrationTaskCenter.shared.submit(title: title, category: .apps,
+            resources: MigrationResources.application(paths: [app.path, app.displayURL, destination], appURL: app.displayURL),
+            presentDetails: presentDetails, operation: { progress in
+                progress.setDirectory(app.path)
+                try await MigrationExecution.control?.checkpointAsync()
+                if restoring {
+                    let result = try await AppMigrationService().moveBack(app: app, localDestinationURL: destination,
+                        progressHandler: { progress.update($0) })
+                    await MainActor.run {
+                        recordCompletedTransfer(.movedBack(app, localDestination: destination,
+                            externalSourceRemains: result.externalSourceRemains,
+                            retiredLocalURLs: result.retiredLocalPortalURLs))
+                    }
+                    return result.transferResult.pendingMessage
+                }
+                if app.isAppStoreApp && AppMigrationService.isMASExternalInstallSupported {
+                    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                }
+                let running = await MigrationApplicationState.isRunning(appURL: app.displayURL)
+                let service: AppMigrationService
+                if wholeSymlink {
+                    service = AppMigrationService(portalCreationOverride: { item, external in
+                        try FileManager.default.createSymbolicLink(at: item.path, withDestinationURL: external)
+                    })
+                } else { service = AppMigrationService() }
+                let result = try await service.moveAndLink(appToMove: app, destinationURL: destination,
+                    isRunning: running, lockExternal: lockExternal, replacementChoice: replacementChoice,
+                    deleteSourceFallback: AppMigrationService.removeItemViaFinder(at:),
+                    progressHandler: { progress.update($0) })
+                await MainActor.run {
+                    recordCompletedTransfer(.movedOut(app, destination: destination,
+                        isMASExternal: !wholeSymlink && app.isAppStoreApp && AppMigrationService.isMASExternalInstallSupported))
+                }
+                return result.pendingMessage
+            }, completion: { scanBothAppsAtomic() })
+    }
+
     func performMoveOutWholeSymlink(_ app: AppItem) {
         guard let dest = externalDriveURL else { return }
         confirmUnrecognizedAppReplacements(apps: [app], destination: dest) { choices in
@@ -1868,61 +1980,8 @@ struct ContentView: View {
 
     private func executeMoveOutWholeSymlink(_ app: AppItem, destination: URL,
                                             replacementChoice: AppMigrationService.ReplacementChoice?) {
-        let destURL = AppSearchExclusionService.destination(for: app, in: destination)
-        AppLogger.shared.logContext(
-            "用户请求传统链接迁移",
-            details: [("app_name", app.displayName), ("destination", destURL.path)]
-        )
-        guard let activityToken = operationState.begin() else { return }
-        isMigrating = true
-        progressTotal = 1
-        progressCurrent = 1
-        progressAppName = app.name
-        progressBytes = 0
-        progressTotalBytes = 0
-        progressFileName = ""
-        progressTitle = "正在迁移应用...".localized
-        // Create the stage object before revealing the overlay so the first
-        // frame is already the stage view, not the byte-only fallback.
-        let progress = DataTransferProgress()
-        appTransferProgress = progress
-        showProgress = true
-
-        let task = Task { @MainActor in
-            defer { operationState.finish(activityToken) }
-            do {
-                let service = AppMigrationService(portalCreationOverride: { appItem, externalURL in
-                    try FileManager.default.createSymbolicLink(at: appItem.path, withDestinationURL: externalURL)
-                })
-                let result = try await progress.track { handler in
-                    try await service.moveAndLink(
-                        appToMove: app,
-                        destinationURL: destURL,
-                        isRunning: self.isAppRunning(url: app.displayURL),
-                        replacementChoice: replacementChoice,
-                        deleteSourceFallback: AppMigrationService.removeItemViaFinder(at:),
-                        progressHandler: handler
-                    )
-                }
-                recordCompletedTransfer(.movedOut(app, destination: destURL, isMASExternal: false))
-                if let message = result.pendingMessage {
-                    showError(title: "应用已迁移，仍有待办".localized, message: message)
-                }
-                AppLogger.shared.logContext("传统链接迁移成功", details: [("app_name", app.displayName)])
-            } catch {
-                AppLogger.shared.logError("传统链接迁移失败", error: error, context: [("app_name", app.displayName)])
-                await MainActor.run {
-                    showError(title: "迁移失败".localized, message: error.localizedDescription)
-                }
-            }
-            await MainActor.run {
-                showProgress = false
-                appTransferProgress = nil
-                isMigrating = false
-                scanBothAppsAtomic()
-            }
-        }
-        operationState.registerCancellation(for: activityToken) { task.cancel() }
+        enqueueAppTransfer(app, destination: AppSearchExclusionService.destination(for: app, in: destination),
+                           wholeSymlink: true, replacementChoice: replacementChoice)
     }
 
     func linkApp(appToLink: AppItem, destinationURL: URL) async throws {
@@ -2319,102 +2378,11 @@ struct ContentView: View {
             }
             return
         }
-        let batchID = AppLogger.shared.makeOperationID(prefix: "batch-move-out")
-        AppLogger.shared.logContext(
-            "开始批量迁移应用",
-            details: [
-                ("batch_id", batchID),
-                ("count", String(apps.count)),
-                ("apps", joinedAppNames(apps)),
-                ("destination", destination.path)
-            ]
-        )
-        
-        guard let activityToken = operationState.begin() else { return }
-        isMigrating = true
-        progressTotal = apps.count
-        progressCurrent = 0
-        progressTitle = "正在迁移应用...".localized
-        let batchProgress = DataTransferProgress()
-        appTransferProgress = batchProgress
-        showProgress = true
-
-        var errors: [String] = []
-        var completionWarnings: [String] = []
-        
-        let task = Task { @MainActor in
-            defer { operationState.finish(activityToken) }
-            for app in apps {
-                if Task.isCancelled { break }
-                await MainActor.run {
-                    progressAppName = app.name
-                    progressCurrent += 1
-                    progressBytes = 0
-                    progressTotalBytes = 0
-                    progressFileName = ""
-                }
-                
-                let destURL = AppSearchExclusionService.destination(for: app, in: destination)
-                if app.isAppStoreApp && AppMigrationService.isMASExternalInstallSupported {
-                    try? fileManager.createDirectory(at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                }
-                AppLogger.shared.logContext(
-                    "批量迁移单项开始",
-                    details: [("batch_id", batchID), ("app_name", app.displayName), ("destination", destURL.path)],
-                    level: "TRACE"
-                )
-                
-                do {
-                    // One progress object per application, so stages restart
-                    // cleanly between items in a batch.
-                    let progress = DataTransferProgress()
-                    await MainActor.run { self.appTransferProgress = progress }
-                    let result = try await progress.track { handler in
-                        try await self.moveAndLink(appToMove: app, destinationURL: destURL, lockExternal: lockExternal,
-                                                   replacementChoice: replacementChoices[app.id],
-                                                   progressHandler: handler)
-                    }
-                    if let message = result.pendingMessage { completionWarnings.append(app.displayName + ": " + message) }
-                    recordCompletedTransfer(.movedOut(app, destination: destURL,
-                                                       isMASExternal: app.isAppStoreApp && AppMigrationService.isMASExternalInstallSupported))
-                    AppLogger.shared.logContext(
-                        "批量迁移单项成功",
-                        details: [("batch_id", batchID), ("app_name", app.displayName)]
-                    )
-                } catch {
-                    errors.append(friendlyMigrationFailure(appName: app.name, error: error))
-                    AppLogger.shared.logError(
-                        "批量迁移单项失败",
-                        error: error,
-                        context: [("batch_id", batchID), ("app_name", app.displayName), ("destination", destURL.path)],
-                        relatedURLs: [("source", app.path), ("destination", destURL)]
-                    )
-                }
-            }
-            
-            await MainActor.run {
-                showProgress = false
-                appTransferProgress = nil
-                isMigrating = false
-                selectedLocalApps.removeAll()
-                scanBothAppsAtomic()
-
-                if !errors.isEmpty {
-                    showError(title: "部分迁移失败".localized, message: (errors + completionWarnings).joined(separator: "\n\n"))
-                } else if !completionWarnings.isEmpty {
-                    showError(title: "应用已迁移，仍有待办".localized, message: completionWarnings.joined(separator: "\n\n"))
-                }
-            }
-            AppLogger.shared.logContext(
-                "批量迁移应用结束",
-                details: [
-                    ("batch_id", batchID),
-                    ("success_count", String(apps.count - errors.count)),
-                    ("failure_count", String(errors.count))
-                ]
-            )
+        for (index, app) in apps.enumerated() {
+            enqueueAppTransfer(app, destination: AppSearchExclusionService.destination(for: app, in: destination),
+                lockExternal: lockExternal, replacementChoice: replacementChoices[app.id], presentDetails: index == 0)
         }
-        operationState.registerCancellation(for: activityToken) { task.cancel() }
+        selectedLocalApps.removeAll()
     }
 
     func performLinkIn() {
@@ -2439,101 +2407,22 @@ struct ContentView: View {
     }
 
     private func executeBatchLinkIn(apps: [AppItem], lockExternal: Bool) {
-        guard !apps.isEmpty else { return }
-
-        guard let activityToken = operationState.begin() else { return }
-        isMigrating = true
-        progressTitle = "链接回本地".localized
-        showProgress = true
-        
-        var errors: [String] = []
-        
-        let appsToLink = apps.map { (app: $0, sourcePath: $0.path) }
-        let batchID = AppLogger.shared.makeOperationID(prefix: "batch-link-in")
-        AppLogger.shared.logContext(
-            "开始批量链接应用",
-            details: [
-                ("batch_id", batchID),
-                ("selected_count", String(apps.count)),
-                ("selected_items", joinedAppNames(apps)),
-                ("expanded_app_count", String(appsToLink.count)),
-                ("expanded_sources", appsToLink.map { $0.sourcePath.lastPathComponent }.joined(separator: ", "))
-            ]
-        )
-        
-        progressTotal = appsToLink.count
-        progressCurrent = 0
-        
-        operationState.startTask(for: activityToken) { @MainActor in
-            defer { operationState.finish(activityToken) }
-            for item in appsToLink {
-                if Task.isCancelled { break }
-                let appName = item.sourcePath.lastPathComponent
-                await MainActor.run {
-                    progressAppName = appName
-                    progressCurrent += 1
-                }
-                
-                let destination = localAppsURL.appendingPathComponent(appName)
-                let tempAppItem = AppItem(
-                    name: appName,
-                    path: item.sourcePath,
-                    bundleURL: item.app.bundleURL,
-                    status: AppStatus.unlinked,
-                    isFolder: item.app.isFolder,
-                    containerKind: item.app.containerKind,
-                    appCount: item.app.appCount
-                )
-                AppLogger.shared.logContext(
-                    "批量链接单项开始",
-                    details: [("batch_id", batchID), ("app_name", appName), ("destination", destination.path)],
-                    level: "TRACE"
-                )
-                
-                do {
-                    try await linkApp(appToLink: tempAppItem, destinationURL: destination)
-                    // 锁定外部 app（仅 Sparkle/Electron 有更新器的应用）
-                    if lockExternal && item.app.needsLock {
-                        AppMigrationService().lockExternalApp(at: item.sourcePath)
-                    }
-                    recordCompletedTransfer(.linkedIn(item.app, localDestination: destination))
-                    AppLogger.shared.logContext(
-                        "批量链接单项成功",
-                        details: [("batch_id", batchID), ("app_name", appName)]
-                    )
-                } catch {
-                    errors.append("\(appName): \(error.localizedDescription)")
-                    AppLogger.shared.logError(
-                        "批量链接单项失败",
-                        error: error,
-                        context: [("batch_id", batchID), ("app_name", appName), ("folder_item", item.app.displayName)],
-                        relatedURLs: [("source", item.sourcePath), ("destination", destination)]
-                    )
-                }
-                
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
-            
-            await MainActor.run {
-                showProgress = false
-                appTransferProgress = nil
-                isMigrating = false
-                selectedExternalApps.removeAll()
-                scanBothAppsAtomic()
-
-                if !errors.isEmpty {
-                    showError(title: "部分链接失败".localized, message: errors.joined(separator: "\n"))
-                }
-            }
-            AppLogger.shared.logContext(
-                "批量链接应用结束",
-                details: [
-                    ("batch_id", batchID),
-                    ("success_count", String(appsToLink.count - errors.count)),
-                    ("failure_count", String(errors.count))
-                ]
-            )
+        for (index, app) in apps.enumerated() {
+            let destination = localAppsURL.appendingPathComponent(app.path.lastPathComponent)
+            MigrationTaskCenter.shared.submit(title: "链接回本地".localized + " · " + app.displayName,
+                category: .apps,
+                resources: MigrationResources.application(paths: [app.path, app.displayURL, destination], appURL: app.displayURL),
+                presentDetails: index == 0, operation: { progress in
+                    progress.setDirectory(app.path)
+                    try await MigrationExecution.control?.checkpointAsync()
+                    let service = AppMigrationService()
+                    try await service.linkAppWhenReady(appToLink: app, destinationURL: destination)
+                    if lockExternal && app.needsLock { service.lockExternalApp(at: app.path) }
+                    await MainActor.run { recordCompletedTransfer(.linkedIn(app, localDestination: destination)) }
+                    return nil
+                }, completion: { scanBothAppsAtomic() })
         }
+        selectedExternalApps.removeAll()
     }
     
     func performDeleteLink(app: AppItem) {
@@ -2630,70 +2519,7 @@ struct ContentView: View {
     }
 
     private func executeMoveBack(app target: AppItem) {
-        let operationID = AppLogger.shared.makeOperationID(prefix: "single-move-back")
-        let destination = localDestinationForMoveBack(app: target)
-        AppLogger.shared.logContext(
-            "用户请求还原单个应用",
-            details: [
-                ("operation_id", operationID),
-                ("app_name", target.displayName),
-                ("source", target.path.path),
-                ("destination", destination.path),
-                ("degraded_source_warning_shown", "true")
-            ]
-        )
-        guard let activityToken = operationState.begin() else { return }
-        isMigrating = true
-        progressTotal = 1
-        progressCurrent = 1
-        progressAppName = target.displayName
-        progressBytes = 0
-        progressTotalBytes = 0
-        progressFileName = ""
-        progressTitle = "还原".localized
-        // Build the stage object before revealing the overlay, otherwise the
-        // first frame renders the byte-only fallback and then swaps.
-        let transferProgress = DataTransferProgress()
-        appTransferProgress = transferProgress
-        showProgress = true
-
-        let task = Task { @MainActor in
-            defer { operationState.finish(activityToken) }
-            do {
-                let result = try await transferProgress.track { handler in
-                    try await self.moveBack(app: target, localDestinationURL: destination,
-                                            progressHandler: handler)
-                }
-                recordCompletedTransfer(.movedBack(target, localDestination: destination,
-                                                    externalSourceRemains: result.externalSourceRemains,
-                                                    retiredLocalURLs: result.retiredLocalPortalURLs))
-                if let message = result.transferResult.pendingMessage {
-                    showError(title: "应用已还原，仍有待办".localized, message: message)
-                }
-                AppLogger.shared.logContext(
-                    "单个应用还原成功",
-                    details: [("operation_id", operationID), ("app_name", target.displayName)]
-                )
-            } catch {
-                AppLogger.shared.logError(
-                    "单个应用还原失败",
-                    error: error,
-                    context: [("operation_id", operationID), ("app_name", target.displayName)],
-                    relatedURLs: [("source", target.path), ("destination", destination)]
-                )
-                await MainActor.run {
-                    showError(title: "错误".localized, message: error.localizedDescription)
-                }
-            }
-            
-            await MainActor.run {
-                showProgress = false
-                appTransferProgress = nil
-                isMigrating = false
-                scanBothAppsAtomic()
-            }
-        }
-        operationState.registerCancellation(for: activityToken) { task.cancel() }
+        enqueueAppTransfer(target, destination: localDestinationForMoveBack(app: target), restoring: true)
     }
 
     /// 批量迁移回本地
@@ -2718,97 +2544,11 @@ struct ContentView: View {
     }
 
     private func executeBatchMoveBack(validApps: [AppItem]) {
-        let batchID = AppLogger.shared.makeOperationID(prefix: "batch-move-back")
-        AppLogger.shared.logContext(
-            "开始批量还原应用",
-            details: [
-                ("batch_id", batchID),
-                ("count", String(validApps.count)),
-                ("apps", joinedAppNames(validApps))
-            ]
-        )
-        
-        guard let activityToken = operationState.begin() else { return }
-        isMigrating = true
-        progressTotal = validApps.count
-        progressCurrent = 0
-        progressTitle = "还原".localized
-        let batchProgress = DataTransferProgress()
-        appTransferProgress = batchProgress
-        showProgress = true
-
-        var errors: [String] = []
-        var completionWarnings: [String] = []
-        
-        let task = Task { @MainActor in
-            defer { operationState.finish(activityToken) }
-            for app in validApps {
-                if Task.isCancelled { break }
-                await MainActor.run {
-                    progressAppName = app.displayName
-                    progressCurrent += 1
-                    progressBytes = 0
-                    progressTotalBytes = 0
-                    progressFileName = ""
-                }
-                
-                let destination = localDestinationForMoveBack(app: app)
-                AppLogger.shared.logContext(
-                    "批量还原单项开始",
-                    details: [("batch_id", batchID), ("app_name", app.displayName), ("destination", destination.path)],
-                    level: "TRACE"
-                )
-                
-                do {
-                    // A fresh object per app so stages restart between items.
-                    let itemProgress = DataTransferProgress()
-                    await MainActor.run { self.appTransferProgress = itemProgress }
-                    let result = try await itemProgress.track { handler in
-                        try await self.moveBack(app: app, localDestinationURL: destination,
-                                                progressHandler: handler)
-                    }
-                    if let message = result.transferResult.pendingMessage { completionWarnings.append(app.displayName + ": " + message) }
-                    recordCompletedTransfer(.movedBack(app, localDestination: destination,
-                                                        externalSourceRemains: result.externalSourceRemains,
-                                                        retiredLocalURLs: result.retiredLocalPortalURLs))
-                    AppLogger.shared.logContext(
-                        "批量还原单项成功",
-                        details: [("batch_id", batchID), ("app_name", app.displayName)]
-                    )
-                } catch {
-                    errors.append("\(app.displayName): \(error.localizedDescription)")
-                    AppLogger.shared.logError(
-                        "批量还原单项失败",
-                        error: error,
-                        context: [("batch_id", batchID), ("app_name", app.displayName)],
-                        relatedURLs: [("source", app.path), ("destination", destination)]
-                    )
-                }
-            }
-            
-            await MainActor.run {
-                showProgress = false
-                appTransferProgress = nil
-                isMigrating = false
-                selectedExternalApps.removeAll()
-                scanBothAppsAtomic()
-
-                if !errors.isEmpty {
-                    showError(title: "部分迁移失败".localized, message: (errors + completionWarnings).joined(separator: "\n\n"))
-                } else if !completionWarnings.isEmpty {
-                    showError(title: "应用已还原，仍有待办".localized, message: completionWarnings.joined(separator: "\n\n"))
-                }
-            }
-            AppLogger.shared.logContext(
-                "批量还原应用结束",
-                details: [
-                    ("batch_id", batchID),
-                    ("success_count", String(validApps.count - errors.count)),
-                    ("failure_count", String(errors.count))
-                ]
-            )
+        for (index, app) in validApps.enumerated() {
+            enqueueAppTransfer(app, destination: localDestinationForMoveBack(app: app),
+                               restoring: true, presentDetails: index == 0)
         }
-        operationState.registerCancellation(for: activityToken) { task.cancel() }
+        selectedExternalApps.removeAll()
     }
 
     func getMoveBackButtonTitle() -> String {

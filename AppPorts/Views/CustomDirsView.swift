@@ -35,6 +35,7 @@ enum CustomDirRecoveryEligibility {
 
 @MainActor
 struct CustomDirsView: View {
+    var isActive: Bool = true
     @ObservedObject private var operationState = AppOperationState.shared
     @ObservedObject private var configStore = CustomDirConfigStore.shared
     private var configs: [CustomDirConfig] { configStore.configs }
@@ -56,9 +57,6 @@ struct CustomDirsView: View {
     @State private var managedLinks: [ManagedDataLinkRecord] = []
     private var transferGroups: [DataTransferGroup] { DataTransferGroup.groups(from: retainedTransfers) }
 
-    @State private var showProgress = false
-    @State private var progressTitle = ""
-    @State private var transferProgress = DataTransferProgress()
     /// 目标盘存不住文件所有者时的确认框；没有提示就保持 nil，不打扰用户。
     @State private var ownershipAdvisoryRequest: WarningSheetRequest?
 
@@ -114,7 +112,7 @@ struct CustomDirsView: View {
                     }
                     Spacer()
                     Button("刷新缓存".localized) { refresh(forceSizeRefresh: true) }
-                        .disabled(isScanning || operationState.isBusy)
+                        .disabled(isScanning || operationState.blocksInteraction)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -135,21 +133,17 @@ struct CustomDirsView: View {
                         .frame(minWidth: 320, maxWidth: .infinity)
                 }
             }
-            .disabled(operationState.isBusy)
+            .disabled(operationState.blocksInteraction)
 
-            if showProgress {
-                Color.black.opacity(0.2)
-                    .ignoresSafeArea()
 
-                DataDirProgressOverlay(
-                    title: progressTitle,
-                    progress: transferProgress
-                )
-            }
         }
         .onAppear {
-            isVisible = true
+            isVisible = isActive
             refresh()
+        }
+        .onChange(of: isActive) { active in
+            isVisible = active
+            if active { refresh() } else { invalidateRefresh() }
         }
         .onChange(of: operationState.recordsRevision) { _ in refresh() }
         .onChange(of: configStore.configs) { _ in refresh() }
@@ -312,21 +306,9 @@ struct CustomDirsView: View {
     }
 
     private func addAndMigrateConfig(_ config: CustomDirConfig) -> String? {
-        guard let operationID = beginOperation() else { return "操作失败".localized }
-        if let errorMessage = addConfig(config) {
-            operationState.finish(operationID)
-            refresh()
-            return errorMessage
-        }
-
-        operationState.startTask(for: operationID) { @MainActor in
-            defer { operationState.finish(operationID) }
-            await runBatch(
-                title: "正在迁移目录".localized,
-                pairs: [CustomDirPair.pendingMigration(for: config)],
-                operation: migratePair
-            )
-        }
+        if let errorMessage = addConfig(config) { return errorMessage }
+        submitDirectoryTasks(title: "正在迁移目录".localized,
+                             pairs: [CustomDirPair.pendingMigration(for: config)], operation: Self.migratePair)
         return nil
     }
 
@@ -410,17 +392,18 @@ struct CustomDirsView: View {
 
     private func retryPendingOperations() {
         let operationIDs = retainedTransfers.filter(\.needsAttention).map(\.operationID)
-        guard !operationIDs.isEmpty, let token = beginOperation() else { return }
-        operationState.startTask(for: token) { @MainActor in
-            var warnings: [String] = []
-            for id in operationIDs {
-                warnings += await OperationMaintenance.shared.runDataOperations(retryOperationID: id)
-            }
-            operationState.finish(token)
-            refresh()
-            completionWarning = warnings.joined(separator: "\n\n")
-            showCompletionWarning = !warnings.isEmpty
-        }
+        guard !operationIDs.isEmpty else { return }
+        MigrationTaskCenter.shared.submit(title: "正在继续处理目录".localized, category: .directories,
+            resources: MigrationResources(paths: [], keys: ["all-file-operations"]), operation: { _ in
+                var warnings: [String] = []
+                for id in operationIDs {
+                    try await MigrationExecution.control?.checkpointAsync()
+                    try Task.checkCancellation()
+                    warnings += await OperationMaintenance.shared.runManagedDataOperations(retryOperationID: id)
+                }
+                try Task.checkCancellation()
+                return warnings.isEmpty ? nil : warnings.joined(separator: "\n\n")
+            }, completion: { refresh() })
     }
 
     private func beginOperation() -> UUID? {
@@ -468,18 +451,10 @@ struct CustomDirsView: View {
     }
 
     private func startMigration(of selectedPairs: [CustomDirPair]) {
-        guard !selectedPairs.isEmpty, let operationID = beginOperation() else { return }
-        operationState.startTask(for: operationID) { @MainActor in
-            defer { operationState.finish(operationID) }
-            await runBatch(
-                title: "正在迁移目录".localized,
-                pairs: selectedPairs,
-                operation: migratePair
-            )
-        }
+        submitDirectoryTasks(title: "正在迁移目录".localized, pairs: selectedPairs, operation: Self.migratePair)
     }
 
-    private func migratePair(_ pair: CustomDirPair, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
+    nonisolated private static func migratePair(_ pair: CustomDirPair, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
         let item = pair.local.dataDirItem
         let result = try await DataDirMover().migrateAndComplete(
             item: item,
@@ -490,40 +465,17 @@ struct CustomDirsView: View {
     }
 
     private func relinkSelected() {
-        let selectedPairs = relinkablePairs
-        guard !selectedPairs.isEmpty, let operationID = beginOperation() else { return }
-        operationState.startTask(for: operationID) { @MainActor in
-            defer { operationState.finish(operationID) }
-            await runBatch(
-                title: "正在接回目录".localized,
-                pairs: selectedPairs,
-                operation: { pair, _ in
-                    try await DataDirMover().createLink(
-                        localPath: pair.config.localURL,
-                        externalPath: pair.config.externalDestinationURL
-                    )
-                    return nil
-                }
-            )
+        submitDirectoryTasks(title: "正在接回目录".localized, pairs: relinkablePairs) { pair, _ in
+            try await DataDirMover().createLink(localPath: pair.config.localURL,
+                                               externalPath: pair.config.externalDestinationURL)
+            return nil
         }
     }
 
     private func restoreSelected() {
-        let selectedPairs = restorablePairs
-        guard !selectedPairs.isEmpty, let operationID = beginOperation() else { return }
-        operationState.startTask(for: operationID) { @MainActor in
-            defer { operationState.finish(operationID) }
-            await runBatch(
-                title: "正在还原目录".localized,
-                pairs: selectedPairs,
-                operation: { pair, progressHandler in
-                    let item = pair.local.dataDirItem
-                    let result = try await DataDirMover().restoreAndComplete(item: item, progressHandler: progressHandler)
-
-                    let warnings = [result.cleanupWarning].compactMap { $0 }
-                    return warnings.isEmpty ? nil : warnings.joined(separator: "\n\n")
-                }
-            )
+        submitDirectoryTasks(title: "正在还原目录".localized, pairs: restorablePairs) { pair, handler in
+            let result = try await DataDirMover().restoreAndComplete(item: pair.local.dataDirItem, progressHandler: handler)
+            return result.cleanupWarning
         }
     }
 
@@ -564,54 +516,23 @@ struct CustomDirsView: View {
         }
     }
 
-    private func runBatch(
-        title: String,
-        pairs selectedPairs: [CustomDirPair],
-        operation: @escaping @MainActor (CustomDirPair, FileCopier.ProgressHandler?) async throws -> String?
-    ) async {
-        guard !selectedPairs.isEmpty else { return }
-
-        progressTitle = title
-        transferProgress = DataTransferProgress()
-        showProgress = true
-
-        let lock = OperationLock()
-        let acquired = await lock.acquire(timeout: OperationLock.appWaitTimeout)
-        defer {
-            if acquired { lock.release() }
-        }
-
-        var warnings: [String] = []
-        do {
-            guard acquired else { throw DataOperationSafety.Failure.occupied(selectedPairs[0].config.localPath) }
-            for pair in selectedPairs {
-                try Task.checkCancellation()
-                let progress = DataTransferProgress()
-                await MainActor.run {
-                    progressTitle = title + "\n" + pair.config.displayName
-                    transferProgress = progress
-                }
-                let warning = try await progress.track { handler in
-                    try await operation(pair, handler)
-                }
-                if let warning { warnings.append(pair.config.displayName + "\n" + warning) }
-            }
-
-            await MainActor.run {
-                showProgress = false
-                selectedLocalIDs.removeAll()
-                selectedExternalIDs.removeAll()
-                refresh(forceSizeRefresh: true)
-                completionWarning = warnings.joined(separator: "\n\n")
-                showCompletionWarning = !warnings.isEmpty
-            }
-        } catch {
-            await MainActor.run {
-                showProgress = false
-                errorMessage = ([error.localizedDescription] + warnings).joined(separator: "\n\n")
-                showError = true
-                refresh(forceSizeRefresh: true)
-            }
+    private func submitDirectoryTasks(
+        title: String, pairs selectedPairs: [CustomDirPair],
+        operation: @escaping @Sendable (CustomDirPair, FileCopier.ProgressHandler?) async throws -> String?
+    ) {
+        for (index, pair) in selectedPairs.enumerated() {
+            MigrationTaskCenter.shared.submit(title: title + " · " + pair.config.displayName,
+                category: .directories,
+                resources: MigrationResources(paths: [pair.config.localURL, pair.config.externalDestinationURL]),
+                presentDetails: index == 0, operation: { progress in
+                    try await MigrationExecution.control?.checkpointAsync()
+                    progress.setDirectory(pair.config.localURL)
+                    return try await operation(pair, { progress.update($0) })
+                }, completion: {
+                    selectedLocalIDs.remove(pair.local.id)
+                    selectedExternalIDs.remove(pair.external.id)
+                    refresh(forceSizeRefresh: true)
+                })
         }
     }
 }
@@ -773,7 +694,7 @@ private struct AddCustomDirSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
-                .disabled(operationState.isBusy || localURL == nil || externalBaseURL == nil)
+                .disabled(operationState.blocksInteraction || localURL == nil || externalBaseURL == nil)
             }
         }
         .padding(24)
@@ -916,7 +837,7 @@ private struct AddCustomDirSheet: View {
     }
 
     private func add() {
-        guard !operationState.isBusy else { return }
+        guard !operationState.blocksInteraction else { return }
         guard let localURL, let externalBaseURL else {
             errorMessage = "请选择本地目录和外部目标文件夹".localized
             return

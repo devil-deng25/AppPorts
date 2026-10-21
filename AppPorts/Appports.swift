@@ -41,9 +41,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        AppOperationState.shared.finishBeforeTerminating {
+        if AppOperationState.shared.isBusy {
+            let alert = NSAlert()
+            alert.messageText = "还有任务尚未结束".localized
+            alert.informativeText = "请先等待任务完成，或在任务列表中取消任务并等待安全收尾，再退出 AppPorts。暂停和等待中的任务也需要先结束。".localized
+            alert.addButton(withTitle: "查看任务".localized)
+            alert.addButton(withTitle: "返回".localized)
+            sender.activate(ignoringOtherApps: true)
+            Self.mainWindow?.makeKeyAndOrderFront(nil)
+            if alert.runModal() == .alertFirstButtonReturn {
+                MigrationTaskCenter.shared.detailID = nil
+                MigrationTaskCenter.shared.showsList = true
+            }
+            return .terminateCancel
+        }
+        return AppOperationState.shared.finishBeforeTerminating {
             sender.reply(toApplicationShouldTerminate: true)
         } ? .terminateLater : .terminateNow
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MigrationTaskCenter.shared.saveHistoryForExit()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
