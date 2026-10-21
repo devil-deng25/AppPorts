@@ -120,6 +120,14 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     /// deletion synchronized. A later location may still need this small
     /// identity link while an older, unrelated copy is offline.
     var retainedCopyRemovedAt: Date? = nil
+    enum CleanupDisposition: String, Codable, Sendable { case deferred, keep }
+    /// A user decision, not proof that any data was deleted. Keep the identity
+    /// chain and manifests so a later explicit retry is still fully verified.
+    var cleanupDisposition: CleanupDisposition? = nil
+
+    var needsAutomaticCompletion: Bool { cleanupDisposition == nil }
+    var needsAttention: Bool { retainedCopyRemovedAt == nil && cleanupDisposition != .keep }
+
     /// Preserve the exact proposed mount across a verified switch interruption.
     /// It is never reconstructed from a volume name or a current mount path.
     var recoveryMountRecord: ContainerMountRecord? = nil

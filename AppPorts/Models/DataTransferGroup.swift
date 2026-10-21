@@ -64,7 +64,9 @@ struct DataTransferGroup: Equatable, Identifiable, Sendable {
     }
 
     var canCleanup: Bool {
-        state != .needsAttention && transfers.allSatisfy { $0.baseline != nil || $0.retainedCopyRemovedAt != nil }
+        state != .needsAttention && transfers.allSatisfy {
+            $0.needsAutomaticCompletion && ($0.baseline != nil || $0.retainedCopyRemovedAt != nil)
+        }
             && !retainedCopies.isEmpty
             && retainedCopies.count == transfers.filter({ $0.retainedCopyRemovedAt == nil }).count
     }
@@ -84,7 +86,7 @@ struct DataTransferGroup: Equatable, Identifiable, Sendable {
     var resumeTransfer: DataTransferRecord? {
         guard isLinear else { return nil }
         let pending = transfers.filter { !Self.isCompleted($0) }
-        guard pending.count == 1, let transfer = pending.first,
+        guard pending.count == 1, let transfer = pending.first, transfer.needsAutomaticCompletion,
               transfer.isVerifiedSwitchRecoverable || transfer.isPreparationRecoverable else { return nil }
         if transfer.operationID == currentTransfer.operationID { return transfer }
         // Historical builds permitted a restore after the migration's final

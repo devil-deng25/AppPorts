@@ -43,6 +43,9 @@ struct CustomDirsView: View {
     @State private var selectedExternalIDs: Set<String> = []
     @State private var isScanning = false
     @State private var refreshRequestID: UUID?
+    @State private var directoryRefreshTask: Task<Void, Never>?
+    @State private var recordRefreshTask: Task<Void, Never>?
+    @State private var sizeCacheUpdatedAt: Date?
     @State private var isVisible = false
     @State private var showAddSheet = false
     @State private var showError = false
@@ -104,9 +107,22 @@ struct CustomDirsView: View {
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                if !retainedTransfers.isEmpty {
+                HStack {
+                    if let date = sizeCacheUpdatedAt {
+                        Text("上次缓存时间".localized + "：" + date.formatted(date: .numeric, time: .shortened))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("刷新缓存".localized) { refresh(forceSizeRefresh: true) }
+                        .disabled(isScanning || operationState.isBusy)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                if retainedTransfers.contains(where: { $0.needsAttention }) {
                     HStack {
-                        Text("操作尚未全部完成，AppPorts 会自动继续处理。".localized).foregroundStyle(.secondary)
+                        Text(retainedTransfers.contains(where: { $0.cleanupDisposition == .deferred })
+                            ? "部分操作已暂停，可手动重试。".localized
+                            : "部分数据操作尚未完成，副本已保留。".localized).foregroundStyle(.secondary)
                         Spacer()
                         Button("重试".localized) { retryPendingOperations() }
                     }.padding(12)
@@ -324,43 +340,82 @@ struct CustomDirsView: View {
         refresh()
     }
 
-    private func refresh() {
+    private func refresh(forceSizeRefresh: Bool = false) {
         guard isVisible else { return }
-        do {
-            managedLinks = try ContainerMountStore.shared.managedLinks()
-            retainedTransfers = try ContainerMountStore.shared.transfers().filter { transfer in
-                configs.contains { DataPathTopology.relationship($0.localURL.path, transfer.originalPath) == .same }
-            }
-        } catch {
-            managedLinks = []
-            errorMessage = error.localizedDescription
-            showError = true
-        }
+        directoryRefreshTask?.cancel()
+        recordRefreshTask?.cancel()
         let requestID = UUID()
         let requestedConfigs = configs
         refreshRequestID = requestID
         isScanning = true
-        Task { @MainActor in
+
+        // Directory status/size must not wait for the shared migration journal.
+        directoryRefreshTask = Task.detached(priority: .userInitiated) {
             let scanner = CustomDirScanner()
-            let result = await scanner.scan(configs: requestedConfigs, calculateSizes: true)
-            guard isVisible, refreshRequestID == requestID, configs == requestedConfigs else { return }
-            pairs = result
-            selectedLocalIDs.formIntersection(Set(result.map(\.local.id)))
-            selectedExternalIDs.formIntersection(Set(result.map(\.external.id)))
-            isScanning = false
-            refreshRequestID = nil
+            let result = await scanner.scan(configs: requestedConfigs, calculateSizes: true,
+                                            forceSizeRefresh: forceSizeRefresh)
+            let cacheTime = await scanner.sizeCacheUpdatedAt
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard isVisible, refreshRequestID == requestID, configs == requestedConfigs else { return }
+                pairs = result
+                sizeCacheUpdatedAt = cacheTime
+                selectedLocalIDs.formIntersection(Set(result.map(\.local.id)))
+                selectedExternalIDs.formIntersection(Set(result.map(\.external.id)))
+                isScanning = false
+            }
+        }
+        guard !requestedConfigs.isEmpty else {
+            managedLinks = []
+            retainedTransfers = []
+            return
+        }
+        recordRefreshTask = Task.detached(priority: .utility) {
+            do {
+                // Parse and validate once off the main thread. This document
+                // also contains large application-data verification manifests.
+                let inspection = try ContainerMountStore.shared.recordsForInspection()
+                if let error = inspection.validationError { throw error }
+                let links = inspection.managedLinks.filter { link in
+                    requestedConfigs.contains { DataPathTopology.relationship($0.localURL.path, link.originalPath) == .same }
+                }
+                let transfers = inspection.transfers.filter { transfer in
+                    requestedConfigs.contains { DataPathTopology.relationship($0.localURL.path, transfer.originalPath) == .same }
+                }
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard isVisible, refreshRequestID == requestID, configs == requestedConfigs else { return }
+                    managedLinks = links
+                    retainedTransfers = transfers
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard isVisible, refreshRequestID == requestID, configs == requestedConfigs else { return }
+                    managedLinks = []
+                    retainedTransfers = []
+                    errorMessage = error.localizedDescription
+                    showError = true
+                }
+            }
         }
     }
 
     private func invalidateRefresh() {
+        directoryRefreshTask?.cancel()
+        recordRefreshTask?.cancel()
         refreshRequestID = nil
         isScanning = false
     }
 
     private func retryPendingOperations() {
-        guard let token = beginOperation() else { return }
+        let operationIDs = retainedTransfers.filter(\.needsAttention).map(\.operationID)
+        guard !operationIDs.isEmpty, let token = beginOperation() else { return }
         operationState.startTask(for: token) { @MainActor in
-            let warnings = await OperationMaintenance.shared.run()
+            var warnings: [String] = []
+            for id in operationIDs {
+                warnings += await OperationMaintenance.shared.runDataOperations(retryOperationID: id)
+            }
             operationState.finish(token)
             refresh()
             completionWarning = warnings.joined(separator: "\n\n")
@@ -546,7 +601,7 @@ struct CustomDirsView: View {
                 showProgress = false
                 selectedLocalIDs.removeAll()
                 selectedExternalIDs.removeAll()
-                refresh()
+                refresh(forceSizeRefresh: true)
                 completionWarning = warnings.joined(separator: "\n\n")
                 showCompletionWarning = !warnings.isEmpty
             }
@@ -555,7 +610,7 @@ struct CustomDirsView: View {
                 showProgress = false
                 errorMessage = ([error.localizedDescription] + warnings).joined(separator: "\n\n")
                 showError = true
-                refresh()
+                refresh(forceSizeRefresh: true)
             }
         }
     }

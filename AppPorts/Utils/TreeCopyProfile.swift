@@ -18,11 +18,11 @@ import Foundation
 /// no-follow traversal, anchored descriptors, mount-boundary refusal, atomic
 /// rename switching, retained original until verified — is identical for both.
 enum TreeCopyProfile: Sendable {
-    /// Content-addressed proof: hash every file, compare timestamps strictly,
+    /// Content-addressed proof: hash every file, reject changes during reads,
     /// and flush the device cache for every directory.
     case strictData
     /// Product-integrity proof: no per-file digest (the caller verifies the
-    /// code signature), timestamps may drift while size and kind still match,
+    /// code signature), timestamps may drift while reading if size and kind still match,
     /// and only the root gets a device-cache barrier.
     case appBundle
 
@@ -34,8 +34,8 @@ enum TreeCopyProfile: Sendable {
         }
     }
 
-    /// Whether a timestamp change alone fails verification. Size, kind, mode,
-    /// ownership, ACLs and extended attributes are compared in both profiles.
+    /// Whether timestamps must remain stable while reading a node.
+    /// Saved timestamps are preserved but do not alone fail manifest comparison.
     var requiresStableTimestamps: Bool {
         switch self {
         case .strictData: return true

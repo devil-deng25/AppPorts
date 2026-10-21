@@ -26,6 +26,17 @@ struct DataDirProgressContent: View {
                 .help(title)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            if !snapshot.directoryPath.isEmpty {
+                Text((URL(fileURLWithPath: snapshot.directoryPath).pathExtension.lowercased() == "app"
+                    ? "当前应用".localized : "当前目录".localized)
+                    + "：" + URL(fileURLWithPath: snapshot.directoryPath).lastPathComponent)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(snapshot.directoryPath)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     ProgressView()
@@ -33,7 +44,7 @@ struct DataDirProgressContent: View {
                         .controlSize(.small)
                         .frame(width: 16, height: 16)
                         .accessibilityHidden(true)
-                    Text(verbatim: snapshot.stage.title)
+                    Text(verbatim: snapshot.stepTitle.isEmpty ? snapshot.stage.title : snapshot.stepTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
@@ -109,7 +120,7 @@ struct DataDirProgressContent: View {
             .monospacedDigit()
         } else if snapshot.completedItems > 0 || snapshot.readBytes > 0 {
             HStack(alignment: .firstTextBaseline) {
-                Text(String(format: "本轮已处理 %lld 项".localized, Int64(snapshot.completedItems)))
+                Text(String(format: "当前步骤已处理 %lld 项".localized, Int64(snapshot.completedItems)))
                 Spacer(minLength: 8)
                 if snapshot.readBytes > 0 {
                     Text(String(format: "已读取 %@".localized, bytes(snapshot.readBytes)))

@@ -375,11 +375,12 @@ actor ContainerVolumeMigrator {
         do {
             await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "正在清理旧副本...".localized, showsByteProgress: false, stage: .cleaning))
             if let transfer = try store.transfer(operationID: operationID) {
+                guard transfer.needsAutomaticCompletion else { return nil }
                 try await requireActiveData(for: transfer)
                 if requireUnchangedActive {
                     guard let encoded = transfer.baseline else { throw DataOperationSafety.Failure.inspection(transfer.activePath) }
                     try TreeCopySession.verifyCopy(at: URL(fileURLWithPath: transfer.activePath),
-                        against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded))
+                        against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded), purpose: .activeData)
                 }
                 try await cleanupRetainedLineage(operationID: operationID)
             }
@@ -490,6 +491,7 @@ actor ContainerVolumeMigrator {
         return try await TreeCopySession().copy(from: source, to: destination,
             excludingRootEntries: Self.volumeSystemArtifacts, finalDestination: finalDestination,
             logicalSourceRoot: logicalSourceRoot, legacyRootOwnership: transfer.legacyRootOwnership,
+            verifySourceAfterCopy: false,
             preparedHandler: { baseline in
                 try currentStore.prepareCopy(operationID: operationID, path: destination,
                     parentIdentity: DataPathIdentity.capture(destination.deletingLastPathComponent()), baseline: baseline)
@@ -1130,7 +1132,7 @@ actor ContainerVolumeMigrator {
             try await requireActiveData(for: current)
             if requireUnchangedActive, let baseline = current.baseline {
                 try TreeCopySession.verifyCopy(at: URL(fileURLWithPath: current.activePath),
-                    against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: baseline))
+                    against: PropertyListDecoder().decode(TreeCopySnapshot.self, from: baseline), purpose: .activeData)
             }
             try await cleanupRetainedLineage(operationID: transfer.operationID)
             return nil
@@ -1592,6 +1594,7 @@ actor ContainerVolumeMigrator {
         progressHandler: FileCopier.ProgressHandler?,
         reusingOperationID: UUID? = nil
     ) async throws -> MigrationResult {
+        DataTransferSession.progress?.setDirectory(item.path)
         await progressHandler?(.working(.preparing))
         let source = item.path.standardizedFileURL
         let restored = try completedRestoreLineage(at: source)
@@ -1678,7 +1681,8 @@ actor ContainerVolumeMigrator {
                 finalDestination: source, progressHandler: progressHandler)
             transfer = try store.transfer(operationID: transfer.operationID) ?? transfer
             // The copier has applied root metadata, synchronized the tree,
-            // and verified both trees after its final progress callback.
+            // and verified the destination after its final progress callback.
+            // The source is verified once below, immediately before switching.
             transfer.baseline = try PropertyListEncoder().encode(baseline)
             transfer.destinationIdentity = try DataPathIdentity.capture(staging, volumeUUID: uuid)
             transfer.phase = .verified
@@ -1687,7 +1691,7 @@ actor ContainerVolumeMigrator {
                 totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized, showsByteProgress: false, stage: .switching))
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: bundleIdentifier)
             try await requireExpectedVolume(uuid, at: staging)
-            try TreeCopySession.verifyCopy(at: staging, against: baseline)
+            try TreeCopySession.verifyCopy(at: staging, against: baseline, purpose: .beforeSwitch)
             try await unmountVolume(mountPoint: staging)
             removeEmptyDirectoryQuietly(at: staging)
             transfer.phase = .switching
@@ -1697,7 +1701,10 @@ actor ContainerVolumeMigrator {
             try DurableFileIO.syncDirectory(at: source.deletingLastPathComponent())
             transfer.backupIdentity = try DataPathIdentity.capture(backup)
             try store.updateTransfer(transfer)
-            try TreeCopySession.verifyUnchanged(at: backup, against: baseline)
+            // 同盘改名不复制内容；检查仍为原目录，删除前再核对保留副本。
+            guard transfer.backupIdentity?.matchesFilesystemObject(transfer.sourceIdentity) == true else {
+                throw DataOperationSafety.Failure.conflict(backup.path)
+            }
             try await mountVolume(uuid, at: source, operationID: operationID, requireOwnership: false)
             // The destination was synchronized before unmount. Cleanup flushes
             // any newly active data before deleting the retained original.
@@ -1738,6 +1745,7 @@ actor ContainerVolumeMigrator {
         if !isMountPoint(mountPoint),
            let pending = try pendingMountTransfer(at: record.mountPointPath, direction: .restore),
            pending.isPreparationRecoverable, !pending.isUnstartedMountRestore {
+            guard pending.needsAutomaticCompletion else { throw RecoveryPaused() }
             // A partial restore still owns this source. Reconnect through its
             // recovery transaction instead of rejecting its own reservation or
             // treating the unfinished candidate as authoritative data.
@@ -1933,6 +1941,7 @@ actor ContainerVolumeMigrator {
 
     private func restoreRetainingOriginal(record: ContainerMountRecord, estimatedTotalBytes: Int64,
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
+        DataTransferSession.progress?.setDirectory(record.mountPointURL)
         await progressHandler?(.working(.preparing))
         let mountPoint = record.mountPointURL
         // Exact history ownership is required. A stale UI value cannot authorize recovery.
@@ -2082,7 +2091,7 @@ actor ContainerVolumeMigrator {
             try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: record.bundleIdentifier)
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
-            try TreeCopySession.verifyCopy(at: staging, against: baseline)
+            try TreeCopySession.verifyCopy(at: staging, against: baseline, purpose: .beforeSwitch)
             try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
             try safety.requireMountPointParentAccess(at: mountPoint)
             try store.beginRestore(transfer: transfer, removingMount: record)
@@ -2209,6 +2218,8 @@ actor ContainerVolumeMigrator {
         guard runningCleanups.insert(operationID).inserted else { throw DataOperationSafety.Failure.occupied(operationID.uuidString) }
         defer { runningCleanups.remove(operationID) }
         guard var transfer = try store.transfer(operationID: operationID) else { return }
+        DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: transfer.originalPath))
+        guard transfer.needsAutomaticCompletion else { return }
         if transfer.retainedCopyRemovedAt != nil {
             try store.finishTransfer(operationID: operationID, deletionConfirmed: true)
             synchronizeAgent(store)
@@ -2345,7 +2356,7 @@ actor ContainerVolumeMigrator {
                     guard try store.transfer(operationID: operationID) == transfer else {
                         throw DataOperationSafety.Failure.conflict(backup.path)
                     }
-                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
+                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid, purpose: .retainedCopy)
                     try store.requestCleanup(operationID: operationID)
                     transfer.phase = .cleanupRequested
                     transfer.recoverableReason = nil
@@ -2354,7 +2365,7 @@ actor ContainerVolumeMigrator {
                     transfer.cleanupParentIdentity = transfer.cleanupParentIdentity ?? parentIdentity
                     transfer.cleanupVolumeContainerUUID = container
                     try await requireActiveData(for: transfer, matching: location)
-                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid)
+                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid, purpose: .retainedCopy)
                     try await unmountVolume(mountPoint: backup)
                     removeEmptyDirectoryQuietly(at: backup)
                     try await requireActiveData(for: transfer, matching: location)

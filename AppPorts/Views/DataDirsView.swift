@@ -107,6 +107,7 @@ struct DataDirsView: View {
     @State private var preservedMaterials: [DataTransferMaterial] = []
     @State private var cleanupWarning: ContainerVolumeMigrator.CleanupWarning?
     @State private var showCleanupWarning = false
+    @State private var showCleanupResolution = false
     @State private var dataCompletionWarning = ""
     @State private var showDataCompletionWarning = false
 
@@ -120,6 +121,8 @@ struct DataDirsView: View {
     @State private var libraryScanToken = UUID()
     @State private var directoryScanTask: Task<Void, Never>?
     @State private var hasLoadedDirectories = false
+    @State private var recordRefreshTask: Task<Void, Never>?
+    @State private var recordRefreshToken = UUID()
 
     // 搜索
     @State private var appSearchText = ""
@@ -174,18 +177,28 @@ struct DataDirsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if dataTransfers.contains(where: { $0.retainedCopyRemovedAt == nil }) || !pendingCleanups.isEmpty || !preservedMaterials.isEmpty {
+            if selectedTab == .appDirs && (dataTransfers.contains(where: { $0.needsAttention }) || !pendingCleanups.isEmpty || !preservedMaterials.isEmpty) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("操作尚未全部完成，AppPorts 会自动继续处理。".localized)
-                        if let reason = dataTransfers.compactMap(\.recoverableReason).first ?? preservedMaterials.first?.reason {
+                        Text("部分数据操作尚未完成，已保留副本。".localized)
+                        if let reason = dataTransfers.filter { $0.needsAttention }.compactMap(\.recoverableReason).first ?? preservedMaterials.first?.reason {
                             Text(verbatim: reason).font(.caption).foregroundStyle(.secondary)
+                                .lineLimit(2).help(reason)
                         }
                     }
                     Spacer()
-                    Button("重试".localized) { retryPendingOperations() }
+                    Button("处理异常".localized) { showCleanupResolution = true }
                 }
                 .padding(12)
+            }
+            if selectedTab == .appDirs && dataTransfers.contains(where: { $0.cleanupDisposition == .keep }) {
+                HStack {
+                    Text("已保留旧副本".localized).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("查看旧副本".localized) { showCleanupResolution = true }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
             // ── 主内容区 ────────────────────────────────────────
             if selectedTab == .toolDirs {
@@ -206,6 +219,8 @@ struct DataDirsView: View {
             reloadCurrentTab()
         }
         .onDisappear {
+            recordRefreshTask?.cancel()
+            recordRefreshToken = UUID()
             if isScanning { hasLoadedDirectories = false }
             directoryScanTask?.cancel()
             dotFolderScanToken = UUID()
@@ -269,6 +284,16 @@ struct DataDirsView: View {
         .sheet(isPresented: $showReadinessCheck) {
             ReadinessCheckSheet()
         }
+        .sheet(isPresented: $showCleanupResolution) {
+            DataCleanupResolutionSheet(transfers: dataTransfers,
+                otherIssues: pendingCleanups.map { $0.mountRecord.appName + ": " + $0.localPath }
+                    + preservedMaterials.map { $0.appName + ": " + $0.reason },
+                onRetry: { id in
+                    DispatchQueue.main.async { retryPendingOperations(operationID: id) }
+                }, onChanged: { refreshOperationRecords() }, onPermissions: {
+                    DispatchQueue.main.async { showReadinessCheck = true }
+                })
+        }
         // 错误弹窗
         .alert("操作失败".localized, isPresented: $showError) {
             Button("好的".localized, role: .cancel) {}
@@ -276,12 +301,13 @@ struct DataDirsView: View {
             Text(errorMessage)
         }
         .alert("操作尚未完成".localized, isPresented: $showDataCompletionWarning) {
-            Button("好的".localized, role: .cancel) {}
+            Button("处理异常".localized) { refreshOperationRecords(); showCleanupResolution = true }
+            Button("稍后".localized, role: .cancel) {}
         } message: {
             Text(dataCompletionWarning)
         }
         .alert("操作尚未完成".localized, isPresented: $showCleanupWarning) {
-            Button("重试".localized) { retryPendingOperations() }
+            Button("处理异常".localized) { refreshOperationRecords(); showCleanupResolution = true }
             Button("稍后".localized, role: .cancel) {}
         } message: {
             Text(cleanupWarning?.message ?? "")
@@ -779,11 +805,11 @@ struct DataDirsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
                 statsSummary(items: items, allItems: dotFolderItems, readIssues: dotFolderReadIssues)
+                zeroByteDirectoriesToggle
                 Toggle("显示不可迁移目录".localized, isOn: $showNonMigratableToolDirectories)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 12))
                     .fixedSize()
-                zeroByteDirectoriesToggle
             }
             if !dotFolderReadIssues.isEmpty {
                 directoryReadWarning(issues: dotFolderReadIssues)
@@ -859,27 +885,39 @@ struct DataDirsView: View {
         let summary = DataDirSpaceSummary(
             items: visibleItems, allItems: allItems, hasReadIssues: !readIssues.isEmpty, hasIdentityIssue: hasIdentityIssue
         )
+        let totalSize = DataDirDisplaySizeSummary(items: allItems,
+            hasReadIssues: !readIssues.isEmpty || hasIdentityIssue)
+        let visibleSize = DataDirDisplaySizeSummary(items: visibleItems)
         let linked = items.filter { $0.status == "已链接" }.count
         let mounted = items.filter { DataDirStatus.mountStatuses.contains($0.status) }.count
         let needsNormalization = items.filter { $0.status == "待规范" }.count
         let existingSymlinks = items.filter { $0.status == "现有软链" && !$0.isUserDirectoryLink }.count
         let relinkable = items.filter { $0.status == "待接回" }.count
         return HStack(spacing: 14) {
-            Label(String(format: "%lld 个目录".localized, Int64(visibleItems.count)), systemImage: "folder.fill")
-                .foregroundColor(.secondary)
-            if summary.isIncomplete {
-                Label("空间统计不完整".localized, systemImage: "exclamationmark.circle")
-                    .foregroundColor(.orange)
-            } else if summary.isCalculating {
-                Label("计算中...".localized, systemImage: "hourglass")
+            if displayedItems != nil {
+                Text("应用数据：".localized + totalSize.sizeText)
+                    .foregroundColor(totalSize.isIncomplete ? .orange : .secondary)
+                Label(String(format: "%lld 个目录".localized, Int64(visibleItems.count)), systemImage: "folder.fill")
                     .foregroundColor(.secondary)
-            } else if summary.reclaimableBytes > 0 {
-                Label(
-                    LocalizedByteCountFormatter.string(fromByteCount: summary.reclaimableBytes, allowedUnits: [.mb, .gb]) + " 可释放".localized,
-                    systemImage: "sparkles"
-                )
-                    .foregroundColor(.accentColor)
-                    .help("原件仍保留，清理后才会释放空间。".localized)
+                Text("目录大小：".localized + visibleSize.sizeText)
+                    .foregroundColor(visibleSize.isIncomplete ? .orange : .accentColor)
+            } else {
+                Label(String(format: "%lld 个目录".localized, Int64(visibleItems.count)), systemImage: "folder.fill")
+                    .foregroundColor(.secondary)
+                if summary.isIncomplete {
+                    Label("空间统计不完整".localized, systemImage: "exclamationmark.circle")
+                        .foregroundColor(.orange)
+                } else if summary.isCalculating {
+                    Label("计算中...".localized, systemImage: "hourglass")
+                        .foregroundColor(.secondary)
+                } else if summary.reclaimableBytes > 0 {
+                    Label(
+                        LocalizedByteCountFormatter.string(fromByteCount: summary.reclaimableBytes, allowedUnits: [.mb, .gb]) + " 可释放".localized,
+                        systemImage: "sparkles"
+                    )
+                        .foregroundColor(.accentColor)
+                        .help("原件仍保留，清理后才会释放空间。".localized)
+                }
             }
             if linked > 0 {
                 summaryNavigationLabel(String(format: "%lld 个已链接".localized, Int64(linked)),
@@ -1116,18 +1154,42 @@ struct DataDirsView: View {
 
     // MARK: - 扫描逻辑
 
+    private func refreshOperationRecords() {
+        recordRefreshTask?.cancel()
+        let token = UUID()
+        recordRefreshToken = token
+        recordRefreshTask = Task.detached(priority: .utility) {
+            do {
+                // 迁移记录含大目录的校验清单，解析和等待记录锁不能占用主线程。
+                let inspection = try ContainerMountStore.shared.recordsForInspection()
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard self.recordRefreshToken == token else { return }
+                    self.dataTransfers = inspection.transfers
+                    self.preservedMaterials = inspection.preservedMaterials
+                    self.pendingCleanups = inspection.cleanups
+                    if let error = inspection.validationError {
+                        self.errorMessage = error.localizedDescription
+                        self.showError = true
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard self.recordRefreshToken == token else { return }
+                    self.errorMessage = error.localizedDescription
+                    self.showError = true
+                }
+            }
+        }
+    }
+
     private func reloadCurrentTab(forceToolSizeRefresh: Bool = false) {
-        do {
-            dataTransfers = try ContainerMountStore.shared.transfers()
-            preservedMaterials = try ContainerMountStore.shared.preservedMaterials()
-        }
-        catch {
-            errorMessage = error.localizedDescription
-            showError = true
-        }
-        do { pendingCleanups = try ContainerMountStore.shared.pendingCleanups() }
-        catch {
-            AppLogger.shared.logError("无法读取待清理记录，保留原文件", error: error, errorCode: "CONTAINER-CLEANUP-RECORD-READ-FAILED")
+        if selectedTab == .appDirs {
+            refreshOperationRecords()
+        } else {
+            recordRefreshTask?.cancel()
+            recordRefreshToken = UUID()
         }
         AppLogger.shared.logContext(
             "刷新数据目录当前标签",
@@ -2284,8 +2346,8 @@ struct DataDirsView: View {
     }
 
     private func requestAssociatedAppExit(for item: DataDirItem, associatedApp: AppItem? = nil,
-                                          continuing action: @escaping () -> Void) -> Bool {
-        let app = associatedApp ?? (selectedTab == .appDirs ? selectedApp : nil)
+                                          useSelectedApp: Bool = true, continuing action: @escaping () -> Void) -> Bool {
+        let app = associatedApp ?? (useSelectedApp && selectedTab == .appDirs ? selectedApp : nil)
         let appURL = app.map { (try? resolveRealAppURL($0)) ?? $0.displayURL }
         let bundleID = appURL.flatMap { CodeSigner.bundleIdentifier(at: $0) } ?? item.associatedBundleIdentifier
         let running = NSWorkspace.shared.runningApplications.filter { candidate in
@@ -2332,13 +2394,32 @@ struct DataDirsView: View {
         showDataCompletionWarning = !dataCompletionWarning.isEmpty
     }
 
-    private func retryPendingOperations() {
+    private func retryPendingOperations(operationID: UUID? = nil) {
+        // 依据待处理记录检查关联应用，不能只检查当前选中的应用。
+        var pendingApps: [(String, String?, String)] = dataTransfers.filter {
+            operationID == nil ? $0.cleanupDisposition != .keep : $0.operationID == operationID
+        }.map { ($0.appName, $0.bundleIdentifier, $0.originalPath) }
+        if operationID == nil {
+            pendingApps += pendingCleanups.map { ($0.mountRecord.appName, $0.mountRecord.bundleIdentifier, $0.localPath) }
+            pendingApps += preservedMaterials.compactMap { material in
+                material.recoveryRecord.map { ($0.appName, $0.bundleIdentifier, $0.originalPath) }
+            }
+        }
+        if let (name, identifier, path) = pendingApps.first(where: { _, identifier, _ in
+            guard let identifier else { return false }
+            return !NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty
+        }) {
+            var item = DataDirItem(name: name, path: URL(fileURLWithPath: path),
+                type: .containers, priority: .critical, description: "")
+            item.associatedBundleIdentifier = identifier
+            if requestAssociatedAppExit(for: item, useSelectedApp: false, continuing: { retryPendingOperations(operationID: operationID) }) { return }
+        }
         guard let token = operationState.begin() else { return }
         transferProgress = DataTransferProgress()
         showProgress = true
         progressTitle = "正在继续处理".localized
         operationState.startTask(for: token) { @MainActor in
-            let warnings = await OperationMaintenance.shared.run { progress in
+            let warnings = await OperationMaintenance.shared.runDataOperations(retryOperationID: operationID) { progress in
                 await MainActor.run { transferProgress = progress }
             }
             showProgress = false

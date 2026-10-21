@@ -3,6 +3,12 @@ import Foundation
 import CoreData
 
 extension ContainerVolumeMigrator {
+    struct RecoveryPaused: LocalizedError {
+        var errorDescription: String? {
+            "此操作已暂停，现有文件已保留。请在“处理异常”中点击“重试”后继续。".localized
+        }
+    }
+
     enum AutomaticRecoveryError: LocalizedError, CustomNSError {
         case restored(operation: Error, retainedDetails: String?)
         case incomplete(operation: Error, recovery: Error)
@@ -63,6 +69,7 @@ extension ContainerVolumeMigrator {
     func recoverWithIndependentBudget(_ transfer: DataTransferRecord,
                                       finishPreparedRestore: Bool = true,
                                       timeoutNanoseconds: UInt64 = 0) async throws -> AutomaticRecoveryResult {
+        guard transfer.needsAutomaticCompletion else { throw RecoveryPaused() }
         let transfer = try store.adoptLegacyRestoreOwnership(transfer)
         let progress = DataTransferSession.progress
         let session = DataTransferSession.current
@@ -133,6 +140,7 @@ extension ContainerVolumeMigrator {
 
     private func requireRecoveryJournal(_ expected: DataTransferRecord) throws {
         try Task.checkCancellation()
+        guard expected.needsAutomaticCompletion else { throw RecoveryPaused() }
         guard try store.transfer(operationID: expected.operationID) == expected,
               !(try store.transfers()).contains(where: { $0.priorOperationID == expected.operationID }) else {
             throw RecoveryJournalChanged(operation: DataOperationSafety.Failure.conflict(expected.originalPath))
@@ -162,6 +170,7 @@ extension ContainerVolumeMigrator {
     private func recoverMountOperation(_ expected: DataTransferRecord,
                                        finishPreparedRestore: Bool) async throws -> AutomaticRecoveryResult {
         try requireRecoveryJournal(expected)
+        DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: expected.originalPath))
         if expected.isDataSwitchComplete { return .completed }
         if expected.rollbackCompletedAt != nil {
             return try await cleanupRolledBackOperation(expected)
@@ -536,12 +545,13 @@ extension ContainerVolumeMigrator {
     /// Runs under the caller's operation lock with a noninteractive DiskUtility.
     /// Failed recovery remains durable; unchanged background failures stay quiet.
     @discardableResult
-    func performAutomaticMaintenance() async -> [String] {
+    func performAutomaticMaintenance(only operationID: UUID? = nil) async -> [String] {
         var warnings: [String] = []
         let transfers: [DataTransferRecord]
         do { transfers = try store.transfers() }
         catch { return [error.localizedDescription] }
-        for transfer in transfers where transfer.mode == .mount && !transfer.isDataSwitchComplete {
+        for transfer in transfers where transfer.mode == .mount && !transfer.isDataSwitchComplete && transfer.needsAutomaticCompletion
+            && (operationID == nil || transfer.operationID == operationID) {
             if Task.isCancelled { return warnings }
             do { _ = try await recoverWithIndependentBudget(transfer, finishPreparedRestore: false) }
             catch {
@@ -553,12 +563,14 @@ extension ContainerVolumeMigrator {
             }
         }
         guard let completed = try? store.transfers() else { return warnings }
-        for transfer in completed where transfer.mode == .mount && transfer.isDataSwitchComplete {
+        for transfer in completed where transfer.mode == .mount && transfer.isDataSwitchComplete && transfer.needsAutomaticCompletion
+            && (operationID == nil || transfer.operationID == operationID) {
             if Task.isCancelled { return warnings }
             guard let record = transfer.recoveryMountRecord else { continue }
             if let warning = await completeSuccessfulTransfer(operationID: transfer.operationID, direction: transfer.direction,
                 record: record, progressHandler: nil) { warnings.append(warning.message) }
         }
+        guard operationID == nil else { return warnings }
         for cleanup in (try? store.pendingCleanups()) ?? [] {
             if let warning = await retryCleanup(.init(cleanup: cleanup, details: "")) { warnings.append(warning.message) }
         }

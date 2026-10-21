@@ -188,13 +188,16 @@ struct DataDirOperationButtons: View {
                 }
                 if item.weChatSplitMembers.contains(where: { $0.canRestore || $0.recoveryOperationID != nil }),
                    let onMountRestore {
-                    mountRestoreButton(action: onMountRestore)
+                    mountRestoreButton(action: onMountRestore, compact: inline && (
+                        item.weChatSplitMembers.count < PartialWeChatMigrationPolicy.memberNames.count
+                            || item.weChatSplitMembers.contains { $0.status != DataDirStatus.mounted }
+                    ))
                 }
             }
         } else if DataDirStatus.mountStatuses.contains(item.status) {
             mountOperationButtons
         } else if !item.isMigratable, item.hasMountTransferRecord, let onMountRestore {
-            mountRestoreButton(action: onMountRestore)
+            mountRestoreButton(action: onMountRestore, compact: inline)
         } else if item.canRestore && (!item.isMigratable || item.status != DataDirStatus.needsNormalization) {
             restoreButton()
         } else if !item.isMigratable {
@@ -333,11 +336,11 @@ struct DataDirOperationButtons: View {
         .help("将数据目录还原到本地".localized)
     }
 
-    private func mountRestoreButton(action: @escaping (DataDirItem) -> Void) -> some View {
+    private func mountRestoreButton(action: @escaping (DataDirItem) -> Void, compact: Bool = false) -> some View {
         Button(action: { action(item) }) {
             HStack(spacing: 5) {
                 Image(systemName: "arrow.uturn.backward.circle.fill")
-                if !inline { Text("还原".localized).lineLimit(1) }
+                if !compact { Text("还原".localized).lineLimit(1) }
             }
                 .fixedSize(horizontal: true, vertical: true)
                 .font(.system(size: 12, weight: .medium))
@@ -396,7 +399,7 @@ struct DataDirOperationButtons: View {
                     .help("外置盘未连接。连接这块外部存储后会自动接回；如果已经连接仍显示此状态，数据卷可能被改名或删除，请查看挂载迁移文档里的排查步骤".localized)
             }
             if let onMountRestore {
-                mountRestoreButton(action: onMountRestore)
+                mountRestoreButton(action: onMountRestore, compact: inline && item.status != DataDirStatus.mounted)
             }
         }
     }

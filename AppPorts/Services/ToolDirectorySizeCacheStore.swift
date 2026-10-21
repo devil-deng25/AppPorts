@@ -1,8 +1,8 @@
 import Foundation
 
-/// 仅供界面展示的工具目录大小，不参与迁移校验。
+/// 仅供界面展示的目录大小，不参与迁移校验。
 final class ToolDirectorySizeCacheStore: @unchecked Sendable {
-    struct Entry: Codable, Sendable {
+    struct Entry: Codable, Equatable, Sendable {
         let identity: String
         let sourcePath: String
         let targetPath: String
@@ -17,9 +17,14 @@ final class ToolDirectorySizeCacheStore: @unchecked Sendable {
     }
 
     static let shared = ToolDirectorySizeCacheStore()
+    static let customDirectories = ToolDirectorySizeCacheStore(fileName: "custom-directory-sizes.json")
     private let queue = DispatchQueue(label: "com.shimoko.AppPorts.tool-size-cache", qos: .utility)
-    private let fileURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("AppPorts/tool-directory-sizes.json")
+    private let fileURL: URL
+
+    init(fileName: String = "tool-directory-sizes.json") {
+        fileURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AppPorts/" + fileName)
+    }
 
     /// 路径、状态或目标文件系统身份变化后，旧大小不再适用。
     static func identity(for item: DataDirItem) -> String? {

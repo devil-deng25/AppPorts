@@ -73,6 +73,7 @@ final class AppLogger: @unchecked Sendable {
 
     /// 磁盘查询可能等待设备响应，不占用调用者（尤其是主线程）。
     private let diagnosticQueue = DispatchQueue(label: "com.shimoko.AppPorts.logger.diagnostics", qos: .utility)
+    @MainActor private var diagnosticExportInProgress = false
 
     nonisolated(unsafe) private let userDefaults: UserDefaults
     nonisolated private let usesTestLogDirectory: Bool
@@ -239,34 +240,51 @@ final class AppLogger: @unchecked Sendable {
 
     @MainActor
     func exportDiagnosticPackageInteractively() {
-        guard let options = DiagnosticExportDialog.run(defaultFileName: defaultDiagnosticArchiveName()) else { return }
+        guard !diagnosticExportInProgress else { return }
+        diagnosticExportInProgress = true
+        guard let options = DiagnosticExportDialog.run(defaultFileName: defaultDiagnosticArchiveName()) else {
+            diagnosticExportInProgress = false
+            return
+        }
         let destinationURL = options.destinationURL
-
-        do {
-            let archiveURL = try createDiagnosticArchive(includeAppInventory: options.includeAppInventory)
-
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
+        let includeAppInventory = options.includeAppInventory
+        Task { @MainActor in
+            defer { diagnosticExportInProgress = false }
+            do {
+                try await Task.detached(priority: .utility) { [self] in
+                    try exportDiagnosticArchive(to: destinationURL, includeAppInventory: includeAppInventory)
+                }.value
+                NSWorkspace.shared.activateFileViewerSelecting([destinationURL])
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "导出诊断包失败".localized
+                alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: "好的".localized)
+                alert.runModal()
             }
+        }
+    }
 
-            try fileManager.copyItem(at: archiveURL, to: destinationURL)
+    nonisolated private func exportDiagnosticArchive(to destinationURL: URL, includeAppInventory: Bool) throws {
+        do {
+            let archiveURL = try createDiagnosticArchive(includeAppInventory: includeAppInventory)
+            defer { try? fileManager.removeItem(at: archiveURL.deletingLastPathComponent()) }
+            // Foundation writes a temporary sibling first and atomically
+            // replaces the destination only when the new archive is complete.
+            // A failed read/write leaves an existing export untouched.
+            try Data(contentsOf: archiveURL, options: .mappedIfSafe).write(to: destinationURL, options: .atomic)
             logContext(
                 "诊断包导出完成".localized,
                 details: [
                     ("destination", destinationURL.path),
                     ("redaction_mode", "share_safe"),
-                    ("app_inventory_included", String(options.includeAppInventory))
+                    ("app_inventory_included", String(includeAppInventory))
                 ],
                 level: "DIAG"
             )
-            NSWorkspace.shared.activateFileViewerSelecting([destinationURL])
         } catch {
             logError("导出诊断包失败".localized, error: error, errorCode: "LOG-EXPORT-FAILED")
-            let alert = NSAlert()
-            alert.messageText = "导出诊断包失败".localized
-            alert.informativeText = error.localizedDescription
-            alert.addButton(withTitle: "好的".localized)
-            alert.runModal()
+            throw error
         }
     }
 
@@ -892,6 +910,8 @@ final class AppLogger: @unchecked Sendable {
         let tempRootURL = fileManager.temporaryDirectory.appendingPathComponent("AppPorts-Diagnostic-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: tempRootURL, withIntermediateDirectories: true)
 
+        var completed = false
+        defer { if !completed { try? fileManager.removeItem(at: tempRootURL) } }
         let packageURL = try buildDiagnosticPackage(in: tempRootURL, includeAppInventory: includeAppInventory)
         let archiveURL = tempRootURL.appendingPathComponent("\(packageURL.lastPathComponent).zip")
 
@@ -910,6 +930,7 @@ final class AppLogger: @unchecked Sendable {
             )
         }
 
+        completed = true
         return archiveURL
     }
 

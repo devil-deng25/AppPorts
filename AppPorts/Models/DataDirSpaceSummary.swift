@@ -31,3 +31,36 @@ struct DataDirSpaceSummary {
         }
     }
 }
+
+/// 展示已读取到的目录大小，读取失败时保留可用的部分统计。
+struct DataDirDisplaySizeSummary {
+    let bytes: Int64
+    let isIncomplete: Bool
+    let isCalculating: Bool
+
+    init(items: [DataDirItem], hasReadIssues: Bool = false) {
+        // 父目录统计不跟随软链、不跨挂载卷，外置目标需单独计入。
+        let candidates = items.filter { !$0.isUserDirectoryLink }
+        var seen = Set<String>()
+        let unique = candidates.filter { seen.insert($0.id).inserted }
+        let roots = unique.filter { item in
+            !unique.contains { parent in
+                guard parent.id != item.id,
+                      item.id.hasPrefix(parent.id == "/" ? "/" : parent.id + "/") else { return false }
+                return item.linkedDestination == nil && !DataDirStatus.mountStatuses.contains(item.status)
+                    && parent.linkedDestination == nil && !DataDirStatus.mountStatuses.contains(parent.status)
+                    && parent.weChatSplitMembers.isEmpty
+            }
+        }
+        bytes = roots.reduce(0) { $0 + $1.sizeBytes }
+        isIncomplete = hasReadIssues || roots.contains { $0.sizeIsIncomplete }
+        isCalculating = roots.contains { $0.size == nil }
+    }
+
+    var sizeText: String {
+        var text = LocalizedByteCountFormatter.string(fromByteCount: bytes)
+        if isIncomplete { text += "（统计不完整）".localized }
+        else if isCalculating { text += "（统计中）".localized }
+        return text
+    }
+}

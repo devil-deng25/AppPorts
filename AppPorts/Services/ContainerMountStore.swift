@@ -59,7 +59,7 @@ final class ContainerMountStore: @unchecked Sendable {
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
-            guard (2...9).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
+            guard (2...10).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
             mounts = try values.decode([ContainerMountRecord].self, forKey: .mounts)
             cleanups = try values.decode([ContainerCleanupRecord].self, forKey: .cleanups)
             transfers = schemaVersion == 2 ? [] : try values.decode([DataTransferRecord].self, forKey: .transfers)
@@ -448,6 +448,20 @@ final class ContainerMountStore: @unchecked Sendable {
         try mutate { current in try self.replaceTransfer(transfer, in: &current) }
     }
 
+    /// Called under OperationLock. Compare the full journal snapshot so a
+    /// decision never applies to work that advanced while its sheet was open.
+    func setCleanupDisposition(_ disposition: DataTransferRecord.CleanupDisposition?,
+                               expected: DataTransferRecord) throws {
+        try mutate { current in
+            guard let index = current.transfers.firstIndex(where: { $0.operationID == expected.operationID }),
+                  current.transfers[index] == expected, expected.retainedCopyRemovedAt == nil,
+                  disposition != .keep || expected.isDataSwitchComplete else {
+                throw StoreError.conflict("Cleanup decision no longer matches the transfer")
+            }
+            current.transfers[index].cleanupDisposition = disposition
+        }
+    }
+
     func prepareCopy(operationID: UUID, path: URL, parentIdentity: DataPathIdentity,
                      baseline: TreeCopySnapshot) throws {
         try mutate { current in
@@ -645,7 +659,9 @@ final class ContainerMountStore: @unchecked Sendable {
         try mutate { current in
             guard deletionConfirmed else { throw StoreError.deletionNotConfirmed }
             guard let transfer = current.transfers.first(where: { $0.operationID == operationID }) else { return }
-            guard transfer.phase == .cleanupRequested else { throw StoreError.invalidState("Cleanup must be explicitly requested") }
+            guard transfer.phase == .cleanupRequested, transfer.needsAutomaticCompletion else {
+                throw StoreError.invalidState("Cleanup must be explicitly requested and not paused")
+            }
             // Only journals predating the saved mount record need this legacy
             // inference. Cleanup must not turn a new noowners migration into
             // an owners record merely because its copy was verified.
@@ -764,7 +780,8 @@ final class ContainerMountStore: @unchecked Sendable {
         // manifest. Apply this to creation and partial-removal baselines too.
         let needsResourceForkSchema = try document.transfers.contains { try self.hasResourceForkContract($0, using: validation) }
         let needsRollbackSchema = document.transfers.contains { $0.rollbackCompletedAt != nil }
-        document.schemaVersion = max(document.schemaVersion, needsRollbackSchema ? 9 : needsLocationSchema || needsResourceForkSchema ? 8 : needsPreparationSchema ? 7 : needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
+        let needsCleanupDecisionSchema = document.transfers.contains { $0.cleanupDisposition != nil }
+        document.schemaVersion = max(document.schemaVersion, needsCleanupDecisionSchema ? 10 : needsRollbackSchema ? 9 : needsLocationSchema || needsResourceForkSchema ? 8 : needsPreparationSchema ? 7 : needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
         // Removing a mount also resolves its remount-only block; transfer recovery remains independent.
         let activeVolumes = Set(document.mounts.map { $0.volumeUUID.uppercased() })
         document.remountInterventions = document.remountInterventions.filter { activeVolumes.contains($0.key) }
@@ -892,6 +909,7 @@ final class ContainerMountStore: @unchecked Sendable {
               old.destinationVolumeUUID == nil || sameUUID(old.destinationVolumeUUID, transfer.destinationVolumeUUID),
               old.backupIdentity == nil || old.backupIdentity == transfer.backupIdentity,
               old.retainedCopyRemovedAt == transfer.retainedCopyRemovedAt,
+              old.cleanupDisposition == transfer.cleanupDisposition,
               old.rollbackCompletedAt == transfer.rollbackCompletedAt,
               old.baseline == nil || old.baseline == transfer.baseline,
               old.sourceBaseline == nil || old.sourceBaseline == transfer.sourceBaseline,
@@ -1182,6 +1200,12 @@ final class ContainerMountStore: @unchecked Sendable {
             }
         }
         for transfer in document.transfers {
+            if let disposition = transfer.cleanupDisposition {
+                guard document.schemaVersion >= 10, transfer.retainedCopyRemovedAt == nil,
+                      disposition != .keep || transfer.isDataSwitchComplete else {
+                    throw StoreError.invalidState("Invalid retained-copy decision")
+                }
+            }
             try validateLegacyOwnership(transfer, using: validation)
             _ = try hasOwnershipCompatibility(transfer, using: validation)
             _ = try hasResourceForkContract(transfer, using: validation)

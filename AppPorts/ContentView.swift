@@ -327,7 +327,6 @@ struct ContentView: View {
 
     var body: some View {
         mainContent
-        .disabled(operationState.isBusy)
         .frame(minWidth: 900, minHeight: 600)
         .onAppear {
             // A unit-test host must not scan apps, refresh agents, or observe real volumes.
@@ -759,12 +758,14 @@ struct ContentView: View {
                 )
             } else if mainTab == .customDirs {
                 CustomDirsView()
+                    .disabled(operationState.isBusy)
             } else {
 
             HSplitView {
                 localAppsPane
                 externalAppsPane
-            } // end HSplitView for mainTab == .apps
+            }
+            .disabled(operationState.isBusy) // end HSplitView for mainTab == .apps
             } // end else for mainTab == .apps
         }
         .background(Color(nsColor: .controlBackgroundColor))
@@ -808,6 +809,7 @@ struct ContentView: View {
                 Spacer(minLength: 12)
                 if mainTab == .dataDirs {
                     dataDirsToolbarControls
+                        .disabled(operationState.isBusy)
                 }
                 Button(action: { showAppStoreSettings = true }) {
                     Label("设置".localized, systemImage: "gearshape")
@@ -819,6 +821,7 @@ struct ContentView: View {
                 .buttonStyle(.borderless)
                 .foregroundColor(.secondary)
                 .keyboardShortcut(",", modifiers: .command)
+                .disabled(operationState.isBusy)
                 .help("设置".localized + " (⌘,)")
                 .accessibilityLabel("设置".localized)
             }
@@ -827,6 +830,7 @@ struct ContentView: View {
 
             if mainTab == .apps {
                 appListToolbar
+                    .disabled(operationState.isBusy)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
             }
@@ -3287,10 +3291,12 @@ struct ContentView: View {
 
     @MainActor
     private func remountContainerVolumes(trigger: String) {
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+        // 前台操作已经执行过自己的收尾；失败后交由定时检查或用户手动重试。
+        guard trigger != "operation-finished",
+              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
               !operationState.isBusy else { return }
         Task {
-            _ = await OperationMaintenance.shared.run()
+            _ = await OperationMaintenance.shared.run(minimumInterval: trigger == "retry" ? 60 : 0)
         }
     }
 }

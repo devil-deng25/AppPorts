@@ -93,6 +93,9 @@ final class AppTransferTransaction {
                replacementChoice: AppMigrationService.ReplacementChoice? = nil,
                legacyPortals: [(URL, URL)], progress: FileCopier.ProgressHandler?) async throws -> AppTransferResult {
         let source = Self.canonical(app.path)
+        DataTransferSession.progress?.setDirectory(source)
+        DataTransferSession.progress?.begin(.preparing,
+            detail: "正在检查应用是否运行、目标位置是否可用，以及是否存在需要继续处理的记录。".localized)
         let destination = Self.canonical(destination)
         guard source != destination, !Self.contains(source, destination), !Self.contains(destination, source),
               try SignatureSnapshot.info(at: source).st_mode & S_IFMT == S_IFDIR else {
@@ -219,6 +222,9 @@ final class AppTransferTransaction {
             }
             for relative in record.applicationPaths {
                 let url = relative.isEmpty ? source : source.appendingPathComponent(relative)
+                DataTransferSession.progress?.begin(.verifying,
+                    detail: "正在记录原应用的签名状态，后续会确认原本有效的签名在复制后仍然有效。".localized,
+                    currentFile: url.lastPathComponent, title: "正在检查原应用签名".localized)
                 let valid = try Self.signatureIsValid(at: url)
                 if let relocation = try facts.captureRelocation(from: url, transferStore: store) {
                     journal.record.signatureRelocations.append(.init(relativePath: relative, relocation: relocation))
@@ -364,6 +370,7 @@ final class AppTransferTransaction {
     }
 
     private func continueTransfer(_ journal: Journal, progress: FileCopier.ProgressHandler?) async throws -> AppTransferResult {
+        DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: journal.record.sourcePath))
         try requireParents(journal.record)
         if try observeActivation(journal.record) {
             return try finishCommitted(journal)
@@ -375,7 +382,8 @@ final class AppTransferTransaction {
         let source = URL(fileURLWithPath: journal.record.sourcePath)
         // Announce work before the first byte moves so the overlay shows a
         // spinning stage instead of a frozen zero.
-        DataTransferSession.progress?.begin(.preparing)
+        DataTransferSession.progress?.begin(.preparing,
+            detail: "正在核对原应用的位置和运行状态，为复制及应用入口切换做准备。".localized)
         try requireIdentity(journal.record.sourceIdentity, at: source)
         try requireNotRunning(source: source, applicationPaths: journal.record.applicationPaths)
         // Until an existing target's baseline is durable we cannot distinguish
@@ -388,6 +396,9 @@ final class AppTransferTransaction {
         if journal.record.applicationPaths.contains(where: { journal.record.signatureChecks[$0] == nil }) {
             for relative in journal.record.applicationPaths where journal.record.signatureChecks[relative] == nil {
                 let url = relative.isEmpty ? source : source.appendingPathComponent(relative)
+                DataTransferSession.progress?.begin(.verifying,
+                    detail: "正在记录原应用的签名状态，后续会确认原本有效的签名在复制后仍然有效。".localized,
+                    currentFile: url.lastPathComponent, title: "正在检查原应用签名".localized)
                 let valid = try Self.signatureIsValid(at: url)
                 if let relocation = try facts.captureRelocation(from: url, transferStore: store) {
                     journal.record.signatureRelocations.append(.init(relativePath: relative, relocation: relocation))
@@ -413,7 +424,11 @@ final class AppTransferTransaction {
         // performs the same final source/process checks immediately afterwards.
         try verifySource(journal.record)
         try requireNotRunning(source: source, applicationPaths: journal.record.applicationPaths)
-        DataTransferSession.progress?.begin(.switching)
+        DataTransferSession.progress?.begin(.switching,
+            detail: journal.record.direction == .migrate
+                ? "应用文件已检查，正在将本地入口连接到外置盘上的应用，并保存记录。".localized
+                : "应用文件已检查，正在将应用放回本地并更新入口及记录。".localized,
+            title: "正在切换应用位置".localized)
         journal.record.phase = .switching
         journal.record.switchIntentRecorded = true
         try journal.save()
@@ -489,6 +504,8 @@ final class AppTransferTransaction {
         let expected = journal.record.direction == .migrate ? withoutQuarantine(snapshot) : snapshot
         try TreeCopySession.verifyCopy(at: candidate, against: expected, profile: Self.copyProfile)
         try verifySignatures(journal.record, root: candidate)
+        DataTransferSession.progress?.begin(.synchronizing,
+            detail: "应用文件和签名已检查，正在等待存储设备确认写入完成。".localized)
         try DurableFileIO.syncTree(at: candidate, barrier: Self.copyProfile.syncBarrier)
         try store.writeBaseline(try captureBaseline(candidate), named: "candidate", operationID: journal.record.operationID)
         journal.record.hasCandidateBaseline = true
@@ -636,7 +653,9 @@ final class AppTransferTransaction {
             try DurableFileIO.syncDirectory(at: URL(fileURLWithPath: journal.record.sourcePath).deletingLastPathComponent())
             try syncStageIfPresent(URL(fileURLWithPath: portalStage), identity: journal.record.portalStageIdentity, record: journal.record)
         }
-        DataTransferSession.progress?.begin(.cleaning)
+        DataTransferSession.progress?.begin(.cleaning,
+            detail: "应用位置已切换，正在处理旧副本和临时目录；有差异或无法确认的文件会保留。".localized,
+            title: "正在整理应用旧副本".localized)
         try prepareCleanupItems(journal)
         journal.record.phase = .committed
         journal.record.recoverableReason = nil
@@ -1043,24 +1062,29 @@ final class AppTransferTransaction {
         if try SignatureSnapshot.info(at: url).st_mode & S_IFMT == S_IFLNK {
             return .init(tree: nil, linkTarget: try fileManager.destinationOfSymbolicLink(atPath: url.path), linkIdentity: try DataPathIdentity.capture(url))
         }
-        return .init(tree: try TreeCopySession.snapshot(at: url, profile: Self.copyProfile),
+        return .init(tree: try TreeCopySession.snapshot(at: url, profile: Self.copyProfile,
+            scanTitle: "正在记录应用文件状态".localized,
+            scanDetail: "正在记录文件结构和属性，作为后续复核及安全清理的依据。".localized),
                      linkTarget: nil, linkIdentity: nil,
                      volumeUUID: try DataPathIdentity.capture(url).volumeUUID)
     }
 
     private func verifyBaseline(_ name: String, record: AppTransferRecord, at url: URL) throws {
-        try verify(store.baseline(name, operationID: record.operationID), at: url, unchanged: true)
+        let purpose: DataTransferVerification = name == "candidate" ? .appBeforeSwitch
+            : name == "existing" ? .replacement : .sourceUnchanged
+        try verify(store.baseline(name, operationID: record.operationID), at: url, unchanged: true, purpose: purpose)
     }
 
-    private func verify(_ baseline: AppTransferBaseline, at url: URL, unchanged: Bool) throws {
+    private func verify(_ baseline: AppTransferBaseline, at url: URL, unchanged: Bool,
+                        purpose: DataTransferVerification = .retainedCopy) throws {
         if let tree = baseline.tree {
             if unchanged, let uuid = baseline.volumeUUID {
                 try TreeCopySession.verifyUnchanged(at: url, against: tree, expectedVolumeUUID: uuid,
-                                                    profile: Self.copyProfile)
+                                                    profile: Self.copyProfile, purpose: purpose)
             } else if unchanged {
-                try TreeCopySession.verifyUnchanged(at: url, against: tree, profile: Self.copyProfile)
+                try TreeCopySession.verifyUnchanged(at: url, against: tree, profile: Self.copyProfile, purpose: purpose)
             } else {
-                try TreeCopySession.verifyCopy(at: url, against: tree, profile: Self.copyProfile)
+                try TreeCopySession.verifyCopy(at: url, against: tree, profile: Self.copyProfile, purpose: purpose)
             }
         } else {
             guard let identity = baseline.linkIdentity, let target = baseline.linkTarget else { throw CocoaError(.fileReadCorruptFile) }
@@ -1138,6 +1162,10 @@ final class AppTransferTransaction {
     private func verifySignatures(_ record: AppTransferRecord, root: URL) throws {
         for (relative, wasValid) in record.signatureChecks where wasValid {
             let url = relative.isEmpty ? root : root.appendingPathComponent(relative)
+            DataTransferSession.progress?.begin(.verifying,
+                detail: "正在确认新位置的应用仍能通过原有签名检查；大型应用可能需要一些时间。".localized,
+                currentFile: relative.isEmpty ? record.appName : relative,
+                title: "正在检查新位置的应用签名".localized)
             guard try Self.signatureIsValid(at: url) else { throw Self.failure("目标应用未通过原有签名校验，原件已保留。".localized, at: url) }
         }
     }
