@@ -12,9 +12,9 @@ struct DataDirPresentationTests {
                                    type: .containers, priority: .optional, description: "",
                                    status: status, isMigratable: false)
             item.sizeIsIncomplete = true
-            #expect(!item.matchesVisibility(showZeroByteDirectories: true, showLockedStructure: true,
+            #expect(!item.matchesVisibility(showZeroByteDirectories: true,
                                            showNonMigratableDirectories: false))
-            #expect(item.matchesVisibility(showZeroByteDirectories: true, showLockedStructure: true,
+            #expect(item.matchesVisibility(showZeroByteDirectories: true,
                                           showNonMigratableDirectories: true))
 
             var child = item
@@ -41,7 +41,7 @@ struct DataDirPresentationTests {
         var item = shortcut()
         item.applyPathPolicy(.init(role: .systemDirectory, reason: reason, canMigrate: false, mayDiscoverChildren: false))
         #expect(item.needsRecoveryOrAttention)
-        #expect(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
+        #expect(item.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: false))
         #expect(item.sizeMeasurementURL == nil)
     }
 
@@ -70,7 +70,7 @@ struct DataDirPresentationTests {
     func shortcutVisibility(showZero: Bool, showStructure: Bool) {
         let item = shortcut()
         #expect(!item.matchesVisibility(showZeroByteDirectories: showZero,
-                                        showLockedStructure: showStructure))
+                                        showNonMigratableDirectories: showStructure))
     }
 
     @Test("Similar folder names and nested paths remain ordinary existing links",
@@ -81,7 +81,7 @@ struct DataDirPresentationTests {
         #expect(!item.isUserDirectoryLink)
         #expect(item.sizeMeasurementURL == item.linkedDestination)
         #expect(item.displayedStatus == DataDirStatus.existingSymlink)
-        #expect(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
+        #expect(item.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: false))
     }
 
     @Test("Only the matching personal folder target qualifies",
@@ -126,7 +126,7 @@ struct DataDirPresentationTests {
             #expect(item.sizeMeasurementURL == item.linkedDestination)
             #expect(item.displayedStatus == item.status)
             #expect(item.needsRecoveryOrAttention)
-            #expect(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
+            #expect(item.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: false))
         }
         #expect(managed.canRestore)
         #expect(linked.canRestore)

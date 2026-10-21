@@ -111,13 +111,35 @@ enum DataDirTree {
     /// Row.contextPath supplies the intermediate path that indentation no longer represents.
     static func visibleTree(from items: [DataDirItem], showZeroByteDirectories: Bool,
                             showLockedStructure: Bool, matchingIDs: Set<String>,
-                            showNonMigratableDirectories: Bool = true) -> [DataDirItem] {
-        let visibleItems = items.filter {
+                            showNonMigratableDirectories: Bool = false) -> [DataDirItem] {
+        let included = visibleItems(from: items,
+                                    showZeroByteDirectories: showZeroByteDirectories,
+                                    showLockedStructure: showLockedStructure,
+                                    showNonMigratableDirectories: showNonMigratableDirectories)
+        return retainingMatches(in: build(from: included), matchingIDs: matchingIDs)
+    }
+
+    /// 一屏里应当出现的目录集合。
+    ///
+    /// `showNonMigratableDirectories` 打开时，所有不可迁移目录都算可见；
+    /// 只勾「锁定目录结构」时，仅补回**可操作项之上的锁定祖先**——
+    /// 它们的唯一作用是交代层级，不会把没有可操作子项的锁定目录一并放出。
+    static func visibleItems(from items: [DataDirItem], showZeroByteDirectories: Bool,
+                             showLockedStructure: Bool,
+                             showNonMigratableDirectories: Bool) -> [DataDirItem] {
+        let base = items.filter {
             $0.matchesVisibility(showZeroByteDirectories: showZeroByteDirectories,
-                                 showLockedStructure: showLockedStructure,
                                  showNonMigratableDirectories: showNonMigratableDirectories)
         }
-        return retainingMatches(in: build(from: visibleItems), matchingIDs: matchingIDs)
+        guard showLockedStructure, !showNonMigratableDirectories else { return base }
+        let baseIDs = Set(base.map(\.id))
+        let basePaths = base.map { $0.path.standardizedFileURL.path }
+        return items.filter { item in
+            if baseIDs.contains(item.id) { return true }
+            guard !item.isMigratable, !item.isUserDirectoryLink else { return false }
+            let prefix = item.path.standardizedFileURL.path + "/"
+            return basePaths.contains { $0.hasPrefix(prefix) }
+        }
     }
 
     /// Keep ancestors of matches so a search never hides the directory's context.

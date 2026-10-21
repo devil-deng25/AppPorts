@@ -61,13 +61,13 @@ final class DataPathPolicyTests: XCTestCase {
                        DataDirStatus.pendingMount, DataDirStatus.volumeMissing] {
             item.status = status
             XCTAssertTrue(item.canRestore, status)
-            XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false), status)
+            XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: false), status)
         }
         item.status = DataDirStatus.local
         XCTAssertFalse(item.canRestore)
         for zeros in [false, true] {
             for locked in [false, true] {
-                XCTAssertEqual(item.matchesVisibility(showZeroByteDirectories: zeros, showLockedStructure: locked), locked)
+                XCTAssertEqual(item.matchesVisibility(showZeroByteDirectories: zeros, showNonMigratableDirectories: locked), locked)
             }
         }
     }

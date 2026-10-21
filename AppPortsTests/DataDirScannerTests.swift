@@ -1223,8 +1223,8 @@ final class DataDirScannerTests: XCTestCase {
                 XCTAssertEqual(row.sizeBytes, 0)
                 let measured = await scanner.calculateSize(for: row)
                 XCTAssertEqual(measured, 0)
-                XCTAssertFalse(row.matchesVisibility(showZeroByteDirectories: true, showLockedStructure: false))
-                XCTAssertFalse(row.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: true))
+                XCTAssertFalse(row.matchesVisibility(showZeroByteDirectories: true, showNonMigratableDirectories: false))
+                XCTAssertFalse(row.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: true))
                 XCTAssertEqual(try String(contentsOf: workspace.homeURL.appendingPathComponent(name + "/payload.txt")), "payload")
             }
         }
@@ -1326,7 +1326,7 @@ final class DataDirScannerTests: XCTestCase {
             for: AppItem(name: "WeChat.app", path: appURL, status: "本地"))
         let item = try XCTUnwrap(items.first { $0.path.standardizedFileURL == source.standardizedFileURL })
         XCTAssertFalse(item.isMigratable)
-        XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
+        XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: false))
     }
 
     func testUnresolvedRetainedMigrationBlocksRemigrationAndRemainsVisible() async throws {
@@ -1356,7 +1356,7 @@ final class DataDirScannerTests: XCTestCase {
         let item = try XCTUnwrap(items.first { $0.path.standardizedFileURL == source.standardizedFileURL })
         XCTAssertFalse(item.isMigratable)
         XCTAssertEqual(item.pathPolicy?.reason, .retainedOriginal)
-        XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
+        XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: false))
     }
 
     func testCompletedRestoreIsMigratableWithTwoRetainedCopiesUnlessEntryChangedOrRecoveryIsPending() async throws {
@@ -1405,7 +1405,7 @@ final class DataDirScannerTests: XCTestCase {
             XCTAssertEqual(scanned.isMigratable, ["restored", "used-after-restore", "cleanup-retry"].contains(state), state)
             XCTAssertEqual(scanned.recoveryOperationID, restored.operationID, state)
             XCTAssertNil(scanned.linkedDestination, state)
-            XCTAssertTrue(scanned.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false), state)
+            XCTAssertTrue(scanned.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: false), state)
             XCTAssertEqual(try store.transfers().count, 2, "Scanning must not delete retained data")
         }
     }
@@ -1452,7 +1452,7 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertFalse(item.isMigratable)
         XCTAssertTrue(item.canRestore)
         XCTAssertEqual(item.linkedDestination?.standardizedFileURL, target.standardizedFileURL)
-        XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showLockedStructure: false))
+        XCTAssertTrue(item.matchesVisibility(showZeroByteDirectories: false, showNonMigratableDirectories: false))
     }
 
     func testWeChatSplitDiscoveryAddsOnlyTwoMembersAndGroupsActionsAtAccount() async throws {

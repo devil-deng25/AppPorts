@@ -66,11 +66,14 @@ final class MigrationSafetyRenderTests: XCTestCase {
             for zeros in [false, true] {
                 for locked in [false, true] {
                     let matches = Set(items.filter {
-                        $0.matchesVisibility(showZeroByteDirectories: zeros, showLockedStructure: locked)
+                        $0.matchesVisibility(showZeroByteDirectories: zeros, showNonMigratableDirectories: false)
                     }.map(\.id))
-                    let tree = DataDirTree.visibleTree(from: items, showZeroByteDirectories: zeros, showLockedStructure: locked, matchingIDs: matches)
+                    let tree = DataDirTree.visibleTree(from: items, showZeroByteDirectories: zeros, showLockedStructure: locked,
+                                                       matchingIDs: matches, showNonMigratableDirectories: false)
                     let view = VStack(alignment: .leading, spacing: 8) {
-                        AppDataVisibilityControls(showZeroByteDirectories: .constant(zeros), showLockedStructure: .constant(locked))
+                        AppDataVisibilityControls(showZeroByteDirectories: .constant(zeros),
+                                                  showLockedStructure: .constant(locked),
+                                                  showNonMigratableDirectories: .constant(false))
                             .padding(.horizontal, 12)
                         AppDataDirectoryBrowser(groups: [DataDirGroup(type: .containers, items: tree)],
                                                 matchingItemIDs: matches, isFiltering: false, showLockedStructure: locked) { item in

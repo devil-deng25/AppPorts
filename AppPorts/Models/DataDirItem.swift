@@ -317,12 +317,16 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
             || pathPolicy?.reason == .runtimeConflict || pathPolicy?.reason == .readFailure
     }
 
-    func matchesVisibility(showZeroByteDirectories: Bool, showLockedStructure: Bool,
+    /// 单条目录的基础可见性：可操作项、需要处理的行，以及按开关决定的空目录与不可迁移目录。
+    ///
+    /// “可操作项之上的锁定祖先”不属于单条判断能回答的问题，由 `DataDirTree.visibleItems` 补回；
+    /// `showNonMigratableDirectories` 才是把全部不可迁移目录一并放出的开关。
+    func matchesVisibility(showZeroByteDirectories: Bool,
                            showNonMigratableDirectories: Bool = true) -> Bool {
         if isMigrationUnsupported && !showNonMigratableDirectories { return false }
         if needsRecoveryOrAttention || hasMountTransferRecord { return true }
         if isUserDirectoryLink { return false }
-        if !isMigratable { return showLockedStructure }
+        if !isMigratable { return showNonMigratableDirectories }
         return showZeroByteDirectories || !isEmptyLocalDirectory
     }
 

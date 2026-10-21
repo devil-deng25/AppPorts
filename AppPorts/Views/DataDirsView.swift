@@ -646,7 +646,7 @@ struct DataDirsView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("清除搜索".localized)
             }
-            Text(String(format: "显示 %lld / %lld".localized, Int64(filteredLibraryItems.count), Int64(libraryItems.count)))
+            Text(String(format: "显示 %lld / %lld".localized, Int64(visibleLibraryItemCount), Int64(libraryItems.count)))
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize()
@@ -708,7 +708,7 @@ struct DataDirsView: View {
     private var appDataFilterSummary: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Text(String(format: "显示 %lld / %lld".localized, Int64(sortedFilteredLibraryItems.count), Int64(libraryItems.count)))
+                Text(String(format: "显示 %lld / %lld".localized, Int64(visibleLibraryItemCount), Int64(libraryItems.count)))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.secondary)
 
@@ -1046,6 +1046,12 @@ struct DataDirsView: View {
         }
     }
 
+    private var visibleLibraryItemCount: Int {
+        groupedLibraryItems.reduce(0) { count, group in
+            count + DataDirTree.rows(in: group.items).count
+        }
+    }
+
     private var hasActiveAppDataFilters: Bool {
         summaryFilter != nil || !selectedPriorityFilters.isEmpty || !selectedStatusFilters.isEmpty || !selectedTypeFilters.isEmpty
     }
@@ -1083,7 +1089,6 @@ struct DataDirsView: View {
             && (selectedStatusFilters.isEmpty || selectedStatusFilters.contains(item.displayedStatus))
             && (selectedTypeFilters.isEmpty || selectedTypeFilters.contains(item.type))
             && item.matchesVisibility(showZeroByteDirectories: showZeroByteDirectories,
-                                      showLockedStructure: showLockedDirectoryStructure,
                                       showNonMigratableDirectories: showNonMigratableDirectories)
     }
 

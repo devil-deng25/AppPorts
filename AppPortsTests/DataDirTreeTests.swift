@@ -180,20 +180,34 @@ final class DataDirTreeTests: XCTestCase {
         let items = [root, locked, empty, business, managed, unreadable]
         for zeros in [false, true] {
             for locks in [false, true] {
-                let matches = Set(items.filter { $0.matchesVisibility(showZeroByteDirectories: zeros, showLockedStructure: locks) }.map(\.id))
+                let matches = Set(items.filter {
+                    $0.matchesVisibility(showZeroByteDirectories: zeros, showNonMigratableDirectories: false)
+                }.map(\.id))
                 let tree = DataDirTree.visibleTree(from: items, showZeroByteDirectories: zeros,
-                                                   showLockedStructure: locks, matchingIDs: matches)
+                                                   showLockedStructure: locks, matchingIDs: matches,
+                                                   showNonMigratableDirectories: false)
                 let visible = Set(DataDirTree.rows(in: tree).map(\.id))
-                XCTAssertTrue(visible.isSuperset(of: [business.id, managed.id, unreadable.id]))
+                XCTAssertTrue(visible.isSuperset(of: [business.id, managed.id]))
+                // root 是 business 的祖先：只有“显示锁定目录结构”会把它作为层级补回来。
                 XCTAssertEqual(visible.contains(root.id), locks)
                 XCTAssertEqual(visible.contains(empty.id), zeros)
-                XCTAssertEqual(visible.contains(locked.id), locks)
+                // locked 没有可操作的子项，单靠“锁定结构”不会出现在列表里。
+                XCTAssertFalse(visible.contains(locked.id))
+                // 不支持迁移且读取失败的行，仍然只跟随“显示不支持迁移目录”。
+                XCTAssertFalse(visible.contains(unreadable.id))
                 // Search preserves only ancestors that survived visibility filtering.
                 let explicitMatches = matches.intersection([business.id])
                 let explicitTree = DataDirTree.visibleTree(from: items, showZeroByteDirectories: zeros,
-                                                           showLockedStructure: locks, matchingIDs: explicitMatches)
+                                                           showLockedStructure: locks, matchingIDs: explicitMatches,
+                                                           showNonMigratableDirectories: false)
                 XCTAssertEqual(DataDirTree.rows(in: explicitTree).map(\.id), locks ? [root.id, business.id] : [business.id])
             }
+            // “显示不支持迁移目录”把这一类全部放出，不要求它们有可操作子项。
+            let allTree = DataDirTree.visibleTree(from: items, showZeroByteDirectories: zeros,
+                                                  showLockedStructure: false, matchingIDs: Set(items.map(\.id)),
+                                                  showNonMigratableDirectories: true)
+            let allVisible = Set(DataDirTree.rows(in: allTree).map(\.id))
+            XCTAssertTrue(allVisible.isSuperset(of: [root.id, locked.id, managed.id, unreadable.id]))
         }
     }
 
