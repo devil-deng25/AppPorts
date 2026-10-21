@@ -308,7 +308,9 @@ struct CustomDirsView: View {
     private func addAndMigrateConfig(_ config: CustomDirConfig) -> String? {
         if let errorMessage = addConfig(config) { return errorMessage }
         submitDirectoryTasks(title: "正在迁移目录".localized,
-                             pairs: [CustomDirPair.pendingMigration(for: config)], operation: Self.migratePair)
+                             pairs: [CustomDirPair.pendingMigration(for: config)]) { pair, handler in
+            try await Self.migratePair(pair, progressHandler: handler)
+        }
         return nil
     }
 
@@ -451,7 +453,9 @@ struct CustomDirsView: View {
     }
 
     private func startMigration(of selectedPairs: [CustomDirPair]) {
-        submitDirectoryTasks(title: "正在迁移目录".localized, pairs: selectedPairs, operation: Self.migratePair)
+        submitDirectoryTasks(title: "正在迁移目录".localized, pairs: selectedPairs) { pair, handler in
+            try await Self.migratePair(pair, progressHandler: handler)
+        }
     }
 
     nonisolated private static func migratePair(_ pair: CustomDirPair, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {

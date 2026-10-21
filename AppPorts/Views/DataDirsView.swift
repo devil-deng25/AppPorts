@@ -178,7 +178,7 @@ struct DataDirsView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("部分数据操作尚未完成，已保留副本。".localized)
-                        if let reason = dataTransfers.filter { $0.needsAttention }.compactMap(\.recoverableReason).first ?? preservedMaterials.first?.reason {
+                        if let reason = dataTransfers.filter({ $0.needsAttention }).compactMap(\.recoverableReason).first ?? preservedMaterials.first?.reason {
                             Text(verbatim: reason).font(.caption).foregroundStyle(.secondary)
                                 .lineLimit(2).help(reason)
                         }
