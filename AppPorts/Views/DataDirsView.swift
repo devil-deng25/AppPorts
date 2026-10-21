@@ -38,6 +38,8 @@ struct DataDirsView: View {
     @Binding var selectedApp: AppItem?
     /// 当前扫描状态，由 ContentView 顶部刷新按钮读取。
     @Binding var isScanning: Bool
+    /// 本地应用列表是否仍在扫描；用于区分“还没扫完”和“扫完了确实没有”。
+    var isScanningApps: Bool = false
     /// 经典数据迁移模式生效：容器目录允许符号链接迁移，沙盒应用允许重签名。
     let classicModeActive: Bool
     /// 父级工具栏触发刷新时递增。
@@ -388,7 +390,11 @@ struct DataDirsView: View {
                 appSelectionHeader
 
                 if localApps.isEmpty {
-                    ContentView.EmptyStateView(icon: "app.dashed", text: "无本地应用".localized)
+                    if isScanningApps {
+                        ContentView.EmptyStateView(icon: "magnifyingglass", text: "正在扫描...".localized)
+                    } else {
+                        ContentView.EmptyStateView(icon: "app.dashed", text: "无本地应用".localized)
+                    }
                 } else {
                     let filteredApps = localApps.filter { app in
                         !app.isFolder && (appSearchText.isEmpty || app.displayName.localizedCaseInsensitiveContains(appSearchText) || app.name.localizedCaseInsensitiveContains(appSearchText))
@@ -447,6 +453,8 @@ struct DataDirsView: View {
                     HStack(spacing: 12) {
                         if let app = selectedApp {
                             Text(String(format: "%@ 的数据目录".localized, app.displayName))
+                        } else if isScanningApps {
+                            Text("正在扫描...".localized)
                         } else {
                             Text("请从左侧选择应用".localized)
                         }
@@ -504,7 +512,11 @@ struct DataDirsView: View {
                     Color(nsColor: .controlBackgroundColor).ignoresSafeArea()
 
                     if selectedApp == nil {
-                        ContentView.EmptyStateView(icon: "arrow.left.circle", text: "从左侧选择一个应用".localized)
+                        if isScanningApps {
+                            ContentView.EmptyStateView(icon: "magnifyingglass", text: "正在扫描...".localized)
+                        } else {
+                            ContentView.EmptyStateView(icon: "arrow.left.circle", text: "从左侧选择一个应用".localized)
+                        }
                     } else if isScanning && libraryItems.isEmpty {
                         loadingView
                     } else if libraryItems.isEmpty {

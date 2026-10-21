@@ -806,6 +806,7 @@ struct ContentView: View {
                         selectedTab: $selectedDataDirsTab,
                         selectedApp: $selectedDataDirsApp,
                         isScanning: $isDataDirsScanning,
+                        isScanningApps: localScanState.isScanning,
                         classicModeActive: classicModeActive,
                         refreshTrigger: dataDirsRefreshTrigger,
                         onSelectExternalDrive: openPanelForExternalDrive,
