@@ -288,6 +288,7 @@ private struct MigrationTaskRow: View {
 @MainActor
 struct MigrationTaskDetail: View {
     @State private var showsAppRecovery = false
+    @State private var showsDataRecovery = false
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var job: MigrationJob
     @ObservedObject private var center = MigrationTaskCenter.shared
@@ -312,6 +313,7 @@ struct MigrationTaskDetail: View {
                         if job.status == .attention {
                             Button("处理异常".localized) {
                                 if job.category == .apps { showsAppRecovery = true }
+                                else if job.recoveryAction == nil { showsDataRecovery = true }
                                 else { center.recoveryJobID = job.id }
                             }
                         }
@@ -330,6 +332,9 @@ struct MigrationTaskDetail: View {
         }
         .sheet(isPresented: $showsAppRecovery) {
             AppMigrationTaskRecoveryView(job: job)
+        }
+        .sheet(isPresented: $showsDataRecovery) {
+            DataMigrationTaskRecoveryView(job: job)
         }
     }
 

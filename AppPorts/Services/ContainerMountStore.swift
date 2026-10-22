@@ -38,6 +38,9 @@ final class ContainerMountStore: @unchecked Sendable {
     }
 
     private let fileURL: URL
+    /// The privileged deletion preflight binds the exact current document;
+    /// the elevated command never writes this ledger.
+    var fileURLForDeletionAuthorization: URL { fileURL }
     private let fileManager = FileManager.default
     private let lock: NSLock
     private let writeData: @Sendable (Data, URL) throws -> Void
@@ -59,7 +62,7 @@ final class ContainerMountStore: @unchecked Sendable {
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
-            guard (2...10).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
+            guard (2...12).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
             mounts = try values.decode([ContainerMountRecord].self, forKey: .mounts)
             cleanups = try values.decode([ContainerCleanupRecord].self, forKey: .cleanups)
             transfers = schemaVersion == 2 ? [] : try values.decode([DataTransferRecord].self, forKey: .transfers)
@@ -150,6 +153,32 @@ final class ContainerMountStore: @unchecked Sendable {
     }
     func pendingCleanups() throws -> [ContainerCleanupRecord] { try read { $0.cleanups } }
     func preservedMaterials() throws -> [DataTransferMaterial] { try read { $0.preservedMaterials } }
+
+    /// Update scheduling only, using the current journal rather than a stale
+    /// pre-recovery record. Deleted records remain deleted.
+    func recordCleanupRetry(_ target: CleanupRetryTarget, failed: Bool, now: Date = Date()) throws {
+        try mutate { current in
+            func state(_ count: Int?) -> (Int?, Date?) {
+                guard failed else { return (nil, nil) }
+                let next = CleanupRetryBackoff.afterFailure(count ?? 0, now: now)
+                return (next.count, next.nextAttempt)
+            }
+            switch target {
+            case .transfer(let id):
+                guard let index = current.transfers.firstIndex(where: { $0.operationID == id }) else { return }
+                (current.transfers[index].retryFailureCount, current.transfers[index].nextAutomaticRetryAt)
+                    = state(current.transfers[index].retryFailureCount)
+            case .legacy(let id):
+                guard let index = current.cleanups.firstIndex(where: { $0.id == id }) else { return }
+                (current.cleanups[index].retryFailureCount, current.cleanups[index].nextAutomaticRetryAt)
+                    = state(current.cleanups[index].retryFailureCount)
+            case .material(let id):
+                guard let index = current.preservedMaterials.firstIndex(where: { $0.id == id }) else { return }
+                (current.preservedMaterials[index].retryFailureCount, current.preservedMaterials[index].nextAutomaticRetryAt)
+                    = state(current.preservedMaterials[index].retryFailureCount)
+            }
+        }
+    }
     func preservedMaterial(id: UUID) throws -> DataTransferMaterial? {
         try read { $0.preservedMaterials.first { $0.id == id } }
     }
@@ -168,6 +197,22 @@ final class ContainerMountStore: @unchecked Sendable {
             }
             current.preservedMaterials[index].recoveryRecord = record
         }
+    }
+
+    func checkpointPreservedRemoval(_ baseline: Data, expected: DataTransferMaterial) throws -> DataTransferMaterial {
+        var updated = expected
+        try mutate { current in
+            guard let index = current.preservedMaterials.firstIndex(of: expected),
+                  var recovery = expected.recoveryRecord,
+                  recovery.preparationRemovalBaseline == nil else {
+                throw StoreError.conflict("Preserved removal checkpoint changed")
+            }
+            recovery.preparationRemovalBaseline = baseline
+            recovery.preparationRemovalParentIdentity = recovery.preparationParentIdentity
+            updated.recoveryRecord = recovery
+            current.preservedMaterials[index] = updated
+        }
+        return updated
     }
 
     /// Remove only the exact summary the service inspected. This mutation
@@ -781,7 +826,18 @@ final class ContainerMountStore: @unchecked Sendable {
         let needsResourceForkSchema = try document.transfers.contains { try self.hasResourceForkContract($0, using: validation) }
         let needsRollbackSchema = document.transfers.contains { $0.rollbackCompletedAt != nil }
         let needsCleanupDecisionSchema = document.transfers.contains { $0.cleanupDisposition != nil }
-        document.schemaVersion = max(document.schemaVersion, needsCleanupDecisionSchema ? 10 : needsRollbackSchema ? 9 : needsLocationSchema || needsResourceForkSchema ? 8 : needsPreparationSchema ? 7 : needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
+        let needsRetrySchema = document.transfers.contains { $0.retryFailureCount != nil || $0.nextAutomaticRetryAt != nil }
+            || document.cleanups.contains { $0.retryFailureCount != nil || $0.nextAutomaticRetryAt != nil }
+            || document.preservedMaterials.contains {
+                $0.retryFailureCount != nil || $0.nextAutomaticRetryAt != nil
+                    || $0.recoveryRecord?.retryFailureCount != nil || $0.recoveryRecord?.nextAutomaticRetryAt != nil
+            }
+        let needsActivationSchema = document.transfers.contains {
+            $0.candidateActivationAttempted != nil || $0.candidateRemovalMountPointIdentity != nil
+        } || document.preservedMaterials.contains {
+            $0.recoveryRecord?.candidateActivationAttempted != nil || $0.recoveryRecord?.candidateRemovalMountPointIdentity != nil
+        }
+        document.schemaVersion = max(document.schemaVersion, needsActivationSchema ? 12 : needsRetrySchema ? 11 : needsCleanupDecisionSchema ? 10 : needsRollbackSchema ? 9 : needsLocationSchema || needsResourceForkSchema ? 8 : needsPreparationSchema ? 7 : needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
         // Removing a mount also resolves its remount-only block; transfer recovery remains independent.
         let activeVolumes = Set(document.mounts.map { $0.volumeUUID.uppercased() })
         document.remountInterventions = document.remountInterventions.filter { activeVolumes.contains($0.key) }
@@ -911,6 +967,10 @@ final class ContainerMountStore: @unchecked Sendable {
               old.retainedCopyRemovedAt == transfer.retainedCopyRemovedAt,
               old.cleanupDisposition == transfer.cleanupDisposition,
               old.rollbackCompletedAt == transfer.rollbackCompletedAt,
+              old.candidateActivationAttempted == transfer.candidateActivationAttempted
+                || transfer.candidateActivationAttempted == true,
+              old.candidateRemovalMountPointIdentity == nil
+                || old.candidateRemovalMountPointIdentity == transfer.candidateRemovalMountPointIdentity,
               old.baseline == nil || old.baseline == transfer.baseline,
               old.sourceBaseline == nil || old.sourceBaseline == transfer.sourceBaseline,
               old.preparationPath == nil || old.preparationPath == transfer.preparationPath,
@@ -1152,6 +1212,40 @@ final class ContainerMountStore: @unchecked Sendable {
     }
 
     private func validate(_ document: Document, using validation: BaselineValidation = BaselineValidation()) throws {
+        func validateActivation(_ transfer: DataTransferRecord) throws {
+            if let identity = transfer.candidateRemovalMountPointIdentity {
+                guard document.schemaVersion >= 12, identity.isResolved,
+                      transfer.mode == .mount, transfer.direction == .migrate else {
+                    throw StoreError.invalidState("Invalid candidate cleanup mount point")
+                }
+            }
+            guard let attempted = transfer.candidateActivationAttempted else { return }
+            guard document.schemaVersion >= 12, transfer.mode == .mount, transfer.direction == .migrate,
+                  !transfer.isDataSwitchComplete || attempted,
+                  !attempted || transfer.baseline != nil || transfer.retainedCopyRemovedAt != nil else {
+                throw StoreError.invalidState("Invalid candidate activation evidence")
+            }
+        }
+        func validateRetry(_ count: Int?, _ deadline: Date?) throws {
+            guard count != nil || deadline != nil else { return }
+            guard document.schemaVersion >= 11, let count, count >= 0,
+                  (count == 0 && deadline == nil) || (count > 0 && deadline != nil),
+                  deadline.map({ $0.timeIntervalSinceReferenceDate.isFinite }) ?? true else {
+                throw StoreError.invalidState("Invalid cleanup retry schedule")
+            }
+        }
+        for transfer in document.transfers {
+            try validateRetry(transfer.retryFailureCount, transfer.nextAutomaticRetryAt)
+            try validateActivation(transfer)
+        }
+        for cleanup in document.cleanups { try validateRetry(cleanup.retryFailureCount, cleanup.nextAutomaticRetryAt) }
+        for material in document.preservedMaterials {
+            try validateRetry(material.retryFailureCount, material.nextAutomaticRetryAt)
+            if let recovery = material.recoveryRecord {
+                try validateRetry(recovery.retryFailureCount, recovery.nextAutomaticRetryAt)
+                try validateActivation(recovery)
+            }
+        }
         guard Set(document.preservedMaterials.map(\.id)).count == document.preservedMaterials.count,
               document.preservedMaterials.allSatisfy({ validPath($0.originalPath) && $0.paths.allSatisfy(validPath) && !$0.reason.isEmpty }) else {
             throw StoreError.invalidState("Invalid preserved preparation material")

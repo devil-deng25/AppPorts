@@ -4,6 +4,99 @@ import Testing
 @testable import AppPorts
 
 struct DataTransferStoreTests {
+    @Test("Legacy schemas have no schedule and upgrades preserve cleanup and encryption facts", arguments: Array(2...10))
+    func retrySchemaCompatibility(_ schema: Int) throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        var mount = fixture.mount("A")
+        mount.isEncrypted = true
+        let cleanup = ContainerCleanupRecord(kind: .migrationBackup, mountRecord: mount, localPath: fixture.root.appendingPathComponent("backup").path)
+        let encoded = try PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(cleanup), format: nil)
+        let bytes = try PropertyListSerialization.data(fromPropertyList: ["schemaVersion": schema, "mounts": [], "cleanups": [encoded], "transfers": []], format: .binary, options: 0)
+        try bytes.write(to: fixture.file)
+        #expect(try fixture.store.pendingCleanups().first?.retryFailureCount == nil)
+        #expect(try Data(contentsOf: fixture.file) == bytes)
+        let time = Date(timeIntervalSince1970: 1000)
+        try fixture.store.recordCleanupRetry(.legacy(cleanup.id), failed: true, now: time)
+        let reopened = ContainerMountStore(fileURL: fixture.file)
+        let saved = try #require(try reopened.pendingCleanups().first)
+        #expect(saved.retryFailureCount == 1)
+        #expect(saved.nextAutomaticRetryAt == time.addingTimeInterval(60))
+        #expect(saved.mountRecord.isEncrypted == true)
+        let object = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: fixture.file), format: nil) as? [String: Any])
+        #expect(object["schemaVersion"] as? Int == 11)
+    }
+
+    @Test("Unknown schemas and invalid retry fields preserve the original journal", arguments: ["future", "negative", "missing-date", "missing-count"])
+    func invalidRetrySchema(_ scenario: String) throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let cleanup = ContainerCleanupRecord(kind: .migrationBackup, mountRecord: fixture.mount("A"), localPath: fixture.root.appendingPathComponent("backup").path)
+        var object = try #require(try PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(cleanup), format: nil) as? [String: Any])
+        if scenario != "missing-count" { object["retryFailureCount"] = scenario == "negative" ? -1 : 1 }
+        if scenario != "missing-date" { object["nextAutomaticRetryAt"] = Date() }
+        let bytes = try PropertyListSerialization.data(fromPropertyList: ["schemaVersion": scenario == "future" ? 13 : 11, "mounts": [], "cleanups": [object], "transfers": []], format: .binary, options: 0)
+        try bytes.write(to: fixture.file)
+        #expect(throws: (any Error).self) { try fixture.store.recordCleanupRetry(.legacy(cleanup.id), failed: true) }
+        #expect(try Data(contentsOf: fixture.file) == bytes)
+    }
+
+    @Test("Activation history is monotonic, explicit only for new mount migrations, and survives reopen")
+    func activationHistoryIsMonotonic() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        var transfer = fixture.transfer(mode: .mount)
+        transfer.candidateActivationAttempted = false
+        try fixture.store.beginTransfer(transfer)
+        let initial = try Data(contentsOf: fixture.file)
+        let document = try #require(try PropertyListSerialization.propertyList(from: initial, format: nil) as? [String: Any])
+        #expect(document["schemaVersion"] as? Int == 12)
+        var invalid = transfer
+        invalid.candidateActivationAttempted = nil
+        #expect(throws: (any Error).self) { try fixture.store.updateTransfer(invalid) }
+        #expect(try Data(contentsOf: fixture.file) == initial)
+        transfer.phase = .copying
+        try fixture.store.updateTransfer(transfer)
+        transfer.phase = .verified
+        transfer.baseline = Data("verified".utf8)
+        try fixture.store.updateTransfer(transfer)
+        transfer.candidateActivationAttempted = true
+        // Recovery may have claimed a replacement private placeholder before
+        // a later retry successfully activates the candidate.
+        transfer.candidateRemovalMountPointIdentity = DataPathIdentity(device: 1, inode: 90)
+        try fixture.store.updateTransfer(transfer)
+        transfer.phase = .switching
+        try fixture.store.updateTransfer(transfer)
+        try fixture.store.finalizeTransfer(operationID: transfer.operationID, baseline: transfer.baseline!)
+        transfer = try #require(try fixture.store.transfer(operationID: transfer.operationID))
+        let cold = ContainerMountStore(fileURL: fixture.file)
+        #expect(try cold.transfer(operationID: transfer.operationID)?.candidateActivationAttempted == true)
+        let attempted = try Data(contentsOf: fixture.file)
+        for flag in [false, nil] as [Bool?] {
+            invalid = transfer
+            invalid.candidateActivationAttempted = flag
+            #expect(throws: (any Error).self) { try cold.updateTransfer(invalid) }
+            #expect(try Data(contentsOf: fixture.file) == attempted)
+        }
+    }
+
+    @Test("Legacy records cannot be relabeled as never activated", arguments: Array(7...11))
+    func legacyActivationCannotBeGuessed(_ schema: Int) throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let transfer = fixture.transfer(mode: .mount)
+        let encoded = try PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(transfer), format: nil)
+        let bytes = try PropertyListSerialization.data(fromPropertyList: ["schemaVersion": schema,
+            "mounts": [], "cleanups": [], "transfers": [encoded]], format: .binary, options: 0)
+        try bytes.write(to: fixture.file)
+        var loaded = try #require(try fixture.store.transfer(operationID: transfer.operationID))
+        #expect(loaded.candidateActivationAttempted == nil)
+        #expect(!loaded.hasNeverActivatedMigrationCandidate)
+        loaded.candidateActivationAttempted = false
+        #expect(throws: (any Error).self) { try fixture.store.updateTransfer(loaded) }
+        #expect(try Data(contentsOf: fixture.file) == bytes)
+    }
+
     @Test("Ownership-aware records require schema 4 before an old writer can discard their meaning", arguments: [false, true])
     func ownershipMetadataProtectsAgainstOlderWriters(online: Bool) throws {
         let fixture = try Fixture()

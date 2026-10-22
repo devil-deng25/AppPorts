@@ -57,6 +57,7 @@ struct DataDirsView: View {
         let id = UUID()
         let item: DataDirItem
         var volumeUUID: String? = nil
+        var retryToken: MigrationJob.RetryToken? = nil
         var retry: (() -> Void)? = nil
     }
     @State private var encryptedMigrationRequest: EncryptedMigrationRequest?
@@ -241,6 +242,8 @@ struct DataDirsView: View {
         }
         .sheet(item: $encryptedMigrationRequest) { request in
             APFSVolumePasswordSheet(isCreating: request.volumeUUID == nil) { credentials in
+                let isCurrent = { request.retryToken.map { MigrationTaskCenter.shared.canRetry($0) } ?? true }
+                guard isCurrent() else { encryptedMigrationRequest = nil; return }
                 if let uuid = request.volumeUUID {
                     let inspection = try ContainerMountStore.shared.recordsForInspection()
                     if let error = inspection.validationError { throw error }
@@ -252,14 +255,17 @@ struct DataDirsView: View {
                     // Unlock only the UUID that blocked this operation; retry checks any remaining member.
                     let disk = DiskUtility()
                     let info = try await disk.volumeInfo(for: uuid)
+                    guard isCurrent() else { encryptedMigrationRequest = nil; return }
                     if info.isLocked { try await disk.unlockVolume(uuid, passphrase: credentials.passphrase) }
                     else { try await disk.verifyPassphrase(uuid, passphrase: credentials.passphrase) }
+                    guard isCurrent() else { encryptedMigrationRequest = nil; return }
                     try APFSVolumeEncryption.save(credentials, for: uuid)
                     // Split members normally share a password. Verify each online sibling before caching it.
                     let memberPaths = Set(request.item.weChatSplitMembers.map { $0.path.standardizedFileURL.path })
                     let siblings = Set(records.filter { memberPaths.contains($0.mountPointPath) }.map(\.volumeUUID))
                     for sibling in siblings where sibling.caseInsensitiveCompare(uuid) != .orderedSame {
                         guard let siblingInfo = try? await disk.volumeInfo(for: sibling), siblingInfo.isEncrypted else { continue }
+                        guard isCurrent() else { encryptedMigrationRequest = nil; return }
                         do {
                             if siblingInfo.isLocked { try await disk.unlockVolume(sibling, passphrase: credentials.passphrase) }
                             else { try await disk.verifyPassphrase(sibling, passphrase: credentials.passphrase) }
@@ -267,6 +273,7 @@ struct DataDirsView: View {
                             // Older members may use a different password; ask only if the retry needs that volume.
                             continue
                         }
+                        guard isCurrent() else { encryptedMigrationRequest = nil; return }
                         try APFSVolumeEncryption.save(credentials, for: sibling)
                     }
                     encryptedMigrationRequest = nil
@@ -979,7 +986,7 @@ struct DataDirsView: View {
             onNormalizeManagedLink: askNormalizeManagedLink,
             onRelinkExternalData: askRelinkExternalData,
             onMountMigrate: askMountMigrate,
-            onMount: performMount,
+            onMount: { performMount($0) },
             onUnmount: performUnmount,
             onMountRestore: askMountRestore,
             classicModeActive: classicModeActive,
@@ -1656,7 +1663,8 @@ struct DataDirsView: View {
     private func submitDataTask(_ item: DataDirItem, title: String, destinations: [URL] = [],
                                 associatedApp: AppItem? = nil, mount: Bool = false,
                                 requireAppStopped: Bool = true,
-                                recovery: (@MainActor (Error) -> Void)? = nil,
+                                retrying: MigrationJob.RetryToken? = nil,
+                                recovery: (@MainActor (Error, MigrationJob.RetryToken) -> Void)? = nil,
                                 operation: @escaping @Sendable (DataTransferProgress) async throws -> String?) {
         let app = associatedApp ?? (selectedTab == .appDirs ? selectedApp : nil)
         if requireAppStopped, let name = runningAssociatedAppName(for: item, associatedApp: app) {
@@ -1676,7 +1684,7 @@ struct DataDirsView: View {
         let taskTitle = title.contains(item.name) ? title : title + " · " + item.name
         MigrationTaskCenter.shared.submit(title: taskTitle, category: category,
             resources: MigrationResources(paths: paths, keys: keys),
-            recovery: recovery, operation: { progress in
+            retrying: retrying, recovery: recovery, operation: { progress in
                 try await MigrationExecution.control?.checkpointAsync()
                 if requireAppStopped {
                     if await MigrationApplicationState.isRunning(appURL: app?.displayURL, bundleIdentifier: identifier) {
@@ -1870,19 +1878,25 @@ struct DataDirsView: View {
         )
     }
 
-    private func performMountMigrate(_ item: DataDirItem, encryption: APFSVolumeEncryption.Credentials? = nil) {
-        if weChatMigrationMode == .split, selectedWeChatPolicy.isAccount(item.path) {
-            performWeChatSplitOperation(item, restoring: false, encryption: encryption)
+    private func performMountMigrate(_ item: DataDirItem, encryption: APFSVolumeEncryption.Credentials? = nil,
+                                     retrying: MigrationJob.RetryToken? = nil) {
+        if let retrying, !MigrationTaskCenter.shared.canRetry(retrying) { return }
+        if retrying == nil, weChatMigrationMode == .split, selectedWeChatPolicy.isAccount(item.path) {
+            performWeChatSplitOperation(item, restoring: false, encryption: encryption, retrying: retrying)
             return
         }
         guard let dest = externalDriveURL else { return }
-        if requestAssociatedAppExit(for: item, continuing: { performMountMigrate(item, encryption: encryption) }) { return }
+        if requestAssociatedAppExit(for: item, retrying: retrying, continuing: {
+            performMountMigrate(item, encryption: encryption, retrying: retrying)
+        }) { return }
         let app = selectedApp
         let name = app?.displayName ?? item.name
         let bundleID = app.flatMap { (try? resolveRealAppURL($0)).flatMap { CodeSigner.bundleIdentifier(at: $0) } }
         submitDataTask(item, title: String(format: "正在挂载迁移「%@」".localized, item.name),
-                       mount: true, recovery: { error in
-            presentAPFSFailure(error, item: item, retry: { performMountMigrate(item, encryption: encryption) })
+                       mount: true, retrying: retrying, recovery: { error, retry in
+            presentAPFSFailure(error, item: item, retryToken: retry, retry: {
+                performMountMigrate(item, encryption: encryption, retrying: retry)
+            })
         }) { progress in
             let result = try await ContainerVolumeMigrator(encryption: encryption).migrateAndComplete(
                 item: item, externalRootURL: dest, appName: name, bundleIdentifier: bundleID,
@@ -1891,7 +1905,8 @@ struct DataDirsView: View {
         }
     }
 
-    private func performMount(_ item: DataDirItem) {
+    private func performMount(_ item: DataDirItem, retrying: MigrationJob.RetryToken? = nil) {
+        if let retrying, !MigrationTaskCenter.shared.canRetry(retrying) { return }
         let paths = item.weChatSplitMembers.isEmpty ? [item.path] : item.weChatSplitMembers.map(\.path)
         let records = paths.compactMap { ContainerMountStore.shared.record(forMountPoint: $0) }
         guard !records.isEmpty else {
@@ -1900,8 +1915,8 @@ struct DataDirsView: View {
             return
         }
         submitDataTask(item, title: String(format: "正在挂载「%@」".localized, item.name),
-                       mount: true, requireAppStopped: false, recovery: { error in
-            presentAPFSFailure(error, item: item, retry: { performMount(item) })
+                       mount: true, requireAppStopped: false, retrying: retrying, recovery: { error, retry in
+            presentAPFSFailure(error, item: item, retryToken: retry, retry: { performMount(item, retrying: retry) })
         }) { _ in
             let migrator = ContainerVolumeMigrator()
             for record in records {
@@ -1954,12 +1969,16 @@ struct DataDirsView: View {
         )
     }
 
-    private func performMountRestore(_ item: DataDirItem, record: ContainerMountRecord) {
-        if requestAssociatedAppExit(for: item, continuing: { performMountRestore(item, record: record) }) { return }
+    private func performMountRestore(_ item: DataDirItem, record: ContainerMountRecord,
+                                     retrying: MigrationJob.RetryToken? = nil) {
+        if let retrying, !MigrationTaskCenter.shared.canRetry(retrying) { return }
+        if requestAssociatedAppExit(for: item, retrying: retrying, continuing: {
+            performMountRestore(item, record: record, retrying: retrying)
+        }) { return }
         submitDataTask(item, title: String(format: "正在还原「%@」".localized, item.name),
-                       mount: true, recovery: { error in
-            presentAPFSFailure(error, item: item, record: record,
-                retry: { performMountRestore(item, record: record) })
+                       mount: true, retrying: retrying, recovery: { error, retry in
+            presentAPFSFailure(error, item: item, record: record, retryToken: retry,
+                retry: { performMountRestore(item, record: record, retrying: retry) })
         }) { progress in
             try await ContainerVolumeMigrator().restoreAndComplete(record: record,
                 estimatedTotalBytes: item.sizeBytes, progressHandler: { progress.update($0) })?.message
@@ -1967,9 +1986,11 @@ struct DataDirsView: View {
     }
 
     private func performWeChatSplitOperation(_ item: DataDirItem, restoring: Bool,
-                                               encryption: APFSVolumeEncryption.Credentials? = nil) {
-        if requestAssociatedAppExit(for: item, continuing: {
-            performWeChatSplitOperation(item, restoring: restoring, encryption: encryption)
+                                               encryption: APFSVolumeEncryption.Credentials? = nil,
+                                               retrying: MigrationJob.RetryToken? = nil) {
+        if let retrying, !MigrationTaskCenter.shared.canRetry(retrying) { return }
+        if requestAssociatedAppExit(for: item, retrying: retrying, continuing: {
+            performWeChatSplitOperation(item, restoring: restoring, encryption: encryption, retrying: retrying)
         }) { return }
         let destination = externalDriveURL
         let appName = selectedApp?.displayName ?? item.name
@@ -1977,9 +1998,9 @@ struct DataDirsView: View {
         let containerIdentifier = weChatContainerIdentifier
         let members = selectedWeChatPolicy.members(of: item.path)
         submitDataTask(item, title: restoring ? "正在还原微信账号数据".localized : "正在拆分迁移微信账号数据".localized,
-                       destinations: members, mount: true, recovery: { error in
-            presentAPFSFailure(error, item: item, retry: {
-                performWeChatSplitOperation(item, restoring: restoring, encryption: encryption)
+                       destinations: members, mount: true, retrying: retrying, recovery: { error, retry in
+            presentAPFSFailure(error, item: item, retryToken: retry, retry: {
+                performWeChatSplitOperation(item, restoring: restoring, encryption: encryption, retrying: retry)
             })
         }) { progress in
             progress.configureUnits(members)
@@ -1998,12 +2019,16 @@ struct DataDirsView: View {
     }
 
     private func presentAPFSFailure(_ error: Error, item: DataDirItem, record: ContainerMountRecord? = nil,
+                                    retryToken: MigrationJob.RetryToken? = nil,
                                     retry: @escaping () -> Void) {
+        if let retryToken, !MigrationTaskCenter.shared.canRetry(retryToken) { return }
         if case APFSVolumeEncryption.Failure.waitingForUnlock(let uuid) = error {
             confirmRequest = WarningSheetRequest(title: "等待解锁".localized, tint: .orange,
                 intro: error.localizedDescription, cancelTitle: "稍后".localized,
                 actions: [WarningAction("解锁数据卷".localized, style: .preferred) {
-                    encryptedMigrationRequest = EncryptedMigrationRequest(item: item, volumeUUID: uuid, retry: retry)
+                    if let retryToken, !MigrationTaskCenter.shared.canRetry(retryToken) { return }
+                    encryptedMigrationRequest = EncryptedMigrationRequest(item: item, volumeUUID: uuid,
+                        retryToken: retryToken, retry: retry)
                 }])
             return
         }
@@ -2011,9 +2036,10 @@ struct DataDirsView: View {
         var actions: [WarningAction] = []
         if DataOperationIssue.needsAccessPermission(error) {
             actions.append(WarningAction("访问权限设置".localized) {
+                if let retryToken, !MigrationTaskCenter.shared.canRetry(retryToken) { return }
                 if let url = LaunchReadinessChecker.Item.Action.fullDiskAccess.settingsURLs.first { NSWorkspace.shared.open(url) }
                 // Keep the same operation available when the user returns.
-                presentAPFSFailure(error, item: item, record: record, retry: retry)
+                presentAPFSFailure(error, item: item, record: record, retryToken: retryToken, retry: retry)
             })
         }
         actions.append(WarningAction("重试".localized, style: .preferred, handler: retry))
@@ -2022,7 +2048,9 @@ struct DataDirsView: View {
     }
 
     private func requestAssociatedAppExit(for item: DataDirItem, associatedApp: AppItem? = nil,
-                                          useSelectedApp: Bool = true, continuing action: @escaping () -> Void) -> Bool {
+                                          useSelectedApp: Bool = true, retrying: MigrationJob.RetryToken? = nil,
+                                          continuing action: @escaping () -> Void) -> Bool {
+        if let retrying, !MigrationTaskCenter.shared.canRetry(retrying) { return true }
         let app = associatedApp ?? (useSelectedApp && selectedTab == .appDirs ? selectedApp : nil)
         let appURL = app.map { (try? resolveRealAppURL($0)) ?? $0.displayURL }
         let bundleID = appURL.flatMap { CodeSigner.bundleIdentifier(at: $0) } ?? item.associatedBundleIdentifier
@@ -2038,11 +2066,13 @@ struct DataDirsView: View {
         confirmRequest = makeConfirmRequest(title: "先退出关联应用".localized, actionTitle: "退出应用并继续".localized,
             message: String(format: "「%@」正在使用这些数据。AppPorts 将请求它正常退出，退出后继续本次操作。".localized, name)) {
                 Task { @MainActor in
+                    if let retrying, !MigrationTaskCenter.shared.canRetry(retrying) { return }
                     for application in running where !application.isTerminated { _ = application.terminate() }
                     let deadline = ProcessInfo.processInfo.systemUptime + 8
                     while running.contains(where: { !$0.isTerminated }), ProcessInfo.processInfo.systemUptime < deadline {
                         try? await Task.sleep(nanoseconds: 100_000_000)
                     }
+                    if let retrying, !MigrationTaskCenter.shared.canRetry(retrying) { return }
                     if running.allSatisfy(\.isTerminated) { action() }
                     else {
                         confirmRequest = makeConfirmRequest(title: "等待应用退出".localized, actionTitle: "继续".localized,

@@ -4,6 +4,130 @@ import Testing
 @testable import AppPorts
 
 struct ContainerMountResumeTests {
+    @Test("Backoff starts when expensive verification fails, not when maintenance starts")
+    func deadlineUsesFailureTime() async throws {
+        let fixture = try Fixture(checkpoint: .restoreVerified)
+        defer { fixture.remove() }
+        _ = try await fixture.migrate()
+        let initial = try #require(try fixture.store.transfers().first)
+        try Data("unique changes".utf8).write(to: URL(fileURLWithPath: initial.backupPath!).appendingPathComponent("payload.txt"))
+        let clock = DelayedInspectionClock()
+        _ = await fixture.mover(safetyRunner: clock).performAutomaticMaintenance(now: { clock.read() })
+        #expect(try fixture.store.transfer(operationID: initial.operationID)?.nextAutomaticRetryAt == Date(timeIntervalSince1970: 1180))
+    }
+
+    @Test("Manual backoff bypass preserves explicit keep and deferred choices", arguments: [DataTransferRecord.CleanupDisposition.keep, .deferred])
+    func retryKeepsUserDisposition(_ disposition: DataTransferRecord.CleanupDisposition) async throws {
+        let fixture = try Fixture(checkpoint: .restoreVerified)
+        defer { fixture.remove() }
+        _ = try await fixture.migrate()
+        let initial = try #require(try fixture.store.transfers().first)
+        try fixture.store.setCleanupDisposition(disposition, expected: initial)
+        let saved = try #require(try fixture.store.transfer(operationID: initial.operationID))
+        let calls = fixture.runner.calls
+        _ = await fixture.mover().performAutomaticMaintenance(ignoresRetryBackoff: true)
+        #expect(try fixture.store.transfer(operationID: initial.operationID) == saved)
+        #expect(fixture.runner.calls == calls)
+        try fixture.store.setCleanupDisposition(nil, expected: saved)
+        _ = await fixture.mover().performAutomaticMaintenance(only: initial.operationID, ignoresRetryBackoff: true)
+        #expect(try fixture.store.transfer(operationID: initial.operationID) == nil)
+    }
+
+    @Test("Legacy cleanup deadlines prevent repeated inspection and manual retry remains available")
+    func legacyCleanupBackoff() async throws {
+        let fixture = try Fixture(checkpoint: .restoreVerified)
+        defer { fixture.remove() }
+        let record = ContainerMountRecord(appName: "Synthetic", bundleIdentifier: nil, dataDirType: "containers",
+            mountPointPath: fixture.source.path, volumeUUID: "OFFLINE", volumeName: "AppPorts-test", externalRootPath: fixture.external.path)
+        let cleanup = ContainerCleanupRecord(kind: .migrationBackup, mountRecord: record, localPath: fixture.root.appendingPathComponent("legacy").path)
+        try fixture.store.recordMigration(record, cleanup: cleanup)
+        let time = Date()
+        try fixture.store.recordCleanupRetry(.legacy(cleanup.id), failed: true, now: time)
+        let saved = try fixture.store.pendingCleanups()
+        let calls = fixture.runner.calls
+        _ = await fixture.mover().performAutomaticMaintenance(now: { time })
+        #expect(try fixture.store.pendingCleanups() == saved)
+        #expect(fixture.runner.calls == calls)
+        _ = await fixture.mover().performAutomaticMaintenance(ignoresRetryBackoff: true, now: { time })
+        #expect(try fixture.store.pendingCleanups().first?.retryFailureCount == 2)
+    }
+
+    private final class DelayedInspectionClock: ShellCommandRunning, @unchecked Sendable {
+        private let lock = NSLock()
+        private var time = Date(timeIntervalSince1970: 1000)
+        func read() -> Date { lock.lock(); defer { lock.unlock() }; return time }
+        private func advance() { lock.lock(); defer { lock.unlock() }; time = Date(timeIntervalSince1970: 1120) }
+        func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
+            advance()
+            return ShellCommandResult(status: 1, standardOutput: Data(), standardError: Data(), timedOut: false)
+        }
+    }
+
+    @Test("Actual cleanup waits until its deadline, manual retry bypasses it, and failures remain daily")
+    func maintenanceBackoff() async throws {
+        let fixture = try Fixture(checkpoint: .restoreVerified)
+        defer { fixture.remove() }
+        _ = try await fixture.migrate()
+        let initial = try #require(try fixture.store.transfers().first)
+        let backup = URL(fileURLWithPath: try #require(initial.backupPath))
+        try Data("unique changed data".utf8).write(to: backup.appendingPathComponent("payload.txt"))
+        var time = Date(timeIntervalSince1970: 1000)
+        for index in 0..<7 {
+            let currentTime = time
+            _ = await fixture.mover().performAutomaticMaintenance(now: { currentTime })
+            let failed = try #require(try fixture.store.transfer(operationID: initial.operationID))
+            #expect(failed.retryFailureCount == min(index + 1, 5))
+            let deadline = try #require(failed.nextAutomaticRetryAt)
+            #expect(deadline == time.addingTimeInterval(CleanupRetryBackoff.delays[min(index, 4)]))
+            let calls = fixture.runner.calls
+            _ = await fixture.mover().performAutomaticMaintenance(now: { currentTime })
+            #expect(try fixture.store.transfer(operationID: initial.operationID) == failed)
+            #expect(fixture.runner.calls == calls)
+            time = deadline
+        }
+        let manualTime = time.addingTimeInterval(-1)
+        _ = await fixture.mover().performAutomaticMaintenance(ignoresRetryBackoff: true, now: { manualTime })
+        #expect(try fixture.store.transfer(operationID: initial.operationID)?.nextAutomaticRetryAt == manualTime.addingTimeInterval(86400))
+        #expect(try fixture.payload(at: backup) == "unique changed data")
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+    }
+
+    @Test("Cleanup backoff never blocks recovery of a missing original entry")
+    func recoveryBypassesBackoff() async throws {
+        let fixture = try Fixture(checkpoint: .migrationMoved)
+        defer { fixture.remove() }
+        await #expect(throws: (any Error).self) { try await fixture.migrate() }
+        let transfer = try #require(try fixture.store.transfers().first)
+        let now = Date()
+        try fixture.store.recordCleanupRetry(.transfer(transfer.operationID), failed: true, now: now)
+        _ = await fixture.mover().performAutomaticMaintenance(now: { now })
+        #expect(try fixture.payload(at: fixture.source) == "original")
+    }
+
+    @Test("Ordinary DS_Store changes can be cleaned but business data and non-regular names survive",
+          arguments: ["regular", "business", "directory", "symlink", "hardlink"])
+    func metadataCleanupEvidence(_ kind: String) async throws {
+        let fixture = try Fixture(checkpoint: .restoreVerified)
+        defer { fixture.remove() }
+        try Data("finder".utf8).write(to: fixture.source.appendingPathComponent(".DS_Store"))
+        _ = try await fixture.migrate()
+        let transfer = try #require(try fixture.store.transfers().first)
+        let backup = URL(fileURLWithPath: try #require(transfer.backupPath))
+        let metadata = backup.appendingPathComponent(".DS_Store")
+        if kind == "regular" { try Data("finder rewrote this".utf8).write(to: metadata) }
+        if kind == "business" { try Data("unique changed data".utf8).write(to: backup.appendingPathComponent("payload.txt")) }
+        if ["directory", "symlink", "hardlink"].contains(kind) {
+            try FileManager.default.removeItem(at: metadata)
+            if kind == "directory" { try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: false) }
+            if kind == "symlink" { try FileManager.default.createSymbolicLink(at: metadata, withDestinationURL: fixture.source.appendingPathComponent("payload.txt")) }
+            if kind == "hardlink" { try FileManager.default.linkItem(at: backup.appendingPathComponent("payload.txt"), to: metadata) }
+        }
+        _ = await fixture.mover().performAutomaticMaintenance()
+        #expect(FileManager.default.fileExists(atPath: backup.path) == (kind != "regular"))
+        #expect(try fixture.payload(at: fixture.source) == "original")
+        if kind == "business" { #expect(try fixture.payload(at: backup) == "unique changed data") }
+    }
+
     @Test("Ordinary restore resumes an interrupted restore without a separate recovery action", arguments: [
         Checkpoint.restoreVerified, .restoreSwitch, .restoreFinalized
     ])
@@ -151,7 +275,7 @@ struct ContainerMountResumeTests {
         #expect(try fixture.store.transfers().isEmpty)
     }
 
-    @Test("Changed verified copies are retained and never overwritten during resume", arguments: [
+    @Test("Resume discards never activated migration copies and retains changed restore copies", arguments: [
         Checkpoint.migrationVerified, .restoreVerified
     ])
     func changedCopyBlocksResume(checkpoint: Checkpoint) async throws {
@@ -172,16 +296,29 @@ struct ContainerMountResumeTests {
         let mountCalls = fixture.runner.commands(prefix: ["mount"])
         let unmountCalls = fixture.runner.commands(prefix: ["unmount"])
 
-        await #expect(throws: (any Error).self) {
-            try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil)
+        if checkpoint == .migrationVerified {
+            #expect(try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) == nil)
+        } else {
+            await #expect(throws: (any Error).self) {
+                try await fixture.mover().resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil)
+            }
         }
 
-        #expect(try fixture.payload(at: staged) == "changed copy")
-        #expect(try TreeCopySession.snapshot(at: fixture.source) == original)
-        #expect(try fixture.store.transfer(operationID: pending.operationID)?.baseline == pending.baseline)
-        #expect(fixture.runner.commands(prefix: ["mount"]) == mountCalls)
-        #expect(fixture.runner.commands(prefix: ["unmount"]) == unmountCalls)
-        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        if checkpoint == .migrationVerified {
+            #expect(try fixture.payload(at: fixture.source) == "original")
+            #expect(fixture.runner.isMounted(fixture.source))
+            #expect(pending.candidateActivationAttempted == false)
+            #expect(!FileManager.default.fileExists(atPath: staged.path))
+            #expect(try fixture.store.transfer(operationID: pending.operationID) == nil)
+            #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+        } else {
+            #expect(try TreeCopySession.snapshot(at: fixture.source) == original)
+            #expect(fixture.runner.commands(prefix: ["mount"]) == mountCalls)
+            #expect(try fixture.payload(at: staged) == "changed copy")
+            #expect(try fixture.store.transfer(operationID: pending.operationID)?.baseline == pending.baseline)
+            #expect(fixture.runner.commands(prefix: ["unmount"]) == unmountCalls)
+            #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        }
     }
 
     @Test("A ledger change during resume inspection is preserved and stops all disk mutations")

@@ -49,6 +49,10 @@ Status: implemented
 - 应用本体的原基线一次清理重试扩展见[清理观察失败只按原基线立即重试一次](../../implemented/bug-fix/2026-10-14-cleanup-baseline-retry.md)。
 - 迁移不拥有独立签名副作用，见[迁移与手动签名分离，手动签名只保留临时候选](2026-10-10-independent-manual-signing.md)。
 
+本轮卷盘点与清理退避沿用持久化切换和内容证明，见[卷状态适配](2026-10-22-volume-state-adaptation.md)。
+
+从未启用且有独占归属的失败迁移卷改为可丢弃候选，内容相等要求的局部替代见[失败迁移卷自动收尾](../bug-fix/2026-10-22-failed-migration-candidate-disposal.md)；已启用目标、还原暂存与未知材料仍遵循原保护规则。
+
 ## Alternatives considered
 
 - **签名与数据合成父 workflow**：可集中串联步骤，但把独立签名及其恢复材料变成释放空间的前提，增加跨服务状态。

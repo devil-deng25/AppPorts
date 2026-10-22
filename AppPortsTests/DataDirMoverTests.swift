@@ -590,7 +590,7 @@ final class DataDirMoverTests: XCTestCase {
         }
     }
 
-    func testMetadataConflictRetainsPartialCopyAndBlocksRetry() async throws {
+    func testMetadataConflictRetainsUnactivatedCopyAndBlocksRetry() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }
         let localURL = workspace.homeURL.appendingPathComponent("Library/Caches/ReadOnly")
@@ -629,27 +629,30 @@ final class DataDirMoverTests: XCTestCase {
             }
             XCTFail("The metadata conflict must fail migration")
         } catch let error as DataDirError {
-            guard case .copyFailed(let cause) = error, let copyError = cause as? TreeCopyError,
-                  case .verificationFailed = copyError else { return XCTFail("Unexpected error: \(error)") }
+            guard case .metadataWriteFailed(let cause) = error,
+                  let safety = cause as? DataOperationSafety.Failure,
+                  case .conflict = safety else { return XCTFail("Unexpected error: \(error)") }
         }
 
         try assertRealDirectory(localURL)
         try TreeCopySession.verifyUnchanged(at: localURL, against: original)
         XCTAssertEqual(try String(contentsOf: localURL.appendingPathComponent("payload.txt")), "keep-source")
         XCTAssertEqual(try fileManager.attributesOfItem(atPath: localURL.path)[.posixPermissions] as? Int, 0o555)
-        XCTAssertFalse(fileManager.fileExists(atPath: externalURL.path))
+        // Publication precedes marker installation, but the original entry
+        // must remain local until that marker is accepted.
+        try assertRealDirectory(externalURL)
         let ledger = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("data-transfers.plist"))
         let pending = try XCTUnwrap(try ledger.transfers().first)
-        let candidate = URL(fileURLWithPath: try XCTUnwrap(pending.preparationPath))
+        let candidate = URL(fileURLWithPath: pending.destinationPath)
         XCTAssertEqual(pending.phase, .needsRecovery)
-        XCTAssertNil(pending.baseline)
+        XCTAssertNotNil(pending.baseline)
         XCTAssertNotNil(pending.sourceBaseline)
         XCTAssertNotNil(pending.destinationIdentity)
         try assertRealDirectory(candidate.appendingPathComponent(".appports-link-metadata.plist"))
 
         do {
             try await mover.migrate(item: item, to: externalBaseURL, progressHandler: nil)
-            XCTFail("Unverified partial copies must block an automatic retry")
+            XCTFail("Conflicting unactivated copies must block an automatic retry")
         } catch { }
         try assertRealDirectory(localURL)
         XCTAssertEqual(try ledger.transfers(), [pending])
@@ -1338,6 +1341,13 @@ final class DataDirMoverTests: XCTestCase {
         }
     }
 
+    private func withoutRetrySchedule(_ record: DataTransferRecord) -> DataTransferRecord {
+        var value = record
+        value.retryFailureCount = nil
+        value.nextAutomaticRetryAt = nil
+        return value
+    }
+
     func testMiddleCopyCleanupKeepsLineageAndRemainingCopiesRetryable() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }
@@ -1371,7 +1381,9 @@ final class DataDirMoverTests: XCTestCase {
         let beforeRejection = try store.transfers()
         do { try await mover.cleanupRetainedTransfer(operationID: middle.operationID); XCTFail("A replaced current root cannot authorize cleanup") }
         catch { }
-        XCTAssertEqual(try store.transfers(), beforeRejection)
+        let rejected = try store.transfers()
+        XCTAssertEqual(rejected.first { $0.operationID == middle.operationID }?.retryFailureCount, 1)
+        XCTAssertEqual(rejected.map(withoutRetrySchedule), beforeRejection.map(withoutRetrySchedule))
         XCTAssertEqual(try store.transfer(operationID: middle.operationID)?.phase, .awaitingUserVerification)
         XCTAssertEqual(try String(contentsOf: firstTarget.appendingPathComponent("payload.txt")), "history")
         XCTAssertEqual(try TreeCopySession.snapshot(at: local), replacementSnapshot)
@@ -1407,7 +1419,9 @@ final class DataDirMoverTests: XCTestCase {
         let beforeRetry = try coldStore.transfers()
         do { try await coldMover.cleanupRetainedTransfer(operationID: first.operationID); XCTFail("An unavailable ancestor cannot be called deleted") }
         catch { }
-        XCTAssertEqual(try coldStore.transfers(), beforeRetry)
+        let retried = try coldStore.transfers()
+        XCTAssertEqual(retried.first { $0.operationID == first.operationID }?.retryFailureCount, 1)
+        XCTAssertEqual(retried.map(withoutRetrySchedule), beforeRetry.map(withoutRetrySchedule))
         XCTAssertEqual(try coldStore.transfer(operationID: middle.operationID), middleProof)
         XCTAssertEqual(try TreeCopySession.snapshot(at: local), activeSnapshot)
         XCTAssertEqual(try TreeCopySession.snapshot(at: normalized), lastBackupSnapshot)

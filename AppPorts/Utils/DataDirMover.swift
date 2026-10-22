@@ -1292,6 +1292,20 @@ actor DataDirMover {
     /// The only operation that removes an original. Cleanup is an idempotent
     /// continuation of a successful switch, including after process termination.
     func cleanupRetainedTransfer(operationID: UUID) async throws {
+        guard let transfer = try store.transfer(operationID: operationID),
+              transfer.needsAutomaticCompletion, !CleanupRetryContext.shouldDefer(transfer) else { return }
+        do {
+            try await performRetainedTransferCleanup(operationID: operationID)
+            CleanupRetryContext.record(.transfer(operationID), failed: false, store: store)
+        } catch {
+            if !(error is CancellationError) {
+                CleanupRetryContext.record(.transfer(operationID), failed: true, store: store)
+            }
+            throw error
+        }
+    }
+
+    private func performRetainedTransferCleanup(operationID: UUID) async throws {
         guard runningCleanups.insert(operationID).inserted else { throw DataOperationSafety.Failure.occupied(operationID.uuidString) }
         defer { runningCleanups.remove(operationID) }
         guard var transfer = try store.transfer(operationID: operationID) else { return }

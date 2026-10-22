@@ -101,6 +101,7 @@ final class AppLoggerTests: XCTestCase {
         )
         XCTAssertTrue(summaryText.contains("app-move-1234"))
         XCTAssertTrue(summaryText.contains("APP-MOVE-PORTAL-CREATE-FAILED"))
+        XCTAssertTrue(summaryText.contains("volume_state_inventory"))
         XCTAssertFalse(summaryText.contains("Private Disk"))
 
         let failuresData = try Data(contentsOf: packageURL.appendingPathComponent("recent-failures.json"))
@@ -120,6 +121,7 @@ final class AppLoggerTests: XCTestCase {
         let metadataData = try Data(contentsOf: packageURL.appendingPathComponent("diagnostic-summary.json"))
         let metadata = try JSONDecoder().decode([String: String].self, from: metadataData)
         XCTAssertEqual(metadata["redaction_mode"], "share_safe")
+        XCTAssertTrue(try XCTUnwrap(metadata["volume_state_inventory"]).contains("state:"))
 
         // 检查解码后的字符串，避免 JSON 的 \/ 转义掩盖泄露。
         for fileURL in try fileManager.contentsOfDirectory(at: packageURL, includingPropertiesForKeys: nil) {

@@ -196,13 +196,23 @@ actor TreeCopySession {
     nonisolated static func verifyCopy(at root: URL, against snapshot: TreeCopySnapshot,
                                        profile: TreeCopyProfile = .strictData,
                                        purpose: DataTransferVerification = .copiedData) throws {
+        _ = try verifiedCopySnapshot(at: root, against: snapshot, profile: profile, purpose: purpose)
+    }
+
+    /// Returns the exact destination observation that passed the saved proof.
+    /// A second scan after verification must not become a new deletion baseline.
+    nonisolated static func verifiedCopySnapshot(at root: URL, against snapshot: TreeCopySnapshot,
+                                                profile: TreeCopyProfile = .strictData,
+                                                purpose: DataTransferVerification = .copiedData) throws -> TreeCopySnapshot {
         let root = canonicalRoot(root)
-        try DataTransferSession.measure(.verification) {
+        return try DataTransferSession.measure(.verification) {
             DataTransferSession.progress?.verify(purpose)
-            try withCopyDiagnostics("校验目标端目录：\(root.path)") {
-                try compare(scan(root, exclusions: snapshot.excludedRootEntries, profile: profile, expectedItems: snapshot.entries.count), snapshot,
+            return try withCopyDiagnostics("校验目标端目录：\(root.path)") {
+                let actual = try scan(root, exclusions: snapshot.excludedRootEntries, profile: profile, expectedItems: snapshot.entries.count)
+                try compare(actual, snapshot,
                             identities: false, ownershipRole: .destination, rootPath: root.path,
                             profile: profile)
+                return actual
             }
         }
     }

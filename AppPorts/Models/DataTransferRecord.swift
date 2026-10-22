@@ -125,6 +125,9 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     /// chain and manifests so a later explicit retry is still fully verified.
     var cleanupDisposition: CleanupDisposition? = nil
 
+    var retryFailureCount: Int? = nil
+    var nextAutomaticRetryAt: Date? = nil
+
     var needsAutomaticCompletion: Bool { cleanupDisposition == nil }
     var needsAttention: Bool { retainedCopyRemovedAt == nil && cleanupDisposition != .keep }
 
@@ -134,6 +137,12 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     /// The original usable entry has been restored. The full record remains
     /// until automatic cleanup of this attempt's candidate has also finished.
     var rollbackCompletedAt: Date? = nil
+    /// New mount migrations save false at creation and true BEFORE attempting
+    /// to mount the candidate at the application entry. Nil is legacy/unknown.
+    var candidateActivationAttempted: Bool? = nil
+    /// Cleanup may recreate a private placeholder removed after verification.
+    /// Keep this claim separate from the immutable preparation placeholder.
+    var candidateRemovalMountPointIdentity: DataPathIdentity? = nil
     var recoverableReason: String?
 
     init(operationID: UUID = UUID(), mode: Mode, direction: Direction, sourceID: String? = nil,
@@ -182,6 +191,19 @@ struct DataTransferRecord: Codable, Equatable, Identifiable, Sendable {
     /// before restarting or cancelling any claimed/unknown preparation.
     var isPreparationRecoverable: Bool {
         !isDataSwitchComplete && rollbackCompletedAt == nil && baseline == nil
+            && [.preparing, .copying, .needsRecovery].contains(phase)
+    }
+
+    /// This is historical evidence, not deletion authority. The caller must
+    /// still prove live source, exclusive ownership, identities and no writers.
+    var hasNeverActivatedMigrationCandidate: Bool {
+        guard mode == .mount, direction == .migrate, !isDataSwitchComplete,
+              retainedCopyRemovedAt == nil else { return false }
+        if let candidateActivationAttempted { return !candidateActivationAttempted }
+        // Schema 7–11 writers durably saved the completed baseline before
+        // activation and never cleared it on failure. A source manifest alone
+        // is preparation evidence, not a completed verification.
+        return baseline == nil && sourceBaseline != nil && backupIdentity == nil
             && [.preparing, .copying, .needsRecovery].contains(phase)
     }
 
@@ -308,6 +330,9 @@ struct DataTransferMaterial: Codable, Equatable, Identifiable, Sendable {
     let createdAt: Date
     var recoveryRecord: DataTransferRecord? = nil
 
+    var retryFailureCount: Int? = nil
+    var nextAutomaticRetryAt: Date? = nil
+
     init(transfer: DataTransferRecord, reason: String, additionalPaths: [String] = []) {
         id = transfer.operationID
         appName = transfer.appName
@@ -321,6 +346,8 @@ struct DataTransferMaterial: Codable, Equatable, Identifiable, Sendable {
         self.reason = reason
         createdAt = transfer.createdAt
         recoveryRecord = transfer
+        retryFailureCount = transfer.retryFailureCount
+        nextAutomaticRetryAt = transfer.nextAutomaticRetryAt
     }
 
     /// The live mount continues to own its volume. Only separate paths from an

@@ -290,7 +290,7 @@ final class FakeDiskCommandRunner: ShellCommandRunning, @unchecked Sendable {
                 "FilesystemType": "apfs",
                 "APFSContainerReference": containerReference
             ]
-            if let mountPath = mountPathByVolume[target] {
+            if let mountPath = mountPathByVolume[target.hasPrefix("disk") ? volumeUUID(for: target) : target] {
                 plist["MountPoint"] = mountPath
             }
             return success(plist: plist)
@@ -363,7 +363,9 @@ final class FakeDiskCommandRunner: ShellCommandRunning, @unchecked Sendable {
             // /sbin/mount -u -o <选项> <挂载点>：只改标志，挂载关系不变。
             return success(text: "")
         case "unmount":
-            let path = Self.normalized(arguments.last ?? "")
+            let target = arguments.last ?? ""
+            let targetVolume = target.hasPrefix("disk") ? volumeUUID(for: target) : target
+            let path = Self.normalized(mountPathByVolume[targetVolume] ?? target)
             let volume = mountPathByVolume.first(where: { Self.normalized($0.value) == path })?.key
             guard mountedPaths.contains(path) else { return failure("\(path) was not mounted") }
             do {
@@ -687,7 +689,8 @@ struct ContainerVolumeMigratorTests {
         // evidence. Keep its opaque verified baseline, as the old format did.
         let newerFields = ["recoveryMountRecord", "sourceBaseline", "preparationPath", "preparationParentIdentity",
                            "stagingParentIdentity", "stagingIdentity", "volumeCreationContainerUUID", "volumeCreationName",
-                           "originalSourceMountFlags", "preparationRemovalBaseline", "preparationRemovalParentIdentity"]
+                           "originalSourceMountFlags", "preparationRemovalBaseline", "preparationRemovalParentIdentity",
+                           "candidateActivationAttempted", "candidateRemovalMountPointIdentity"]
         for index in transfers.indices {
             for field in newerFields { transfers[index].removeValue(forKey: field) }
         }
@@ -713,7 +716,7 @@ struct ContainerVolumeMigratorTests {
         await #expect(throws: (any Error).self) { try await noowners.mount(record: current) }
     }
 
-    @Test("Saved mount recovery records persist as schema 7 and cannot change or disappear", arguments: [false, true])
+    @Test("Saved mount recovery records and activation evidence persist as schema 12 and cannot change or disappear", arguments: [false, true])
     func recoveryMountRecordIsDurableAndImmutable(removesRecord: Bool) async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
@@ -724,7 +727,7 @@ struct ContainerVolumeMigratorTests {
         let file = workspace.rootURL.appendingPathComponent("container-mounts.plist")
         let saved = try Data(contentsOf: file)
         let document = try #require(try PropertyListSerialization.propertyList(from: saved, format: nil) as? [String: Any])
-        #expect(document["schemaVersion"] as? Int == 7)
+        #expect(document["schemaVersion"] as? Int == 12)
         let reopened = ContainerMountStore(fileURL: file)
         let original = try #require(try reopened.transfers().first)
         var recovery = try #require(original.recoveryMountRecord)
@@ -2400,6 +2403,12 @@ struct ContainerVolumeMigratorTests {
         try await cold.mount(record: next.record)
         #expect(runner.mountedUUID(at: source) == nextUUID)
         runner.markOnline(oldUUID)
+        let retryTime = Date()
+        try workspace.store.recordCleanupRetry(.transfer(oldRestore.operationID), failed: true, now: retryTime)
+        let postponed = try #require(try workspace.store.transfer(operationID: oldRestore.operationID))
+        _ = await cold.performAutomaticMaintenance(now: { retryTime })
+        #expect(try workspace.store.transfer(operationID: oldRestore.operationID)?.nextAutomaticRetryAt == postponed.nextAutomaticRetryAt)
+        #expect(runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty, "A due successor must not clean its postponed predecessor")
         if replaceActiveBeforeCleanup {
             let saved = source.deletingLastPathComponent().appendingPathComponent("SavedActiveData")
             try FileManager.default.moveItem(at: source, to: saved)

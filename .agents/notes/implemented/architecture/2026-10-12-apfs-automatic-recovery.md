@@ -42,6 +42,10 @@ Status: implemented
 - 整项恢复总期限与单条命令期限不同，后者见[进程退出不能等待低优先级管道读取](../../implemented/bug-fix/2026-09-29-nonblocking-process-completion.md)。
 - 后台代理的签名与进程登记责任见[后台写入者准入绑定实际进程与代理签名](../bug-fix/2026-10-13-background-writer-identity.md)。
 
+清理调度和保留暂存的内容证明由[卷状态适配](2026-10-22-volume-state-adaptation.md)收紧；入口恢复与重挂不受清理退避阻挡。
+
+从未启用且有独占归属的失败迁移卷改为可丢弃候选，内容相等要求的局部替代见[失败迁移卷自动收尾](../bug-fix/2026-10-22-failed-migration-candidate-disposal.md)；已启用目标、还原暂存与未知材料仍遵循原保护规则。
+
 ## Alternatives considered
 
 - **逐个补错误弹窗**：局部修改快，但下一断点仍缺少统一的可用入口恢复。

@@ -950,6 +950,7 @@ final class AppLogger: @unchecked Sendable {
         let redactedLogContent = redactedDiagnosticText(from: exportLogContent)
         let recentFailures = operationSummaries.filter { ["failed", "rolled_back", "success_with_warning"].contains($0.result) }
 
+        let volumeInventory = VolumeStateReporting.diagnosticSection(VolumeStateReporting.lastInventory())
         let metadata: [String: String] = [
             "generated_at": timestampString(for: Date()),
             "session_id": sessionID,
@@ -965,7 +966,8 @@ final class AppLogger: @unchecked Sendable {
             "redaction_mode": "share_safe",
             "app_inventory_included": String(includeAppInventory),
             "recent_operation_count": String(operationSummaries.count),
-            "recent_failure_count": String(recentFailures.count)
+            "recent_failure_count": String(recentFailures.count),
+            "volume_state_inventory": volumeInventory.joined(separator: "\n")
         ]
 
         try writeJSON(metadata, to: packageURL.appendingPathComponent("diagnostic-summary.json"))
@@ -1287,6 +1289,7 @@ final class AppLogger: @unchecked Sendable {
             lines.append("last_failure: none")
         }
 
+        if let inventory = metadata["volume_state_inventory"] { lines.append(inventory) }
         return lines.joined(separator: "\n") + "\n"
     }
 }

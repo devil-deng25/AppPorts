@@ -13,6 +13,24 @@ final class OperationLockTests: XCTestCase {
             .appendingPathComponent("operation.lock")
     }
 
+    func testManagedLeaseRemainsExclusiveUntilEveryNestedHolderFinishes() {
+        let url = makeLockFileURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let first = OperationLock(fileURL: url)
+        let nested = OperationLock(fileURL: url)
+        let outsider = OperationLock(fileURL: url)
+        MigrationExecution.$managed.withValue(true) {
+            XCTAssertTrue(first.tryAcquire())
+            XCTAssertTrue(nested.tryAcquire())
+        }
+        XCTAssertFalse(outsider.tryAcquire())
+        first.release()
+        XCTAssertFalse(outsider.tryAcquire())
+        nested.release()
+        XCTAssertTrue(outsider.tryAcquire())
+        outsider.release()
+    }
+
     func testSecondHolderCannotAcquireWhileTheFirstHoldsTheLock() {
         let url = makeLockFileURL()
         let first = OperationLock(fileURL: url)
@@ -173,41 +191,31 @@ final class OperationLockTests: XCTestCase {
             contentsOf: root.appendingPathComponent("AppPorts/Views/DataDirsView.swift"),
             encoding: .utf8
         )
-        XCTAssertGreaterThanOrEqual(
-            dataDirsViewSource.components(separatedBy: "await operationLock.acquire(").count - 1, 4,
-            "挂载迁移/挂载/卸载/还原四处都要拿锁，少一处就会和代理抢挂载点"
-        )
-        XCTAssertGreaterThanOrEqual(
-            dataDirsViewSource.components(separatedBy: "let operationLock = OperationLock()").count - 1, 4,
-            "每个操作必须独立持有锁实例，同一实例的幂等 acquire 不能隔离并发任务"
-        )
         XCTAssertFalse(dataDirsViewSource.contains("OperationLock.shared"))
         XCTAssertFalse(agentSource.contains("OperationLock.shared"))
-        // Audit each operation's own function so a later function cannot supply
-        // its guard accidentally. Both guard/throw and if/return stop execution.
         let operations = ["migrateAndComplete", "restoreAndComplete", "normalizeManagedLinkAndComplete",
                           "createLink", "mount", "unmount", "resumeVerifiedTransfer", "cancelUnstartedRestore",
                           "cancelUnstartedMigration", "cancelPreparation", "cleanupRetainedTransfer", "retryCleanup", "discardCleanupRecord"]
+        var audited = 0
         for function in dataDirsViewSource.components(separatedBy: "\n    private func ").dropFirst() {
             guard let mutation = operations.compactMap({ function.range(of: ".\($0)(") })
                 .min(by: { $0.lowerBound < $1.lowerBound }) else { continue }
             let name = String(function.prefix { $0 != "(" })
-            guard let acquire = function.range(of: "await operationLock.acquire("), acquire.lowerBound < mutation.lowerBound else {
-                XCTFail("\(name) must acquire its own cross-process lock before its first data operation")
-                continue
-            }
-            let callSite = function[acquire.upperBound..<mutation.lowerBound]
-            guard let rejection = callSite.range(of: "if !lockAcquired {") ?? callSite.range(of: "guard lockAcquired else {")
-                    ?? callSite.range(of: "guard acquired else {") else {
-                XCTFail("\(name) must reject a failed lock acquisition before its first data operation")
-                continue
-            }
-            let rejectedPath = callSite[rejection.upperBound...]
-            XCTAssertTrue(
-                rejectedPath.contains("return") || rejectedPath.contains("throw"),
-                "\(name) must return or throw when another operation holds the lock"
-            )
+            let submission = try XCTUnwrap(function.range(of: "submitDataTask("), "\(name) must use the locked scheduler")
+            XCTAssertLessThan(submission.lowerBound, mutation.lowerBound)
+            audited += 1
         }
+        XCTAssertGreaterThanOrEqual(audited, 8)
+        XCTAssertTrue(dataDirsViewSource.contains("MigrationTaskCenter.shared.submit("))
+        XCTAssertTrue(dataDirsViewSource.contains("resources: MigrationResources(paths: paths, keys: keys)"))
+        let scheduler = try String(contentsOf: root.appendingPathComponent("AppPorts/Services/MigrationTaskCenter.swift"), encoding: .utf8)
+        let acquire = try XCTUnwrap(scheduler.range(of: "guard await lock.acquire(timeout: OperationLock.appWaitTimeout) else"))
+        let execution = try XCTUnwrap(scheduler.range(of: "return try await operation(progress)"))
+        XCTAssertLessThan(acquire.lowerBound, execution.lowerBound)
+        let beforeExecution = scheduler[acquire.upperBound..<execution.lowerBound]
+        XCTAssertTrue(beforeExecution.contains("throw DataOperationSafety.Failure.inspection"))
+        XCTAssertTrue(beforeExecution.contains("defer { lock.release() }"))
+        XCTAssertTrue(scheduler.contains("MigrationExecution.$managed.withValue(true)"))
 
         let contentViewSource = try String(
             contentsOf: root.appendingPathComponent("AppPorts/ContentView.swift"),
@@ -227,7 +235,7 @@ final class OperationLockTests: XCTestCase {
         XCTAssertTrue(maintenance.contains("defer { lock.release() }"))
         XCTAssertFalse(maintenance.contains("OperationLock.shared"))
         let lockGuard = try XCTUnwrap(maintenance.range(of: "guard await lock.acquire("))
-        for mutation in ["await migrator.performAutomaticMaintenance()", "await migrator.remountAvailableRecords()",
+        for mutation in ["await migrator.performAutomaticMaintenance(ignoresRetryBackoff: interactive)", "await migrator.remountAvailableRecords()",
                          "await DataDirMover().resumeVerifiedTransfer("] {
             let operation = try XCTUnwrap(maintenance.range(of: mutation))
             XCTAssertLessThan(lockGuard.lowerBound, operation.lowerBound)

@@ -63,6 +63,12 @@ struct MigrationResources: Codable, Sendable {
 
 @MainActor
 final class MigrationJob: ObservableObject, Identifiable {
+    /// Identifies one failed attempt. A delayed dialog cannot retry a newer attempt.
+    struct RetryToken: Equatable, Sendable {
+        let jobID: UUID
+        fileprivate let attemptID: UUID
+    }
+
     enum Status: String, Codable, Equatable {
         case queued, running, completed, attention, cancelled, incomplete
         var isFinished: Bool { self == .completed || self == .attention || self == .cancelled || self == .incomplete }
@@ -79,6 +85,7 @@ final class MigrationJob: ObservableObject, Identifiable {
     }
 
     let id: UUID
+    private let attemptID = UUID()
     let title: String
     let category: MigrationCategory
     let resources: MigrationResources
@@ -95,8 +102,10 @@ final class MigrationJob: ObservableObject, Identifiable {
     var worker: Task<Void, Never>?
     var operation: (@Sendable (DataTransferProgress) async throws -> String?)?
     var completion: (@MainActor () -> Void)?
-    var recoveryHandler: (@MainActor (Error) -> Void)?
+    var recoveryHandler: (@MainActor (Error, RetryToken) -> Void)?
     var recoveryAction: (@MainActor () -> Void)?
+
+    var retryToken: RetryToken { RetryToken(jobID: id, attemptID: attemptID) }
 
     init(id: UUID = UUID(), title: String, category: MigrationCategory, resources: MigrationResources,
          startedAt: Date? = nil) {
@@ -136,9 +145,16 @@ final class MigrationTaskCenter: ObservableObject {
     @Published var showsList = false
     @Published var recoveryJobID: UUID?
     private let maximumConcurrentJobs = 3
-    private let historyStore = MigrationTaskHistoryStore()
+    private let historyStore: MigrationTaskHistoryStore
+    private let operationState: AppOperationState
+    private let makeOperationLock: @Sendable () -> OperationLock
 
-    private init() {
+    init(historyStore: MigrationTaskHistoryStore = MigrationTaskHistoryStore(),
+         operationState: AppOperationState? = nil,
+         makeOperationLock: @escaping @Sendable () -> OperationLock = { OperationLock() }) {
+        self.historyStore = historyStore
+        self.operationState = operationState ?? .shared
+        self.makeOperationLock = makeOperationLock
         jobs = historyStore.load().map { entry in
             let job = MigrationJob(id: entry.id, title: entry.title, category: entry.category,
                                    resources: entry.resources, startedAt: entry.startedAt)
@@ -169,24 +185,50 @@ final class MigrationTaskCenter: ObservableObject {
     var hasAttention: Bool { jobs.contains { $0.status == .attention } }
     var detail: MigrationJob? { jobs.first { $0.id == detailID } }
 
+    func canRetry(_ retry: MigrationJob.RetryToken) -> Bool {
+        jobs.contains { $0.retryToken == retry && $0.status == .attention }
+    }
+
     @discardableResult
     func submit(title: String, category: MigrationCategory, resources: MigrationResources,
                 presentDetails: Bool = true,
-                recovery: (@MainActor (Error) -> Void)? = nil,
+                retrying retry: MigrationJob.RetryToken? = nil,
+                recovery: (@MainActor (Error, MigrationJob.RetryToken) -> Void)? = nil,
                 operation: @escaping @Sendable (DataTransferProgress) async throws -> String?,
                 completion: (@MainActor () -> Void)? = nil) -> UUID {
-        if let existing = jobs.first(where: {
+        let retryIndex: Int?
+        if let retry {
+            // Retry is explicit, never inferred from matching titles or paths.
+            // Removed, completed and superseded attempts must not be recreated.
+            guard canRetry(retry), let index = jobs.firstIndex(where: { $0.id == retry.jobID }) else {
+                if presentDetails, jobs.contains(where: { $0.id == retry.jobID }) {
+                    showsList = false
+                    detailID = retry.jobID
+                }
+                return retry.jobID
+            }
+            retryIndex = index
+        } else {
+            retryIndex = nil
+        }
+        if retry == nil, let existing = jobs.first(where: {
             !$0.status.isFinished && $0.title == title && $0.category == category
                 && $0.resources.paths == resources.paths && $0.resources.keys == resources.keys
         }) {
             if presentDetails { showsList = false; detailID = existing.id }
             return existing.id
         }
-        let job = MigrationJob(title: title, category: category, resources: resources)
+        let job = MigrationJob(id: retry?.jobID ?? UUID(), title: title, category: category, resources: resources)
         job.operation = operation
         job.completion = completion
         job.recoveryHandler = recovery
-        jobs.append(job)
+        if let retryIndex {
+            // A fresh execution resets progress, cancellation and timing while
+            // the task list, detail selection and persisted history keep one ID.
+            jobs[retryIndex] = job
+        } else {
+            jobs.append(job)
+        }
         if presentDetails {
             showsList = false
             detailID = job.id
@@ -248,7 +290,7 @@ final class MigrationTaskCenter: ObservableObject {
     }
 
     func schedule() {
-        guard !AppOperationState.shared.blocksInteraction else { return }
+        guard !operationState.blocksInteraction else { return }
         var active = jobs.filter { $0.status == .running }
         for job in jobs where job.status == .queued {
             guard active.count < maximumConcurrentJobs else { break }
@@ -259,6 +301,7 @@ final class MigrationTaskCenter: ObservableObject {
             active.append(job)
             let control = job.control
             let progress = job.progress
+            let makeOperationLock = self.makeOperationLock
             job.worker = Task { [weak self] in
                 let result: Result<String?, Error>
                 do {
@@ -267,7 +310,7 @@ final class MigrationTaskCenter: ObservableObject {
                             try await control.checkpointAsync()
                             return try await progress.track { _ in
                                 progress.begin(.waiting, detail: "正在等待取得磁盘操作权限。".localized)
-                                let lock = OperationLock()
+                                let lock = makeOperationLock()
                                 guard await lock.acquire(timeout: OperationLock.appWaitTimeout) else {
                                     try Task.checkCancellation()
                                     throw DataOperationSafety.Failure.inspection(lock.admissionFailureReason
@@ -306,7 +349,8 @@ final class MigrationTaskCenter: ObservableObject {
                 job.status = .attention
                 job.message = error.localizedDescription
                 if let recovery = job.recoveryHandler {
-                    job.recoveryAction = { recovery(error) }
+                    let retry = job.retryToken
+                    job.recoveryAction = { recovery(error, retry) }
                 }
             }
         }
@@ -322,7 +366,7 @@ final class MigrationTaskCenter: ObservableObject {
     }
 
     private func publishCount() {
-        AppOperationState.shared.setMigrationCount(unfinishedCount)
+        operationState.setMigrationCount(unfinishedCount)
         persistHistory()
         objectWillChange.send()
     }

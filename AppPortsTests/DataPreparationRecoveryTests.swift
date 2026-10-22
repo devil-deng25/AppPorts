@@ -5,7 +5,7 @@ import Testing
 
 struct DataPreparationRecoveryTests {
     @Test("Maintenance retires claimed inactive restore staging while preserving newer active data",
-          arguments: ["claimed", "replaced", "unclaimed", "empty-active"])
+          arguments: ["claimed", "replaced", "unclaimed", "empty-active", "no-baseline", "changed", "new-file", "partial-removal"])
     func retiresPreservedRestoreStage(_ scenario: String) async throws {
         let fixture = try Fixture(mount: true)
         defer { fixture.remove() }
@@ -23,6 +23,17 @@ struct DataPreparationRecoveryTests {
         transfer.preparationParentIdentity = try DataPathIdentity.capture(staging.deletingLastPathComponent())
         transfer.destinationIdentity = try DataPathIdentity.capture(staging)
         transfer.phase = .copying
+        if scenario != "no-baseline" && scenario != "empty-active" {
+            transfer.baseline = try PropertyListEncoder().encode(TreeCopySession.snapshot(at: staging))
+        }
+        if scenario == "changed" { try Data("unique changed bytes".utf8).write(to: staging.appendingPathComponent("a.txt")) }
+        if scenario == "new-file" { try Data("unique document".utf8).write(to: staging.appendingPathComponent("new.txt")) }
+        let candidate = try TreeCopySession.snapshot(at: staging)
+        if scenario == "partial-removal" {
+            transfer.preparationRemovalBaseline = try PropertyListEncoder().encode(candidate)
+            transfer.preparationRemovalParentIdentity = transfer.preparationParentIdentity
+            try FileManager.default.removeItem(at: staging.appendingPathComponent("a.txt"))
+        }
         var material = DataTransferMaterial(transfer: transfer, reason: "Interrupted restore")
         if scenario == "unclaimed" { material.recoveryRecord = nil }
         if scenario == "replaced" {
@@ -39,15 +50,21 @@ struct DataPreparationRecoveryTests {
         let encoded = try PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(material), format: nil)
         try DurableFileIO.write(PropertyListSerialization.data(fromPropertyList: ["schemaVersion": 9,
             "mounts": [], "cleanups": [], "transfers": [], "preservedMaterials": [encoded]], format: .binary, options: 0), to: fixture.ledger)
-        let messages = await fixture.mountMover().cleanupPreservedRestoreMaterials()
+        let messages = await fixture.mountMover().performAutomaticMaintenance()
         #expect(try TreeCopySession.snapshot(at: fixture.local) == active)
-        if scenario == "claimed" {
+        if scenario == "claimed" || scenario == "partial-removal" {
             #expect(messages.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: staging.path))
             #expect(try fixture.store.preservedMaterials().isEmpty)
         } else {
             #expect(FileManager.default.fileExists(atPath: staging.path))
-            #expect(try fixture.store.preservedMaterials() == [material])
+            let remaining = try #require(try fixture.store.preservedMaterials().first)
+            #expect(remaining.recoveryRecord == material.recoveryRecord)
+            if scenario != "replaced" { #expect(try TreeCopySession.snapshot(at: staging) == candidate) }
+            if scenario != "unclaimed" {
+                #expect(remaining.retryFailureCount == 1)
+                #expect(remaining.nextAutomaticRetryAt != nil)
+            }
         }
     }
 
@@ -126,7 +143,7 @@ struct DataPreparationRecoveryTests {
         #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
     }
 
-    @Test("A changed source or unknown added payload is never discarded with a partial candidate",
+    @Test("Failed mount candidates are disposable, while replaced roots and strict symlink copies are preserved",
           arguments: [false, true], ["source-write", "extra-file", "root-replaced", "parent-replaced"])
     func partialConflictsPreserveEverything(mount: Bool, conflict: String) async throws {
         let fixture = try Fixture(mount: mount)
@@ -153,13 +170,393 @@ struct DataPreparationRecoveryTests {
         }
         let source = try TreeCopySession.snapshot(at: fixture.local)
         let cold = ContainerMountStore(fileURL: fixture.ledger)
-        await #expect(throws: (any Error).self) {
-            if mount { try await fixture.mountMover(store: cold).cancelPreparation(operationID: pending.operationID) }
-            else { try await fixture.dataMover(store: cold).cancelPreparation(operationID: pending.operationID) }
+        let disposable = mount && ["source-write", "extra-file"].contains(conflict)
+        if disposable {
+            try await fixture.mountMover(store: cold).cancelPreparation(operationID: pending.operationID)
+            #expect(try cold.transfer(operationID: pending.operationID) == nil)
+            #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+        } else {
+            await #expect(throws: (any Error).self) {
+                if mount { try await fixture.mountMover(store: cold).cancelPreparation(operationID: pending.operationID) }
+                else { try await fixture.dataMover(store: cold).cancelPreparation(operationID: pending.operationID) }
+            }
+            #expect(try cold.transfer(operationID: pending.operationID) != nil)
+            #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
         }
         #expect(try TreeCopySession.snapshot(at: fixture.local) == source)
+    }
+
+    @Test("Upgraded failed copies discard candidate writes but retain the current source", arguments: Array(7...12), [false, true])
+    func upgradedFailedCandidate(schema: Int, rolledBack: Bool) async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        let pending = try await fixture.interruptMigration()
+        let candidate = URL(fileURLWithPath: try #require(pending.stagingPath))
+        try Data("latest original data".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+        try Data("disposable candidate write".utf8).write(to: candidate.appendingPathComponent("unique.txt"))
+        let source = try TreeCopySession.snapshot(at: fixture.local)
+        // Re-encode the exact on-disk layout accepted by old writers. The
+        // original 1.9.2/1.9.3 journals used schema 7–9 without activation facts.
+        try fixture.rewriteJournal { document, transfers in
+            document["schemaVersion"] = max(schema, rolledBack ? 9 : schema)
+            if schema < 12 { transfers[0].removeValue(forKey: "candidateActivationAttempted") }
+            if rolledBack { transfers[0]["rollbackCompletedAt"] = Date(timeIntervalSince1970: 10) }
+        }
+        let bytes = try Data(contentsOf: fixture.ledger)
+        let diskState = fixture.root.appendingPathComponent("fake-disks.plist")
+        try fixture.runner.saveSimulationState(to: diskState)
+        let coldRunner = try FakeDiskCommandRunner.reopenSimulationState(from: diskState)
+        let cold = ContainerMountStore(fileURL: fixture.ledger)
+        let loaded = try #require(try cold.transfer(operationID: pending.operationID))
+        #expect(loaded.candidateActivationAttempted == (schema < 12 ? nil : false))
+        #expect(try Data(contentsOf: fixture.ledger) == bytes)
+        #expect(await fixture.mountMover(store: cold, runnerOverride: coldRunner).performAutomaticMaintenance().isEmpty)
+        #expect(try cold.transfers().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: candidate.path))
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == source)
+        #expect(coldRunner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+        #expect(await fixture.mountMover(store: ContainerMountStore(fileURL: fixture.ledger), runnerOverride: coldRunner).performAutomaticMaintenance().isEmpty)
+        #expect(coldRunner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+    }
+
+    @Test("Reconnected failed candidates at the system automount are reclaimed after a cold upgrade", arguments: [9, 12], [false, true])
+    func reconnectedFailedCandidate(schema: Int, rolledBack: Bool) async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        let pending = try await fixture.interruptMigration()
+        let automatic = try await fixture.automountCandidate(pending)
+        try Data("latest original data".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+        try Data("disposable candidate write".utf8).write(to: automatic.appendingPathComponent("unique.txt"))
+        let source = try TreeCopySession.snapshot(at: fixture.local)
+        try fixture.rewriteJournal { document, transfers in
+            document["schemaVersion"] = schema
+            if schema < 12 { transfers[0].removeValue(forKey: "candidateActivationAttempted") }
+            if schema == 12 {
+                // The real build 44 unplug occurred after verification but
+                // before activation. Only its explicit false makes it disposable.
+                transfers[0]["baseline"] = transfers[0]["sourceBaseline"]
+                transfers[0]["phase"] = "needsRecovery"
+            }
+            if rolledBack { transfers[0]["rollbackCompletedAt"] = Date(timeIntervalSince1970: 10) }
+            // Reattachment changes st_dev, while UUID and root inode survive.
+            var identity = try #require(transfers[0]["destinationIdentity"] as? [String: Any])
+            identity["device"] = 1
+            transfers[0]["destinationIdentity"] = identity
+        }
+        let diskState = fixture.root.appendingPathComponent("fake-disks.plist")
+        try fixture.runner.saveSimulationState(to: diskState)
+        let coldRunner = try FakeDiskCommandRunner.reopenSimulationState(from: diskState)
+        let cold = ContainerMountStore(fileURL: fixture.ledger)
+        let mover = fixture.mountMover(store: cold, runnerOverride: coldRunner)
+        #expect(await mover.performAutomaticMaintenance().isEmpty)
+        #expect(try cold.transfers().isEmpty)
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == source)
+        #expect(coldRunner.commands(prefix: ["unmount", "disk7s9"]).count == 1)
+        #expect(coldRunner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+        #expect(await mover.performAutomaticMaintenance().isEmpty)
+        #expect(coldRunner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+    }
+
+    @Test("Unproven or busy automounts remain intact and manual retry reports the remaining cleanup",
+          arguments: ["missing-marker", "wrong-name", "root-replaced", "path-reference", "foreign-volume", "busy", "attempted"])
+    func unsafeAutomountedCandidate(_ scenario: String) async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        let pending = try await fixture.interruptMigration()
+        let automatic = try await fixture.automountCandidate(pending, name: scenario == "wrong-name" ? "Other" : nil)
+        if scenario == "missing-marker" {
+            try FileManager.default.removeItem(at: automatic.appendingPathComponent(ContainerVolumeMigrator.volumeMarkerFileName))
+        }
+        if scenario == "root-replaced" {
+            let saved = fixture.root.appendingPathComponent("saved-candidate")
+            try FileManager.default.moveItem(at: automatic, to: saved)
+            try FileManager.default.copyItem(at: saved, to: automatic)
+        }
+        if scenario == "path-reference" {
+            try fixture.store.upsert(ContainerMountRecord(appName: "Other", bundleIdentifier: nil,
+                dataDirType: DataDirType.containers.rawValue,
+                mountPointPath: automatic.appendingPathComponent("owned-by-other").path,
+                volumeUUID: "OTHER-VOLUME", volumeName: "Other", externalRootPath: fixture.external.path))
+        }
+        if scenario == "attempted" {
+            try fixture.rewriteJournal { _, transfers in
+                transfers[0]["candidateActivationAttempted"] = true
+                transfers[0]["baseline"] = transfers[0]["sourceBaseline"]
+            }
+        }
+        try fixture.rewriteJournal { _, transfers in
+            transfers[0]["rollbackCompletedAt"] = Date(timeIntervalSince1970: 10)
+        }
+        let source = try TreeCopySession.snapshot(at: fixture.local)
+        let payload = try TreeCopySession.snapshot(at: automatic)
+        let mover = fixture.mountMover(
+            mountedVolumeUUID: { scenario == "foreign-volume" && $0.path == automatic.path ? "OTHER-VOLUME" : fixture.runner.mountedUUID(at: $0) },
+            safetyRunner: CandidateWritersRunner(busyPath: scenario == "busy" ? automatic.path : nil))
+        let warnings = await mover.performAutomaticMaintenance(only: pending.operationID, ignoresRetryBackoff: true)
+        #expect(warnings.count == 1)
+        #expect(warnings.first?.contains("原数据入口已恢复；自动清理尚未完成：".localized) == true)
+        #expect(try fixture.store.transfer(operationID: pending.operationID) != nil)
+        #expect(fixture.runner.commands(prefix: ["unmount", "disk7s9"]).isEmpty)
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        #expect(try TreeCopySession.snapshot(at: automatic) == payload)
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == source)
+    }
+
+    private struct CandidateWritersRunner: ShellCommandRunning {
+        let busyPath: String?
+        func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
+            if let busyPath, arguments.contains(busyPath) {
+                return ShellCommandResult(status: 0, standardOutput: Data("p999999\ncWriter\nf3\naw\n".utf8), standardError: Data(), timedOut: false)
+            }
+            return try await SyntheticNoWritersRunner().run(executable: executable, arguments: arguments, timeout: timeout)
+        }
+    }
+
+    @Test("Verified but never activated candidates are disposable; unknown or attempted activation retains changed data",
+          arguments: ["new", "legacy", "attempted"])
+    func verifiedCandidateDisposal(_ history: String) async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        await #expect(throws: (any Error).self) {
+            try await fixture.perform(restore: false) { progress in
+                if progress.stage == .switching {
+                    try? Data("source changed before activation".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+                }
+            }
+        }
+        let pending = try #require(try fixture.store.transfers().first)
+        #expect(pending.baseline != nil)
+        #expect(pending.candidateActivationAttempted == false)
+        let candidate = URL(fileURLWithPath: try #require(pending.stagingPath))
+        // The normal path already unmounted its verified candidate.
+        let payload = fixture.runner.detachedContents(for: try #require(pending.createdVolumeUUID)) ?? candidate
+        try Data("candidate-only write".utf8).write(to: payload.appendingPathComponent("unique.txt"))
+        try fixture.rewriteJournal { document, transfers in
+            if history == "legacy" {
+                document["schemaVersion"] = 9
+                transfers[0].removeValue(forKey: "candidateActivationAttempted")
+            } else if history == "attempted" { transfers[0]["candidateActivationAttempted"] = true }
+        }
+        let source = try TreeCopySession.snapshot(at: fixture.local)
+        let cold = ContainerMountStore(fileURL: fixture.ledger)
+        _ = await fixture.mountMover(store: cold).performAutomaticMaintenance()
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == source)
+        if history == "new" {
+            #expect(try cold.transfers().isEmpty)
+            #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+            #expect(!FileManager.default.fileExists(atPath: candidate.path))
+        } else {
+            #expect(try cold.transfer(operationID: pending.operationID)?.rollbackCompletedAt != nil)
+            #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+            #expect(try String(contentsOf: candidate.appendingPathComponent("unique.txt"), encoding: .utf8) == "candidate-only write")
+        }
+    }
+
+    @Test("New unreadable source children do not strand a never activated candidate")
+    func unreadableNewSourceChild() async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        _ = try await fixture.interruptMigration()
+        let temporary = fixture.local.appendingPathComponent(".TemporaryItems")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false)
+        let payload = temporary.appendingPathComponent("live-application-data")
+        try Data("keep this source data".utf8).write(to: payload)
+        try #require(chmod(temporary.path, 0) == 0)
+        defer { _ = chmod(temporary.path, 0o700) }
+        _ = await fixture.mountMover(store: ContainerMountStore(fileURL: fixture.ledger)).performAutomaticMaintenance()
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+        try #require(chmod(temporary.path, 0o700) == 0)
+        #expect(try String(contentsOf: payload, encoding: .utf8) == "keep this source data")
+    }
+
+    @Test("Failed candidate cleanup survives deletion and journal failures and honors automatic backoff",
+          arguments: ["delete", "final-save", "checkpoint-save"])
+    func failedCandidateCleanupRetries(_ failure: String) async throws {
+        let writer = FaultWriter()
+        let fixture = try Fixture(mount: true, writer: writer)
+        defer { fixture.remove() }
+        let pending = try await fixture.interruptMigration()
+        try Data("source remains authoritative".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+        let source = try TreeCopySession.snapshot(at: fixture.local)
+        if failure == "delete" { fixture.runner.failWhen(prefix: ["apfs", "deleteVolume"]) }
+        if failure == "final-save" { writer.rejectEmptyUntilCleared() }
+        if failure == "checkpoint-save" { writer.rejectAlways(field: "preparationRemovalParentIdentity") }
+        let time = Date(timeIntervalSince1970: 1_000)
+        _ = await fixture.mountMover().performAutomaticMaintenance(now: { time })
+        let retained = try #require(try fixture.store.transfer(operationID: pending.operationID))
+        #expect(retained.rollbackCompletedAt != nil)
+        #expect(retained.retryFailureCount == 1)
+        let deletions = fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count
+        fixture.runner.clearFailure()
+        writer.clearFault()
+        let cold = ContainerMountStore(fileURL: fixture.ledger)
+        _ = await fixture.mountMover(store: cold).performAutomaticMaintenance(now: { time.addingTimeInterval(1) })
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == deletions)
+        _ = await fixture.mountMover(store: cold).performAutomaticMaintenance(now: { time.addingTimeInterval(61) })
+        #expect(try cold.transfers().isEmpty)
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == source)
+        if failure == "final-save" { #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1) }
+    }
+
+    @Test("Failing to persist the activation attempt prevents any mount at the application entry")
+    func activationSaveFailurePreventsSwitch() async throws {
+        let writer = FaultWriter()
+        let fixture = try Fixture(mount: true, writer: writer)
+        defer { fixture.remove() }
+        writer.rejectActivationAttempt()
+        await #expect(throws: (any Error).self) { try await fixture.perform(restore: false, progress: nil) }
+        let pending = try #require(try fixture.store.transfers().first)
+        #expect(pending.candidateActivationAttempted == false)
+        #expect(pending.baseline != nil)
+        #expect(fixture.runner.commands(prefix: ["mount"]).allSatisfy { !$0.contains(fixture.local.path) })
+        // A cold retry can now activate only after it successfully saves true.
+        let cold = ContainerMountStore(fileURL: fixture.ledger)
+        _ = try await fixture.mountMover(store: cold).resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil)
+        #expect(fixture.runner.isMounted(fixture.local))
+        #expect(try String(contentsOf: fixture.local.appendingPathComponent("a.txt"), encoding: .utf8) == "first")
+    }
+
+    @Test("An unrelated record referencing the same candidate volume blocks whole-volume deletion",
+          arguments: ["mount", "material", "material-recovery"])
+    func anotherRecordOwnsCandidate(_ owner: String) async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        let pending = try await fixture.interruptMigration()
+        let uuid = try #require(pending.createdVolumeUUID)
+        try fixture.store.finishAutomaticMountRollback(pending, preserving: "test pending cleanup", verifyingFilesystem: {})
+        if owner == "mount" {
+            let original = try #require(pending.recoveryMountRecord)
+            let record = ContainerMountRecord(appName: original.appName, bundleIdentifier: original.bundleIdentifier,
+                dataDirType: original.dataDirType, mountPointPath: fixture.home.appendingPathComponent("Other").path,
+                volumeUUID: uuid, volumeName: original.volumeName, externalRootPath: original.externalRootPath)
+            try fixture.store.upsert(record)
+        } else {
+            var other = pending
+            other.originalPath = fixture.home.appendingPathComponent("Other").path
+            let material = DataTransferMaterial(transfer: other, reason: "independent reference")
+            // Keep the reference at a different path so only UUID ownership
+            // can detect it, including a legacy summary lacking its UUID.
+            var encoded = try #require(try PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(material), format: nil) as? [String: Any])
+            encoded["id"] = UUID().uuidString
+            encoded["paths"] = [fixture.home.appendingPathComponent("Elsewhere").path]
+            if owner == "material-recovery" { encoded.removeValue(forKey: "volumeUUID") }
+            else { encoded.removeValue(forKey: "recoveryRecord") }
+            try fixture.rewriteJournal { document, _ in document["preservedMaterials"] = [encoded] }
+        }
+        let cold = ContainerMountStore(fileURL: fixture.ledger)
+        _ = await fixture.mountMover(store: cold).performAutomaticMaintenance()
         #expect(try cold.transfer(operationID: pending.operationID) != nil)
         #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        #expect(fixture.runner.mountedUUID(at: URL(fileURLWithPath: try #require(pending.stagingPath))) == uuid)
+    }
+
+    @Test("Late system remounts or ledger references during the final device query prevent deletion", arguments: [false, true])
+    func lateDeletionConflict(reference: Bool) async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        let pending = try await fixture.interruptMigration()
+        let uuid = try #require(pending.createdVolumeUUID)
+        let otherPath = fixture.home.appendingPathComponent("Other")
+        let diskRunner = FinalDeviceQueryRunner(base: fixture.runner) {
+            if reference {
+                let record = try #require(pending.recoveryMountRecord)
+                try fixture.store.upsert(ContainerMountRecord(appName: record.appName,
+                    bundleIdentifier: record.bundleIdentifier, dataDirType: record.dataDirType,
+                    mountPointPath: otherPath.path, volumeUUID: uuid, volumeName: record.volumeName,
+                    externalRootPath: record.externalRootPath))
+            } else { fixture.runner.markVolumeMounted(uuid, at: otherPath.path) }
+        }
+        await #expect(throws: (any Error).self) {
+            try await fixture.mountMover(diskRunner: diskRunner).cancelPreparation(operationID: pending.operationID)
+        }
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        #expect(try fixture.store.transfer(operationID: pending.operationID) != nil)
+    }
+
+    @Test("Missing deleted placeholders still require their parent synchronization on cold retry")
+    func deletedPlaceholderRetriesBarrier() async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        let pending = try await fixture.interruptMigration()
+        let probe = SyncProbe()
+        let candidate = URL(fileURLWithPath: try #require(pending.stagingPath))
+        for _ in 0..<2 {
+            let cold = ContainerMountStore(fileURL: fixture.ledger)
+            await #expect(throws: (any Error).self) {
+                try await fixture.mountMover(store: cold, synchronizeCleanupParent: {
+                    probe.record($0)
+                    throw POSIXError(.EIO)
+                }).cancelPreparation(operationID: pending.operationID)
+            }
+            #expect(try cold.transfer(operationID: pending.operationID) != nil)
+            #expect(!FileManager.default.fileExists(atPath: candidate.path))
+        }
+        #expect(probe.paths.count == 2)
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+        let parent = candidate.deletingLastPathComponent()
+        let saved = fixture.root.appendingPathComponent("saved-mount-parent")
+        try FileManager.default.moveItem(at: parent, to: saved)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+        await #expect(throws: (any Error).self) {
+            try await fixture.mountMover().cancelPreparation(operationID: pending.operationID)
+        }
+        try FileManager.default.removeItem(at: parent)
+        try FileManager.default.moveItem(at: saved, to: parent)
+        try await fixture.mountMover(store: ContainerMountStore(fileURL: fixture.ledger)).cancelPreparation(operationID: pending.operationID)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+    }
+
+    @Test("Recovery adopts only an empty replacement placeholder after its claim save failed")
+    func cleanupPlaceholderClaimSaveFailure() async throws {
+        let writer = FaultWriter()
+        let fixture = try Fixture(mount: true, writer: writer)
+        defer { fixture.remove() }
+        fixture.runner.failWhen(prefix: ["mount", "nobrowse", "-mountPoint", fixture.local.path])
+        await #expect(throws: (any Error).self) { try await fixture.perform(restore: false, progress: nil) }
+        let pending = try #require(try fixture.store.transfers().first)
+        writer.rejectNext(field: "candidateRemovalMountPointIdentity")
+        await #expect(throws: (any Error).self) { try await fixture.mountMover().recoverWithIndependentBudget(pending) }
+        let cold = ContainerMountStore(fileURL: fixture.ledger)
+        let retry = try #require(try cold.transfer(operationID: pending.operationID))
+        #expect(retry.candidateRemovalMountPointIdentity == nil)
+        _ = try await fixture.mountMover(store: cold).recoverWithIndependentBudget(retry)
+        #expect(try cold.transfers().isEmpty)
+        #expect(try String(contentsOf: fixture.local.appendingPathComponent("a.txt"), encoding: .utf8) == "first")
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).count == 1)
+    }
+
+    @Test("Legacy missing claims, foreign mounts, replaced sources, user deferral and offline containers remain intact",
+          arguments: ["missing-parent", "missing-claim", "missing-marker", "foreign-mount", "source-replaced", "deferred", "offline"])
+    func unsafeFailedCandidateIsRetained(_ scenario: String) async throws {
+        let fixture = try Fixture(mount: true)
+        defer { fixture.remove() }
+        let pending = try await fixture.interruptMigration()
+        let candidate = URL(fileURLWithPath: try #require(pending.stagingPath))
+        try Data("candidate-only data".utf8).write(to: candidate.appendingPathComponent("unique.txt"))
+        try fixture.rewriteJournal { document, transfers in
+            document["schemaVersion"] = 10
+            transfers[0].removeValue(forKey: "candidateActivationAttempted")
+            if scenario == "missing-parent" { transfers[0].removeValue(forKey: "stagingParentIdentity") }
+            if scenario == "missing-claim" { transfers[0].removeValue(forKey: "destinationIdentity") }
+            if scenario == "deferred" { transfers[0]["cleanupDisposition"] = "deferred" }
+        }
+        if scenario == "missing-marker" { try FileManager.default.removeItem(at: candidate.appendingPathComponent(ContainerVolumeMigrator.volumeMarkerFileName)) }
+        if scenario == "foreign-mount" { fixture.runner.markVolumeMounted(try #require(pending.createdVolumeUUID), at: fixture.root.appendingPathComponent("foreign").path) }
+        if scenario == "source-replaced" {
+            try FileManager.default.moveItem(at: fixture.local, to: fixture.root.appendingPathComponent("saved-source"))
+            try FileManager.default.createDirectory(at: fixture.local, withIntermediateDirectories: false)
+            try Data("replacement source".utf8).write(to: fixture.local.appendingPathComponent("a.txt"))
+        }
+        if scenario == "offline" { fixture.runner.failWhen(prefix: ["apfs", "list"]) }
+        let source = try TreeCopySession.snapshot(at: fixture.local)
+        let cold = ContainerMountStore(fileURL: fixture.ledger)
+        _ = await fixture.mountMover(store: cold).performAutomaticMaintenance()
+        #expect(try cold.transfer(operationID: pending.operationID) != nil)
+        #expect(fixture.runner.commands(prefix: ["apfs", "deleteVolume"]).isEmpty)
+        #expect(try TreeCopySession.snapshot(at: fixture.local) == source)
+        #expect(try String(contentsOf: candidate.appendingPathComponent("unique.txt"), encoding: .utf8) == "candidate-only data")
     }
 
     @Test("A failed verified-baseline save can promote the complete candidate without recopying", arguments: [false, true])
@@ -641,11 +1038,38 @@ struct DataPreparationRecoveryTests {
         #expect(try cold.transfers().isEmpty)
     }
 
+    private final class FinalDeviceQueryRunner: ShellCommandRunning, @unchecked Sendable {
+        let base: FakeDiskCommandRunner
+        let mutation: @Sendable () throws -> Void
+        private let lock = NSLock()
+        private var performed = false
+        init(base: FakeDiskCommandRunner, mutation: @escaping @Sendable () throws -> Void) {
+            self.base = base
+            self.mutation = mutation
+        }
+        private func claim(_ arguments: [String]) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard !performed, arguments == ["info", "-plist", "disk7s9"] else { return false }
+            performed = true
+            return true
+        }
+        func run(executable: String, arguments: [String], timeout: TimeInterval) async throws -> ShellCommandResult {
+            if claim(arguments) { try mutation() }
+            return try await base.run(executable: executable, arguments: arguments, timeout: timeout)
+        }
+    }
+
     private final class FaultWriter: @unchecked Sendable {
         private let lock = NSLock()
         private var field: String?
         private var rejectEmpty = false
         private var stopAfterRestoreIntent = false
+        private var persistent = false
+        private var rejectActivation = false
+        func rejectAlways(field: String) { lock.lock(); self.field = field; persistent = true; lock.unlock() }
+        func rejectEmptyUntilCleared() { lock.lock(); rejectEmpty = true; persistent = true; lock.unlock() }
+        func rejectActivationAttempt() { lock.lock(); rejectActivation = true; lock.unlock() }
+        func clearFault() { lock.lock(); field = nil; rejectEmpty = false; persistent = false; rejectActivation = false; lock.unlock() }
         func rejectNext(field: String) { lock.lock(); self.field = field; lock.unlock() }
         func rejectNextEmptyTransfers() { lock.lock(); rejectEmpty = true; lock.unlock() }
         func failAfterNextRestoreIntent() { lock.lock(); stopAfterRestoreIntent = true; lock.unlock() }
@@ -654,10 +1078,11 @@ struct DataPreparationRecoveryTests {
             let document = try PropertyListSerialization.propertyList(from: bytes, format: nil) as? [String: Any]
             let transfers = document?["transfers"] as? [[String: Any]] ?? []
             let reject = field.map { key in transfers.contains { $0[key] != nil } } == true || rejectEmpty && transfers.isEmpty
+                || rejectActivation && transfers.contains { $0["candidateActivationAttempted"] as? Bool == true }
             let stopAfterWrite = stopAfterRestoreIntent && transfers.contains {
                 $0["direction"] as? String == "restore" && $0["phase"] as? String == "preparing"
             }
-            if reject { field = nil; rejectEmpty = false }
+            if reject && !persistent { field = nil; rejectEmpty = false; rejectActivation = false }
             if stopAfterWrite { stopAfterRestoreIntent = false }
             lock.unlock()
             if reject { throw CocoaError(.fileWriteOutOfSpace) }
@@ -707,20 +1132,24 @@ struct DataPreparationRecoveryTests {
                          synchronizeDirectory: synchronizeDirectory)
         }
         func mountMover(store: ContainerMountStore? = nil,
+                        runnerOverride: FakeDiskCommandRunner? = nil,
+                        diskRunner: (any ShellCommandRunning)? = nil,
                         mountFlags: @escaping @Sendable (URL) -> UInt32? = { _ in UInt32(MNT_DONTBROWSE) },
                         mountedVolumeUUID: (@Sendable (URL) -> String?)? = nil,
                         makeMountPointLease: (@Sendable (URL) throws -> any MountPointLeasing)? = nil,
+                        safetyRunner: any ShellCommandRunning = SyntheticNoWritersRunner(),
                         synchronizeCleanupParent: @escaping @Sendable (URL) throws -> Void = {
                             try DurableFileIO.syncDirectory(at: $0)
                         }) -> ContainerVolumeMigrator {
-            let runner = runner
+            let runner = runnerOverride ?? runner
             let external = external
-            return ContainerVolumeMigrator(disk: DiskUtility(runner: runner, commandTimeout: 5), store: store ?? self.store,
-                stagingMountRootURL: root.appendingPathComponent("mounts"), isMountPoint: { runner.isMounted($0) },
+            return ContainerVolumeMigrator(disk: DiskUtility(runner: diskRunner ?? runner, commandTimeout: 5), store: store ?? self.store,
+                stagingMountRootURL: root.appendingPathComponent("mounts"),
+                automaticMountRootURL: root.appendingPathComponent("Volumes"), isMountPoint: { runner.isMounted($0) },
                 mountedVolumePath: { $0.path.hasPrefix(external.path) ? "/SyntheticExternal" : "/" },
                 mountedVolumeUUID: mountedVolumeUUID ?? { runner.mountedUUID(at: $0) },
                 synchronizeAgent: { _ in }, availableCapacity: { _ in nil }, mountFlags: mountFlags,
-                homeDirectory: home, safetyRunner: SyntheticNoWritersRunner(),
+                homeDirectory: home, safetyRunner: safetyRunner,
                 makeMountPointLease: makeMountPointLease ?? { try runner.makeMountPointLease(at: $0) },
                 synchronizeCleanupParent: synchronizeCleanupParent)
         }
@@ -750,6 +1179,34 @@ struct DataPreparationRecoveryTests {
             if !mount { try FileManager.default.moveItem(at: local, to: saved.appendingPathComponent(local.lastPathComponent)) }
             try FileManager.default.removeItem(at: parent)
             try FileManager.default.moveItem(at: saved, to: parent)
+        }
+        func interruptMigration() async throws -> DataTransferRecord {
+            let task = Task {
+                try await perform(restore: false) { progress in
+                    if progress.currentFile == "a.txt" { withUnsafeCurrentTask { $0?.cancel() } }
+                }
+            }
+            await #expect(throws: (any Error).self) { try await task.value }
+            return try #require(try store.transfers().first)
+        }
+        func automountCandidate(_ transfer: DataTransferRecord, name: String? = nil) async throws -> URL {
+            let uuid = try #require(transfer.createdVolumeUUID)
+            let staging = try #require(transfer.stagingPath)
+            let volumeName = try #require(transfer.volumeCreationName)
+            let automatic = root.appendingPathComponent("Volumes").appendingPathComponent(name ?? volumeName)
+            try FileManager.default.createDirectory(at: automatic, withIntermediateDirectories: true)
+            let unmount = try await runner.run(executable: "/synthetic/diskutil", arguments: ["unmount", staging], timeout: 5)
+            #expect(unmount.status == 0)
+            let mount = try await runner.run(executable: "/synthetic/diskutil", arguments: ["mount", "nobrowse", "-mountPoint", automatic.path, uuid], timeout: 5)
+            #expect(mount.status == 0)
+            return automatic
+        }
+        func rewriteJournal(_ change: (inout [String: Any], inout [[String: Any]]) throws -> Void) throws {
+            var document = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: ledger), format: nil) as? [String: Any])
+            var transfers = try #require(document["transfers"] as? [[String: Any]])
+            try change(&document, &transfers)
+            document["transfers"] = transfers
+            try DurableFileIO.write(PropertyListSerialization.data(fromPropertyList: document, format: .binary, options: 0), to: ledger)
         }
         func removeRecordedField(_ field: String) throws {
             var document = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: ledger), format: nil) as? [String: Any])

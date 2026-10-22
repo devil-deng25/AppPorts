@@ -5,6 +5,7 @@
 
 import Darwin
 import Foundation
+import CryptoKit
 
 // MARK: - 外部命令执行
 
@@ -497,6 +498,54 @@ struct DiskUtility: Sendable {
         return volumes.contains { $0["Name"] as? String == name }
     }
 
+    /// One APFS query and one kernel mount-table snapshot for diagnostics.
+    /// An invalid or failed query is propagated, never treated as an empty disk.
+    func volumeStateSnapshot() async throws -> VolumeStateClassifier.Snapshot {
+        // The ordinary command logger includes raw stdout. This diagnostic
+        // query sees unrelated volume names, so neither log nor surface it.
+        let result = try await runner.run(executable: Self.diskutilPath,
+            arguments: ["apfs", "list", "-plist"], timeout: min(commandTimeout, 5))
+        guard result.status == 0, !result.timedOut, !result.outputWasTruncated,
+              let plist = try? PropertyListSerialization.propertyList(from: result.standardOutput, format: nil) as? [String: Any] else {
+            throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Diagnostic inventory unavailable")
+        }
+        var entries: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo_r_np(&entries, MNT_NOWAIT)
+        guard count > 0, let entries else {
+            throw Failure.unexpectedOutput(command: "getmntinfo", output: "Mount inventory unavailable")
+        }
+        defer { free(entries) }
+        var mounts: [String: String] = [:]
+        for index in 0..<Int(count) {
+            var entry = entries[index]
+            let device = withUnsafePointer(to: &entry.f_mntfromname) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MNAMELEN)) { String(cString: $0) }
+            }
+            let path = withUnsafePointer(to: &entry.f_mntonname) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MNAMELEN)) { String(cString: $0) }
+            }
+            mounts[device] = path
+        }
+        return try Self.parseVolumeStateSnapshot(plist, mounts: mounts)
+    }
+
+    static func parseVolumeStateSnapshot(_ plist: [String: Any], mounts: [String: String]) throws -> VolumeStateClassifier.Snapshot {
+        func invalid() -> Failure { .unexpectedOutput(command: "diskutil apfs list", output: "Invalid diagnostic inventory") }
+        guard let containers = plist["Containers"] as? [[String: Any]] else { throw invalid() }
+        var result: [String: VolumeStateClassifier.Volume] = [:]
+        for container in containers {
+            guard let volumes = container["Volumes"] as? [[String: Any]] else { throw invalid() }
+            for volume in volumes {
+                guard let uuid = volume["APFSVolumeUUID"] as? String, !uuid.isEmpty,
+                      let device = volume["DeviceIdentifier"] as? String, !device.isEmpty,
+                      let name = volume["Name"] as? String, result[uuid.uppercased()] == nil else { throw invalid() }
+                result[uuid.uppercased()] = .init(uuid: uuid.uppercased(), name: name,
+                    mountPoint: mounts["/dev/" + device], locked: volume["Locked"] as? Bool ?? false)
+            }
+        }
+        return .init(volumes: result)
+    }
+
     private func apfsCleanupInventory() async throws -> [(uuid: String, volumes: Set<String>)] {
         let plist = try await runPlist(["apfs", "list", "-plist"])
         guard let values = plist["Containers"] as? [[String: Any]] else {
@@ -566,22 +615,117 @@ struct DiskUtility: Sendable {
         _ = try await run(arguments)
     }
 
-    func deleteAPFSVolume(_ volumeUUID: String) async throws {
+    struct DeletionAuthorizationEvidence {
+        let ledger: URL
+        let ledgerDigest: String
+        let directories: [(URL, DataPathIdentity)]
+
+        init(ledger: URL, directories: [URL]) throws {
+            self.ledger = ledger
+            ledgerDigest = SHA256.hash(data: try Data(contentsOf: ledger)).map { String(format: "%02x", $0) }.joined()
+            self.directories = try directories.map { ($0, try DataPathIdentity.capture($0)) }
+        }
+    }
+
+    /// Runs inside the authorized shell, AFTER any credential prompt. The
+    /// ledger digest binds the already checked references and user choices;
+    /// root identities preserve current data without forbidding new source writes.
+    static func guardedDeletionScript(volumeUUID: String, device: String,
+                                      evidence: DeletionAuthorizationEvidence,
+                                      diskutilExecutable: String = diskutilPath) throws -> String {
+        try guardedCandidateMutationScript(volumeUUID: volumeUUID, device: device, mountedAt: nil,
+            evidence: evidence, diskutilExecutable: diskutilExecutable)
+    }
+
+    private static func guardedCandidateMutationScript(volumeUUID: String, device: String, mountedAt: URL?,
+                                                        evidence: DeletionAuthorizationEvidence,
+                                                        diskutilExecutable: String = diskutilPath) throws -> String {
+        guard device.range(of: #"^disk[0-9]+s[0-9]+$"#, options: .regularExpression) != nil,
+              !evidence.directories.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+        let diskCommand = shellQuoted(diskutilExecutable)
+        let mountGuard = mountedAt.map { "[ \"$candidate_mount\" = \(shellQuoted($0.path)) ] || exit 73" }
+            ?? "[ -z \"$candidate_mount\" ] || exit 73"
+        let mutation = mountedAt == nil ? "apfs deleteVolume" : "unmount"
+        var guards = [String]()
+        for (url, identity) in evidence.directories {
+            guard let device = identity.device, let inode = identity.inode else { throw CocoaError(.fileReadCorruptFile) }
+            let path = shellQuoted(url.path)
+            guards.append("[ ! -L \(path) ] && [ -d \(path) ] || exit 73")
+            guards.append("[ \"$(/usr/bin/stat -f '%d:%i' \(path))\" = \(shellQuoted("\(device):\(inode)")) ] || exit 73")
+        }
+        return """
+        set -eu
+        candidate_info=$(\(diskCommand) info -plist \(shellQuoted(device)))
+        candidate_field() { /usr/bin/printf '%s' "$candidate_info" | /usr/bin/plutil -extract "$1" raw -o - -; }
+        [ "$(candidate_field DeviceIdentifier)" = \(shellQuoted(device)) ] || exit 73
+        [ "$(candidate_field VolumeUUID | /usr/bin/tr '[:lower:]' '[:upper:]')" = \(shellQuoted(volumeUUID.uppercased())) ] || exit 73
+        [ "$(candidate_field FilesystemType)" = apfs ] || exit 73
+        [ "$(/usr/bin/printf '%s' "$candidate_info" | /usr/bin/plutil -type MountPoint -)" = string ] || exit 73
+        candidate_mount=$(candidate_field MountPoint)
+        \(mountGuard)
+        \(guards.joined(separator: "\n"))
+        [ ! -L \(shellQuoted(evidence.ledger.path)) ] || exit 73
+        candidate_ledger_digest=$(/usr/bin/shasum -a 256 < \(shellQuoted(evidence.ledger.path)))
+        [ "${candidate_ledger_digest%% *}" = \(shellQuoted(evidence.ledgerDigest)) ] || exit 73
+        exec \(diskCommand) \(mutation) \(shellQuoted(device))
+        """
+    }
+
+    /// A failed candidate may return at the system automount after reconnect.
+    /// Bind the non-forced unmount to its exact device, UUID and current path,
+    /// including inside the privileged process after the authorization prompt.
+    func unmountCandidate(_ volumeUUID: String, at mountPoint: URL,
+                          authorizationEvidence: DeletionAuthorizationEvidence,
+                          beforeUnmount: @escaping () throws -> Void) async throws {
+        let resolved = try await volumeInfo(for: volumeUUID)
+        let device = resolved.deviceIdentifier
+        func requireMountedIdentity(_ info: VolumeInfo) throws {
+            guard info.isAPFS, info.deviceIdentifier == device,
+                  info.volumeUUID?.caseInsensitiveCompare(volumeUUID) == .orderedSame,
+                  info.mountPoint == mountPoint.path else {
+                throw Failure.unexpectedOutput(command: "diskutil info", output: "Candidate identity or mount changed for \(volumeUUID)")
+            }
+        }
+        try requireMountedIdentity(resolved)
+        _ = try await run(["unmount", device], beforeAttempt: {
+            try requireMountedIdentity(try await volumeInfo(for: device))
+            try beforeUnmount()
+        }, administratorFallback: { administrator in
+            let script = try Self.guardedCandidateMutationScript(volumeUUID: volumeUUID, device: device,
+                mountedAt: mountPoint, evidence: authorizationEvidence)
+            return try administrator("/bin/sh", ["-c", script])
+        })
+    }
+
+    func deleteAPFSVolume(_ volumeUUID: String, requireUnmounted: Bool = false,
+                          authorizationEvidence: DeletionAuthorizationEvidence? = nil,
+                          beforeDeletion: @escaping () throws -> Void = {}) async throws {
         // Resolve the recorded volume identity, then recheck its device before
         // deletion. A failed lookup never authorizes deletion by the input name.
         let resolved = try await volumeInfo(for: volumeUUID)
         let device = resolved.deviceIdentifier
         guard !volumeUUID.isEmpty, resolved.isAPFS,
               resolved.volumeUUID?.caseInsensitiveCompare(volumeUUID) == .orderedSame,
-              !device.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              !device.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !requireUnmounted || (resolved.mountPoint?.isEmpty ?? true) else {
             throw Failure.unexpectedOutput(command: "diskutil info", output: "APFS volume identity does not match \(volumeUUID)")
         }
-        let current = try await volumeInfo(for: device)
-        guard current.isAPFS, current.deviceIdentifier == device,
-              current.volumeUUID?.caseInsensitiveCompare(volumeUUID) == .orderedSame else {
-            throw Failure.unexpectedOutput(command: "diskutil info", output: "APFS device identity changed for \(volumeUUID)")
-        }
-        _ = try await run(["apfs", "deleteVolume", device])
+        _ = try await run(["apfs", "deleteVolume", device], beforeAttempt: {
+            let current = try await volumeInfo(for: device)
+            guard current.isAPFS, current.deviceIdentifier == device,
+                  current.volumeUUID?.caseInsensitiveCompare(volumeUUID) == .orderedSame,
+                  !requireUnmounted || (current.mountPoint?.isEmpty ?? true) else {
+                throw Failure.unexpectedOutput(command: "diskutil info", output: "APFS device identity or mount changed for \(volumeUUID)")
+            }
+            try beforeDeletion()
+        }, administratorFallback: { administrator in
+            guard requireUnmounted else { return try administrator(Self.diskutilPath, ["apfs", "deleteVolume", device]) }
+            guard let authorizationEvidence else {
+                throw Failure.privilegeRequired(command: "diskutil apfs deleteVolume")
+            }
+            let script = try Self.guardedDeletionScript(volumeUUID: volumeUUID, device: device, evidence: authorizationEvidence)
+            return try administrator("/bin/sh", ["-c", script])
+        })
         APFSVolumeEncryption.removeSavedPassphrase(for: volumeUUID)
     }
 
@@ -708,8 +852,11 @@ struct DiskUtility: Sendable {
     // MARK: 私有辅助
 
     @discardableResult
-    private func run(_ arguments: [String], executable: String = Self.diskutilPath) async throws -> ShellCommandResult {
+    private func run(_ arguments: [String], executable: String = Self.diskutilPath,
+                     beforeAttempt: (() async throws -> Void)? = nil,
+                     administratorFallback: ((AdministratorRunner) throws -> ShellCommandResult)? = nil) async throws -> ShellCommandResult {
         let command = URL(fileURLWithPath: executable).lastPathComponent + " " + arguments.joined(separator: " ")
+        try await beforeAttempt?()
         var result = try await runner.run(executable: executable, arguments: arguments, timeout: commandTimeout)
         AppLogger.shared.logContext(
             "磁盘命令执行完成",
@@ -744,7 +891,9 @@ struct DiskUtility: Sendable {
                 details: [("command", command)],
                 level: "WARN"
             )
-            result = try administratorRunner(executable, arguments)
+            try await beforeAttempt?()
+            if let administratorFallback { result = try administratorFallback(administratorRunner) }
+            else { result = try administratorRunner(executable, arguments) }
             AppLogger.shared.logContext(
                 "磁盘命令（管理员权限）执行完成",
                 details: [("command", command), ("status", String(result.status)), ("output", String(result.combinedText.prefix(2000)))],

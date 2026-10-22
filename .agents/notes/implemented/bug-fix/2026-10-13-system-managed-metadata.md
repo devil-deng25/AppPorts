@@ -31,6 +31,8 @@ Status: implemented
 
 - 本篇是元数据处理的窄例外，严格复制基线见[目录显示、执行权限与严格数据复制分开约束](../../implemented/architecture/2026-10-01-data-path-copy-safety.md)。
 
+[卷状态适配](../architecture/2026-10-22-volume-state-adaptation.md)复用复制器普通 `.DS_Store` 例外，新增业务内容与非普通同名对象继续阻止删除。
+
 ## Alternatives considered
 
 - **逐字节比较所有 xattr**：边界简单，但把操作系统授权标签的正常变化当成应用内容冲突。

@@ -168,7 +168,7 @@ struct DataTransferWorkflowAuditTests {
         try FileManager.default.createDirectory(at: fixture.external, withIntermediateDirectories: false)
         let ledger = try Data(contentsOf: fixture.ledger)
         await #expect(throws: (any Error).self) { try await fixture.mover.cleanupRetainedTransfer(operationID: retained.operationID) }
-        #expect(try Data(contentsOf: fixture.ledger) == ledger)
+        try expectLedgerUnchangedApartFromRetry(try Data(contentsOf: fixture.ledger), ledger)
         #expect(try String(contentsOf: offline.appendingPathComponent("Payload/a.txt"), encoding: .utf8) == "first")
         #expect(try fixture.text("a.txt") == "first")
     }
@@ -181,7 +181,7 @@ struct DataTransferWorkflowAuditTests {
         try FileManager.default.moveItem(at: URL(fileURLWithPath: try #require(retained.backupPath)),
             to: fixture.root.appendingPathComponent("moved-backup"))
         await #expect(throws: (any Error).self) { try await fixture.mover.cleanupRetainedTransfer(operationID: retained.operationID) }
-        #expect(try fixture.store.transfer(operationID: retained.operationID) == retained)
+        try expectTransfersUnchangedApartFromRetry(try fixture.store.transfers(), [retained])
     }
 
     @Test("Cleanup rechecks current data after process inspection suspends the operation", arguments: [false, true])
@@ -198,7 +198,7 @@ struct DataTransferWorkflowAuditTests {
             }
         }
         await #expect(throws: (any Error).self) { try await fixture.mover.cleanupRetainedTransfer(operationID: retained.operationID) }
-        #expect(try fixture.store.transfer(operationID: retained.operationID) == retained)
+        try expectTransfersUnchangedApartFromRetry(try fixture.store.transfers(), [retained])
         #expect(try String(contentsOf: URL(fileURLWithPath: try #require(retained.backupPath)).appendingPathComponent("a.txt"), encoding: .utf8) == "first")
     }
 
@@ -229,6 +229,37 @@ struct DataTransferWorkflowAuditTests {
     /// named pipes and refuses only nodes it cannot reproduce, so a link count
     /// the selection cannot account for is what forces an unsupported source
     /// here; the earlier FIFO fixture stopped failing once pipes were copied.
+    private func expectTransfersUnchangedApartFromRetry(_ actual: [DataTransferRecord], _ expected: [DataTransferRecord]) throws {
+        #expect(actual.count == expected.count)
+        for original in expected {
+            var current = try #require(actual.first { $0.operationID == original.operationID })
+            // A failed cleanup records scheduling facts, while all identities,
+            // baselines, phases and ownership reservations stay unchanged.
+            #expect((current.retryFailureCount ?? 0) >= (original.retryFailureCount ?? 0))
+            current.retryFailureCount = original.retryFailureCount
+            current.nextAutomaticRetryAt = original.nextAutomaticRetryAt
+            #expect(current == original)
+        }
+    }
+
+    private func expectLedgerUnchangedApartFromRetry(_ actual: Data, _ expected: Data) throws {
+        let priorDocument = try #require(try PropertyListSerialization.propertyList(from: expected, format: nil) as? [String: Any])
+        let priorSchema = try #require(priorDocument["schemaVersion"] as? Int)
+        func withoutSchedule(_ data: Data) throws -> NSDictionary {
+            var document = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+            var transfers = try #require(document["transfers"] as? [[String: Any]])
+            for index in transfers.indices {
+                transfers[index].removeValue(forKey: "retryFailureCount")
+                transfers[index].removeValue(forKey: "nextAutomaticRetryAt")
+            }
+            document["transfers"] = transfers
+            // Only the schedule's format upgrade is permitted here.
+            if document["schemaVersion"] as? Int == 11, priorSchema < 11 { document["schemaVersion"] = priorSchema }
+            return document as NSDictionary
+        }
+        #expect(try withoutSchedule(actual) == withoutSchedule(expected))
+    }
+
     private func linkOutsideSelection(_ url: URL, root: URL) throws {
         let outside = root.appendingPathComponent("outside-payload")
         try Data("outside".utf8).write(to: outside)
@@ -620,7 +651,7 @@ struct DataTransferWorkflowAuditTests {
         await #expect(throws: (any Error).self) {
             try await fixture.mover.migrateAndComplete(item: fixture.item, to: target, progressHandler: nil)
         }
-        #expect(try fixture.store.transfers() == before)
+        try expectTransfersUnchangedApartFromRetry(try fixture.store.transfers(), before)
         #expect(try TreeCopySession.snapshot(at: fixture.local) == current)
         #expect(try fixture.store.managedLinks().isEmpty)
         #expect(try !FileManager.default.contentsOfDirectory(atPath: target.path).contains { $0.hasPrefix(".appports-copy-") })
@@ -675,7 +706,7 @@ struct DataTransferWorkflowAuditTests {
         writer.failTransition = nil
         let cold = DataDirMover(homeDir: fixture.home, store: ContainerMountStore(fileURL: fixture.ledger), runner: fixture.runner)
         try await cold.cancelPreparation(operationID: pending.operationID)
-        #expect(try fixture.store.transfers() == [restored])
+        try expectTransfersUnchangedApartFromRetry(try fixture.store.transfers(), [restored])
         #expect(try fixture.store.managedLinks().isEmpty)
         #expect(try TreeCopySession.snapshot(at: fixture.local) == localData)
         #expect(!FileManager.default.fileExists(atPath: try #require(pending.preparationPath)))

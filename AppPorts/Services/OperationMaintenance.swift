@@ -93,6 +93,15 @@ actor OperationMaintenance {
     }
 
     private static func finishDataOperations(interactive: Bool = false, retryOperationID: UUID? = nil) async -> [String] {
+        let warnings = await CleanupRetryContext.$automatic.withValue(!interactive) {
+            await finishScheduledDataOperations(interactive: interactive, retryOperationID: retryOperationID)
+        }
+        // Diagnostics cannot delay entry recovery or hold its operation lock.
+        await VolumeStateReporting.collect()
+        return warnings
+    }
+
+    private static func finishScheduledDataOperations(interactive: Bool, retryOperationID: UUID?) async -> [String] {
         let lock = OperationLock()
         guard await lock.acquire(timeout: OperationLock.appWaitTimeout) else {
             return [lock.admissionFailureReason ?? "应用操作正在进行，请稍后重试。".localized]
@@ -125,10 +134,10 @@ actor OperationMaintenance {
                     let warning = try await DataDirMover().resumeVerifiedTransfer(operationID: retryOperationID, progressHandler: nil)
                     return warning.map { [$0] } ?? []
                 }
-                return await migrator.performAutomaticMaintenance(only: retryOperationID)
+                return await migrator.performAutomaticMaintenance(only: retryOperationID, ignoresRetryBackoff: true)
             } catch { return [error.localizedDescription] }
         }
-        warnings += await migrator.performAutomaticMaintenance()
+        warnings += await migrator.performAutomaticMaintenance(ignoresRetryBackoff: interactive)
         let outcomes = await migrator.remountAvailableRecords()
         for outcome in outcomes {
             switch outcome.state {
@@ -141,10 +150,16 @@ actor OperationMaintenance {
             let transfers = try store.transfers()
             let parents = Set(transfers.filter { $0.rollbackCompletedAt == nil }.compactMap(\.priorOperationID))
             for transfer in transfers where transfer.mode == .symlink && transfer.needsAutomaticCompletion && !parents.contains(transfer.operationID) {
+                if !interactive, transfer.isDataSwitchComplete,
+                   CleanupRetryBackoff.shouldDefer(until: transfer.nextAutomaticRetryAt, now: Date()) { continue }
                 do {
                     let warning = try await DataDirMover().resumeVerifiedTransfer(operationID: transfer.operationID, progressHandler: nil)
                     if let warning { warnings.append(warning) }
-                } catch { warnings.append(transfer.appName + ": " + error.localizedDescription) }
+                    if warning != nil { CleanupRetryContext.recordFailureIfUnchanged(transfer, store: store) }
+                } catch {
+                    warnings.append(transfer.appName + ": " + error.localizedDescription)
+                    CleanupRetryContext.recordFailureIfUnchanged(transfer, store: store)
+                }
             }
         } catch { warnings.append(error.localizedDescription) }
         return warnings

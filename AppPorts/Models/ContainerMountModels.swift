@@ -91,6 +91,9 @@ struct ContainerCleanupRecord: Codable, Equatable, Identifiable, Sendable {
     /// 还原开始切换前就保存；切换中断时据此找到已复制的本地副本。
     let restoreStagingPath: String?
 
+    var retryFailureCount: Int? = nil
+    var nextAutomaticRetryAt: Date? = nil
+
     init(kind: Kind, mountRecord: ContainerMountRecord, localPath: String, restoreStagingPath: String? = nil) {
         self.id = UUID()
         self.kind = kind

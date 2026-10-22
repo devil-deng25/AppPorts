@@ -6,6 +6,18 @@ import XCTest
 final class TreeCopySessionTests: XCTestCase {
     private let fm = FileManager.default
 
+    func testVerifiedObservationDoesNotAdoptLaterCandidateWrites() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        try Data("original".utf8).write(to: w.source.appendingPathComponent("payload"))
+        let saved = try await TreeCopySession().copy(from: w.source, to: w.destination)
+        let verified = try TreeCopySession.verifiedCopySnapshot(at: w.destination, against: saved)
+        try Data("unique later write".utf8).write(to: w.destination.appendingPathComponent("payload"))
+        XCTAssertThrowsError(try TreeCopySession.removeVerifiedCopy(at: w.destination, against: verified, requireSourceIdentity: true))
+        XCTAssertEqual(try String(contentsOf: w.destination.appendingPathComponent("payload")), "unique later write")
+        XCTAssertEqual(try String(contentsOf: w.source.appendingPathComponent("payload")), "original")
+    }
+
     func testRealmNamedPipeSurvivesCopyUseRestoreAndCleanup() async throws {
         let w = try workspace()
         defer { cleanup(w.root) }
@@ -578,7 +590,8 @@ final class TreeCopySessionTests: XCTestCase {
         try times(w.source, birth: 1_600_000_000, modified: 1_700_000_000)
         let snapshot = try await TreeCopySession().copy(from: w.source, to: w.destination, excludingRootEntries: ["marker"])
         try Data("owned marker".utf8).write(to: w.destination.appendingPathComponent("marker"))
-        XCTAssertThrowsError(try TreeCopySession.verifyCopy(at: w.destination, against: snapshot))
+        // Directory timestamps are replayed, but no longer serve as content proof.
+        try TreeCopySession.verifyCopy(at: w.destination, against: snapshot)
         try TreeCopySession.applyRootMetadata(at: w.destination, from: snapshot)
         try TreeCopySession.verifyCopy(at: w.destination, against: snapshot)
         XCTAssertEqual(try info(w.destination).st_mtimespec.tv_sec, 1_700_000_000)

@@ -1,6 +1,32 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "处理异常": {
+      "comment": "TODO: Complete all 22 supported languages, then remove shouldTranslate=false. Maintainer approved temporary Simplified Chinese fallback on 2026-10-22.",
+      "extractionState": "manual",
+      "shouldTranslate": false,
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "处理异常"
+          }
+        }
+      }
+    },
+    "未找到待处理的迁移记录，可能已由后台完成收尾。请关闭窗口后刷新应用列表。": {
+      "comment": "TODO: Complete all 22 supported languages, then remove shouldTranslate=false. Maintainer approved temporary Simplified Chinese fallback on 2026-10-22.",
+      "extractionState": "manual",
+      "shouldTranslate": false,
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到待处理的迁移记录，可能已由后台完成收尾。请关闭窗口后刷新应用列表。"
+          }
+        }
+      }
+    },
     "请先开启“微信账号拆分迁移”。": {
       "extractionState": "manual",
       "localizations": {

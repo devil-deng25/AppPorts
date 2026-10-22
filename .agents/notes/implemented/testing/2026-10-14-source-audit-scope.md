@@ -17,6 +17,8 @@ Status: implemented
 检索 WarningSheet、OperationLock 没有找到现有专属决定。扩展检索源码、弹窗和测试审计的命中涉及 APFS 业务、签名、进度或笔记流程，与本次接线匹配规则无关。
 [测试状态隔离](2026-10-01-test-state-isolation.md)与[隔离验收](../../implemented/testing/2026-10-12-apfs-validation-evidence.md)约束本次运行环境，决定没有被替代，不归档。旧权限、格式升级和保留事务测试仍负责兼容行为，不因旧名称批量删除。
 
+[卷状态适配](../architecture/2026-10-22-volume-state-adaptation.md)将页面锁调用点审计同步到任务中心，并补共享租约最后一位持有者释放前仍排斥普通锁的实测。
+
 ## Alternatives considered
 
 - 保留原审计：改动最少，但会阻止合理减少弹窗，也可能把仅关闭弹窗误判为可触发。
