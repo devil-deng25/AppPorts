@@ -48,3 +48,4 @@ RELEASE_NOTES_1.9.0.md
 __pycache__/manage_translations.cpython-314.pyc
 design/UI-VI-GUIDELINES.md
 .codex/config.toml
+.workbuddy/
