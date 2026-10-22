@@ -960,28 +960,6 @@ struct ContentView: View {
             .background(Color.primary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-            Button { hideMigratedApps.toggle() } label: {
-                Label("隐藏已迁移应用".localized, systemImage: "eye.slash")
-                    .font(.system(size: 13))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .foregroundColor(hideMigratedApps ? .accentColor : .primary)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(hideMigratedApps ? Color.accentColor.opacity(0.12) : .clear)
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(hideMigratedApps ? "开启".localized : "关闭".localized)
-            .accessibilityAddTraits(hideMigratedApps ? .isSelected : [])
-            .fixedSize()
-            .onChange(of: hideMigratedApps) { enabled in
-                guard enabled else { return }
-                selectedLocalApps.formIntersection(Set(filteredLocalApps.map(\.id)))
-                selectedExternalApps.formIntersection(Set(filteredExternalApps.map(\.id)))
-            }
-
             Menu {
                 Button(action: { sortOption = .name }) {
                     HStack {
@@ -1003,6 +981,28 @@ struct ContentView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help("排序方式".localized)
+
+            Button { hideMigratedApps.toggle() } label: {
+                Label("隐藏已迁移应用".localized, systemImage: "eye.slash")
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .foregroundColor(hideMigratedApps ? .accentColor : .primary)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(hideMigratedApps ? Color.accentColor.opacity(0.12) : .clear)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(hideMigratedApps ? "开启".localized : "关闭".localized)
+            .accessibilityAddTraits(hideMigratedApps ? .isSelected : [])
+            .fixedSize()
+            .onChange(of: hideMigratedApps) { enabled in
+                guard enabled else { return }
+                selectedLocalApps.formIntersection(Set(filteredLocalApps.map(\.id)))
+                selectedExternalApps.formIntersection(Set(filteredExternalApps.map(\.id)))
+            }
 
             Button {
                 showSearchExclusion = true
