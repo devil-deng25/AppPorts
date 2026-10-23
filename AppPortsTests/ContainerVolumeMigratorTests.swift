@@ -3005,6 +3005,69 @@ struct ContainerVolumeMigratorTests {
         }
     }
 
+    @Test("APFS round trips stay within the reduced content-read budget")
+    func contentReadBudget() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "ReadBudget")
+        let uuid = try #require(DiskUtility.mountedVolumeUUID(at: source))
+        let runner = FakeDiskCommandRunner(createdVolumeUUID: uuid)
+        let migrator = workspace.makeMigrator(runner: runner)
+        let bytes = Double(try Data(contentsOf: source.appendingPathComponent("payload.txt")).count)
+        let migration = DataTransferSession()
+        let moved = try await DataTransferSession.$current.withValue(migration) {
+            try await migrator.migrateAndComplete(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+                appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil)
+        }
+        #expect(moved.cleanupWarning == nil)
+        #expect(try #require(migration.measurements["hashReadBytes"]) <= 5 * bytes)
+        let restore = DataTransferSession()
+        let warning = try await DataTransferSession.$current.withValue(restore) {
+            try await migrator.restoreAndComplete(record: moved.record, estimatedTotalBytes: 0, progressHandler: nil)
+        }
+        #expect(warning == nil)
+        #expect(try #require(restore.measurements["hashReadBytes"]) <= 4 * bytes)
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data("payload".utf8))
+        #expect(try workspace.store.transfers().isEmpty)
+    }
+
+    @Test("APFS deferred readback rejects changes in the final switching callback",
+          arguments: [DataTransferRecord.Direction.migrate, .restore], [false, true])
+    func lateSwitchChanges(direction: DataTransferRecord.Direction, changeDestination: Bool) async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let source = try workspace.makeContainerDirectory(named: "LateSwitch")
+        let uuid = try #require(DiskUtility.mountedVolumeUUID(at: source))
+        let runner = FakeDiskCommandRunner(createdVolumeUUID: uuid)
+        let migrator = workspace.makeMigrator(runner: runner)
+        var record: ContainerMountRecord?
+        if direction == .restore {
+            record = try await migrator.migrateAndComplete(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+                appName: "Synthetic", bundleIdentifier: nil, progressHandler: nil).record
+        }
+        let progress: FileCopier.ProgressHandler = { value in
+            guard value.currentFile == "正在切换本地入口...".localized else { return }
+            do {
+                let pending = try #require(try workspace.store.transfers().first)
+                #expect(pending.baseline == nil)
+                let changed = changeDestination ? URL(fileURLWithPath: try #require(pending.preparationPath)) : source
+                try Data("late data".utf8).write(to: changed.appendingPathComponent("payload.txt"))
+            } catch { Issue.record(error) }
+        }
+        await #expect(throws: (any Error).self) {
+            if let record {
+                try await migrator.restore(record: record, estimatedTotalBytes: 0, progressHandler: progress)
+            } else {
+                try await migrator.migrate(item: workspace.item(for: source), externalRootURL: workspace.externalRootURL,
+                    appName: "Synthetic", bundleIdentifier: nil, progressHandler: progress)
+            }
+        }
+        let pending = try #require(try workspace.store.transfers().first)
+        #expect(!pending.isDataSwitchComplete)
+        #expect(try Data(contentsOf: source.appendingPathComponent("payload.txt")) == Data((changeDestination ? "payload" : "late data").utf8))
+        #expect(runner.isMounted(source) == (direction == .restore))
+    }
+
     private final class Workspace {
         let rootURL: URL
         let externalRootURL: URL

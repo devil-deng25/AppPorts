@@ -127,9 +127,16 @@ actor DataDirMover {
             }
             transfer.phase = .copying
             try store.updateTransfer(transfer)
-            let baseline = try await copy(from: source, to: candidate, final: destination, operationID: id, progress: progressHandler)
+            let baseline = try await copy(from: source, to: candidate, final: destination, operationID: id,
+                verifyDestinationAfterCopy: false, progress: progressHandler)
             transfer = try store.transfer(operationID: id) ?? transfer
             try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
+            await progressHandler?(.init(copiedBytes: baseline.logicalBytes, totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized, showsByteProgress: false, stage: .switching))
+            try await safety.requireNoKnownWriters(at: source, bundleIdentifier: item.associatedBundleIdentifier)
+            try requireIdentity(source, transfer.sourceIdentity)
+            try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
+            try TreeCopySession.verifyUnchanged(at: source, against: baseline)
+            try TreeCopySession.verifyCopy(at: candidate, against: baseline, purpose: .beforeSwitch)
             transfer.baseline = try PropertyListEncoder().encode(baseline)
             transfer.phase = .verified
             try store.updateTransfer(transfer)
@@ -137,12 +144,8 @@ actor DataDirMover {
             try syncDirectory(at: destination.deletingLastPathComponent())
             try installMarker(source: source, destination: destination, type: item.type, baseline: baseline)
             try syncTree(at: destination)
-            await progressHandler?(.init(copiedBytes: baseline.logicalBytes, totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized, showsByteProgress: false, stage: .switching))
-            try await safety.requireNoKnownWriters(at: source, bundleIdentifier: item.associatedBundleIdentifier)
-            try requireIdentity(source, transfer.sourceIdentity)
-            try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
-            try TreeCopySession.verifyUnchanged(at: source, against: baseline)
-            try TreeCopySession.verifyCopy(at: destination, against: baseline, purpose: .beforeSwitch)
+            // Publishing is a same-volume rename. Marker installation verifies
+            // the root metadata it changes; payload readback is already complete.
             transfer.phase = .switching
             try store.updateTransfer(transfer)
             try moveTree(source, to: backup)
@@ -243,16 +246,17 @@ actor DataDirMover {
             try store.updateTransfer(transfer)
             transfer.phase = .copying
             try store.updateTransfer(transfer)
-            let baseline = try await copy(from: external, to: copyURL, final: local, operationID: id, progress: progressHandler)
+            let baseline = try await copy(from: external, to: copyURL, final: local, operationID: id,
+                verifyDestinationAfterCopy: false, progress: progressHandler)
             transfer = try store.transfer(operationID: id) ?? transfer
-            transfer.baseline = try PropertyListEncoder().encode(baseline)
-            transfer.phase = .verified
-            try store.updateTransfer(transfer)
             try await safety.requireNoKnownWriters(at: external, bundleIdentifier: transfer.bundleIdentifier)
             try requireIdentity(external, sourceIdentity)
             try requireMarker(at: external, for: local, type: item.type, allowOwned: true)
             try TreeCopySession.verifyUnchanged(at: external, against: baseline)
             try TreeCopySession.verifyCopy(at: copyURL, against: baseline, purpose: .beforeSwitch)
+            transfer.baseline = try PropertyListEncoder().encode(baseline)
+            transfer.phase = .verified
+            try store.updateTransfer(transfer)
             try requireLocalRestoreParent(local)
             try store.beginRestore(transfer: transfer, removingMount: nil)
             transfer.phase = .switching
@@ -1227,24 +1231,6 @@ actor DataDirMover {
         try requireIdentity(active, activeIdentity)
     }
 
-    /// A checkpoint authorizes missing entries only on the same online parent.
-    /// Every remaining entry still has to match the original inode and content.
-    private func verifyRetainedForCleanup(_ transfer: DataTransferRecord, against baseline: TreeCopySnapshot) throws {
-        guard let path = transfer.backupPath, let identity = transfer.backupIdentity,
-              transfer.baseline != nil else { throw DataOperationSafety.Failure.inspection(transfer.originalPath) }
-        let root = URL(fileURLWithPath: path)
-        if let expectedParent = transfer.cleanupParentIdentity {
-            try requireIdentity(root.deletingLastPathComponent().resolvingSymlinksInPath(), expectedParent)
-            guard let retained = try TreeCopySession.retainedRemovalURL(at: root, removalID: transfer.operationID) else { return }
-            try requireIdentity(retained, identity)
-            try TreeCopySession.verifyRemovalRemainder(at: root, against: baseline,
-                expectedVolumeUUID: identity.volumeUUID, removalID: transfer.operationID)
-        } else {
-            try requireIdentity(root, identity)
-            try verifyRetainedTree(root, identity: identity, baseline: baseline)
-        }
-    }
-
     private struct CleanupContext {
         let activeURL: URL
         let identity: DataPathIdentity
@@ -1257,6 +1243,16 @@ actor DataDirMover {
     }
 
     private func cleanupContext(for transfer: DataTransferRecord) async throws -> CleanupContext {
+        let current = try store.completedLocation(after: transfer.operationID)
+        if current.mode == .mount, current.direction == .migrate {
+            _ = try await retainedMountService().requireActiveData(for: current)
+        }
+        return try cleanupLocation(for: transfer)
+    }
+
+    /// Synchronous recheck for the deletion checkpoint; asynchronous volume
+    /// inspection belongs to cleanupContext before the final content scan.
+    private func cleanupLocation(for transfer: DataTransferRecord) throws -> CleanupContext {
         let transfers = try store.transfers()
         let descendants = transferDescendants(of: transfer.operationID, transfers: transfers)
         let lineage = descendants.reduce(into: Set<UUID>()) { $0.formUnion(transferAncestors(of: $1, transfers: transfers)) }
@@ -1268,7 +1264,12 @@ actor DataDirMover {
         let local = URL(fileURLWithPath: transfer.originalPath)
         var activeLinkPath: String?
         if current.mode == .mount, current.direction == .migrate {
-            _ = try await retainedMountService().requireActiveData(for: current)
+            guard !isSymbolicLink(at: active), DiskUtility.isMountPoint(active),
+                  let uuid = current.createdVolumeUUID,
+                  DiskUtility.mountedVolumeUUID(at: active)?.caseInsensitiveCompare(uuid) == .orderedSame,
+                  try DataPathIdentity.capture(active, volumeUUID: uuid).matchesFilesystemObject(identity) else {
+                throw DataOperationSafety.Failure.conflict(active.path)
+            }
         } else if current.direction == .migrate {
             guard let activeLink = try store.managedLink(forOriginalPath: current.originalPath),
                   activeLink.operationID == current.operationID, activeLink.destinationPath == active.path,
@@ -1326,7 +1327,10 @@ actor DataDirMover {
         do {
             let context = try await cleanupContext(for: transfer)
             guard !DiskUtility.isMountPoint(retained) else { throw DataOperationSafety.Failure.conflict(retained.path) }
-            try verifyRetainedForCleanup(transfer, against: baseline)
+            if let expectedParent = transfer.cleanupParentIdentity { try requireIdentity(parent, expectedParent) }
+            if let actual = try TreeCopySession.retainedRemovalURL(at: retained, removalID: operationID) {
+                try requireIdentity(actual, retainedIdentity)
+            }
             try safety.requireNoOverlap(at: retained, ownedTransferIDs: context.lineage,
                 ownedLinkPath: context.activeLinkPath, ownedRetainedPath: retained.path)
             if let actual = try TreeCopySession.retainedRemovalURL(at: retained, removalID: operationID) {
@@ -1340,28 +1344,44 @@ actor DataDirMover {
                   fresh.lineage == context.lineage, try store.transfer(operationID: operationID) == transfer else {
                 throw DataOperationSafety.Failure.conflict(context.activeURL.path)
             }
-            try verifyRetainedForCleanup(transfer, against: baseline)
             try syncTree(at: context.activeURL)
             try syncDirectory(at: URL(fileURLWithPath: transfer.originalPath).deletingLastPathComponent())
-            try store.requestCleanup(operationID: operationID)
-            transfer.phase = .cleanupRequested
-            transfer.recoverableReason = nil
-            requestedCleanup = true
             if let actual = try TreeCopySession.retainedRemovalURL(at: retained, removalID: operationID) {
                 let parentIdentity = try DataPathIdentity.capture(parent)
-                try store.beginCleanupDeletion(operationID: operationID, parentIdentity: parentIdentity)
-                transfer.cleanupParentIdentity = transfer.cleanupParentIdentity ?? parentIdentity
                 try requireIdentity(actual, retainedIdentity)
                 let type = DataDirType(rawValue: transfer.dataDirType) ?? .custom
-                if try entryExists(markerURL(for: retained)) {
-                    try requireMarker(at: retained, for: URL(fileURLWithPath: transfer.originalPath), type: type, allowOwned: true)
-                    try removeManagedLinkMetadata(in: retained)
-                    if actual.path == retained.path { try TreeCopySession.applyRootMetadata(at: retained, from: baseline) }
-                }
                 try requireIdentity(context.activeURL, context.identity)
                 try store.recheckWriterAdmission()
                 try TreeCopySession.removeVerifiedCopy(at: retained, against: baseline, allowPartialRemoval: deletionPreviouslyStarted,
-                    expectedVolumeUUID: retainedIdentity.volumeUUID, removalID: operationID)
+                    expectedVolumeUUID: retainedIdentity.volumeUUID, removalID: operationID, requireSourceIdentity: true,
+                    prepareForRemoval: {
+                        try self.requireIdentity(actual, retainedIdentity)
+                        if try self.entryExists(self.markerURL(for: retained)) {
+                            try self.requireMarker(at: retained, for: URL(fileURLWithPath: transfer.originalPath), type: type, allowOwned: true)
+                            try self.removeManagedLinkMetadata(in: retained)
+                            if actual.path == retained.path { try TreeCopySession.applyRootMetadata(at: retained, from: baseline) }
+                        }
+                    }, willRemove: {
+                        guard try self.store.transfer(operationID: operationID) == transfer else {
+                            throw DataOperationSafety.Failure.conflict(retained.path)
+                        }
+                        try self.requireIdentity(parent, parentIdentity)
+                        try self.requireIdentity(actual, retainedIdentity)
+                        try self.store.requestCleanup(operationID: operationID)
+                        transfer.phase = .cleanupRequested
+                        transfer.recoverableReason = nil
+                        requestedCleanup = true
+                        try self.store.beginCleanupDeletion(operationID: operationID, parentIdentity: parentIdentity)
+                        transfer.cleanupParentIdentity = transfer.cleanupParentIdentity ?? parentIdentity
+                        // No suspension between the verified scan and deletion.
+                        let fresh = try self.cleanupLocation(for: transfer)
+                        guard fresh.activeURL == context.activeURL, fresh.identity == context.identity,
+                              fresh.lineage == context.lineage else {
+                            throw DataOperationSafety.Failure.conflict(context.activeURL.path)
+                        }
+                        try self.requireIdentity(parent, parentIdentity)
+                        try self.requireIdentity(actual, retainedIdentity)
+                    })
             } else {
                 guard let expectedParent = transfer.cleanupParentIdentity else { throw DataOperationSafety.Failure.inspection(retained.path) }
                 try requireIdentity(parent, expectedParent)
@@ -1408,11 +1428,13 @@ actor DataDirMover {
     }
 
     private func copy(from source: URL, to destination: URL, final: URL, operationID: UUID? = nil,
+                      verifyDestinationAfterCopy: Bool = true,
                       progress: FileCopier.ProgressHandler?) async throws -> TreeCopySnapshot {
         let store = self.store
         do { return try await TreeCopySession().copy(from: source, to: destination,
             excludingRootEntries: [managedLinkMarkerFileName], finalDestination: final,
             verifySourceAfterCopy: false,
+            verifyDestinationAfterCopy: verifyDestinationAfterCopy,
             preparedHandler: { baseline in
                 if let operationID {
                     try store.prepareCopy(operationID: operationID, path: destination,

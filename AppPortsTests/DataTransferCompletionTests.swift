@@ -4,6 +4,59 @@ import Testing
 @testable import AppPorts
 
 struct DataTransferCompletionTests {
+    @Test("Ordinary symlink round trips stay within the reduced content-read budget")
+    func contentReadBudget() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let bytes = Double(try Data(contentsOf: fixture.source.appendingPathComponent("payload.txt")).count)
+        let migration = DataTransferSession()
+        let moved = try await DataTransferSession.$current.withValue(migration) {
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        }
+        #expect(moved.cleanupWarning == nil)
+        #expect(try #require(migration.measurements["hashReadBytes"]) <= 6 * bytes)
+        let restore = DataTransferSession()
+        let restored = try await DataTransferSession.$current.withValue(restore) {
+            try await fixture.mover.restoreAndComplete(item: fixture.item, progressHandler: nil)
+        }
+        #expect(restored.cleanupWarning == nil)
+        #expect(try #require(restore.measurements["hashReadBytes"]) <= 5 * bytes)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+        #expect(try fixture.store.transfers().isEmpty)
+    }
+
+    @Test("Deferred readback rejects late source and destination changes before recording verification",
+          arguments: [DataTransferRecord.Direction.migrate, .restore], [false, true])
+    func lateCopyChanges(direction: DataTransferRecord.Direction, changeDestination: Bool) async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        if direction == .restore {
+            _ = try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external, progressHandler: nil)
+        }
+        let source = direction == .migrate ? fixture.source : fixture.destination
+        let progress: FileCopier.ProgressHandler = { value in
+            guard value.currentFile.isEmpty, value.copiedBytes == value.totalBytes, value.totalBytes > 0 else { return }
+            do {
+                let pending = try #require(try fixture.store.transfers().first)
+                #expect(pending.baseline == nil)
+                let changed = changeDestination ? URL(fileURLWithPath: try #require(pending.preparationPath)) : source
+                try fixture.writePayload("late data", at: changed)
+            } catch { Issue.record(error) }
+        }
+        await #expect(throws: (any Error).self) {
+            if direction == .migrate {
+                try await fixture.mover.migrate(item: fixture.item, to: fixture.external, progressHandler: progress)
+            } else {
+                try await fixture.mover.restore(item: fixture.item, progressHandler: progress)
+            }
+        }
+        let pending = try #require(try fixture.store.transfers().first)
+        #expect(pending.baseline == nil)
+        #expect(!pending.isDataSwitchComplete)
+        #expect(try fixture.payload(at: source) == (changeDestination ? "original" : "late data"))
+        #expect(fixture.isRealDirectory(fixture.source) == (direction == .migrate))
+    }
+
     @Test("Completed user flows can migrate, restore and migrate to the same target again")
     func repeatedRoundTrip() async throws {
         let fixture = try Fixture()

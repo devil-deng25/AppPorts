@@ -495,6 +495,7 @@ actor ContainerVolumeMigrator {
             excludingRootEntries: Self.volumeSystemArtifacts, finalDestination: finalDestination,
             logicalSourceRoot: logicalSourceRoot, legacyRootOwnership: transfer.legacyRootOwnership,
             verifySourceAfterCopy: false,
+            verifyDestinationAfterCopy: false,
             preparedHandler: { baseline in
                 try currentStore.prepareCopy(operationID: operationID, path: destination,
                     parentIdentity: DataPathIdentity.capture(destination.deletingLastPathComponent()), baseline: baseline)
@@ -1616,18 +1617,18 @@ actor ContainerVolumeMigrator {
             let baseline = try await copyPreparation(transfer, source: source, destination: staging,
                 finalDestination: source, progressHandler: progressHandler)
             transfer = try store.transfer(operationID: transfer.operationID) ?? transfer
-            // The copier has applied root metadata, synchronized the tree,
-            // and verified the destination after its final progress callback.
-            // The source is verified once below, immediately before switching.
-            transfer.baseline = try PropertyListEncoder().encode(baseline)
-            transfer.destinationIdentity = try DataPathIdentity.capture(staging, volumeUUID: uuid)
-            transfer.phase = .verified
-            try store.updateTransfer(transfer)
+            // Read back once after all copy/switch callbacks and inspections.
+            // Until then only the preparation baseline authorizes recovery.
+            let destinationIdentity = try DataPathIdentity.capture(staging, volumeUUID: uuid)
             await progressHandler?(FileCopier.Progress(copiedBytes: baseline.logicalBytes,
                 totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized, showsByteProgress: false, stage: .switching))
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: bundleIdentifier)
             try await requireExpectedVolume(uuid, at: staging)
             try TreeCopySession.verifyCopy(at: staging, against: baseline, purpose: .beforeSwitch)
+            transfer.baseline = try PropertyListEncoder().encode(baseline)
+            transfer.destinationIdentity = destinationIdentity
+            transfer.phase = .verified
+            try store.updateTransfer(transfer)
             try await unmountVolume(mountPoint: staging)
             removeEmptyDirectoryQuietly(at: staging)
             transfer.phase = .switching
@@ -2019,17 +2020,17 @@ actor ContainerVolumeMigrator {
             let baseline = try await copyPreparation(transfer, source: source, destination: staging,
                 finalDestination: mountPoint, logicalSourceRoot: mountPoint, progressHandler: progressHandler)
             transfer = try store.transfer(operationID: id) ?? transfer
-            transfer.baseline = try PropertyListEncoder().encode(baseline)
-            transfer.destinationIdentity = try DataPathIdentity.capture(staging)
-            transfer.backupIdentity = transfer.sourceIdentity
-            transfer.phase = .verified
-            try store.updateTransfer(transfer)
             await progressHandler?(FileCopier.Progress(copiedBytes: baseline.logicalBytes,
                 totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized, showsByteProgress: false, stage: .switching))
             try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
             try await safety.requireNoKnownWriters(at: source, bundleIdentifier: record.bundleIdentifier)
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
             try TreeCopySession.verifyCopy(at: staging, against: baseline, purpose: .beforeSwitch)
+            transfer.baseline = try PropertyListEncoder().encode(baseline)
+            transfer.destinationIdentity = try DataPathIdentity.capture(staging)
+            transfer.backupIdentity = transfer.sourceIdentity
+            transfer.phase = .verified
+            try store.updateTransfer(transfer)
             try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
             try safety.requireMountPointParentAccess(at: mountPoint)
             try store.beginRestore(transfer: transfer, removingMount: record)
@@ -2308,7 +2309,9 @@ actor ContainerVolumeMigrator {
                     guard try store.transfer(operationID: operationID) == transfer else {
                         throw DataOperationSafety.Failure.conflict(backup.path)
                     }
-                    try TreeCopySession.verifyUnchanged(at: backup, against: baseline, expectedVolumeUUID: uuid, purpose: .retainedCopy)
+                    // Whole-volume removal has no partially deleted tree to
+                    // authorize. Persist intent first, then verify once after
+                    // journal callbacks and the last active-location query.
                     try store.requestCleanup(operationID: operationID)
                     transfer.phase = .cleanupRequested
                     transfer.recoverableReason = nil

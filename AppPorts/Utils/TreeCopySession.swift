@@ -9,9 +9,10 @@ import Foundation
 /// retained original until the destination is verified. What differs is which
 /// content proof is required — see `TreeCopyProfile`.
 ///
-/// A successful result describes bytes verified at the destination, with source
-/// identities for checking a retained original. The caller must retain that
-/// original: no userspace copy can rule out a write after this method returns.
+/// By default a successful result describes verified destination bytes. Data
+/// transactions can defer that readback until immediately before switching;
+/// they must not record a verified phase before performing it themselves.
+/// The caller retains the original until cleanup verifies it again.
 actor TreeCopySession {
     enum OwnershipRole: Equatable, Sendable { case source, destination }
 
@@ -63,6 +64,7 @@ actor TreeCopySession {
         validateRelocatedLinks: Bool = true,
         // 仅在调用方切换入口前自行复核源端时关闭，默认保持独立复制的完整校验。
         verifySourceAfterCopy: Bool = true,
+        verifyDestinationAfterCopy: Bool = true,
         preparedHandler: (@Sendable (TreeCopySnapshot) async throws -> Void)? = nil,
         destinationCreatedHandler: (@Sendable (DataPathIdentity) async throws -> Void)? = nil,
         progressHandler: FileCopier.ProgressHandler? = nil
@@ -72,7 +74,8 @@ actor TreeCopySession {
                 try await self.copy(from: source, to: destination, excludingRootEntries: excludingRootEntries,
                     finalDestination: finalDestination, logicalSourceRoot: logicalSourceRoot,
                     legacyRootOwnership: legacyRootOwnership, validateRelocatedLinks: validateRelocatedLinks,
-                    verifySourceAfterCopy: verifySourceAfterCopy, preparedHandler: preparedHandler, destinationCreatedHandler: destinationCreatedHandler,
+                    verifySourceAfterCopy: verifySourceAfterCopy, verifyDestinationAfterCopy: verifyDestinationAfterCopy,
+                    preparedHandler: preparedHandler, destinationCreatedHandler: destinationCreatedHandler,
                     progressHandler: progressHandler)
             }
         }
@@ -144,7 +147,7 @@ actor TreeCopySession {
         // callbacks. Per-file readback before those callbacks would be repeated
         // work and could not replace this final contents/metadata/topology check.
         try MigrationExecution.checkpoint()
-        try Self.verifyCopy(at: destination, against: baseline, profile: profile)
+        if verifyDestinationAfterCopy { try Self.verifyCopy(at: destination, against: baseline, profile: profile) }
         // 数据迁移调用方会在切换入口前复核源目录，避免在这里重复整树读取。
         // 其他调用方默认继续由复制器复核源端。
         if verifySourceAfterCopy { try Self.verifyUnchanged(at: source, against: baseline, profile: profile) }
@@ -404,6 +407,7 @@ actor TreeCopySession {
                                              expectedVolumeUUID: String? = nil, removalID: UUID? = nil,
                                              requireSourceIdentity: Bool = false,
                                              profile: TreeCopyProfile = .strictData,
+                                             prepareForRemoval: (() throws -> Void)? = nil,
                                              willRemove: (() throws -> Void)? = nil) throws {
         try MigrationExecution.checkpoint()
         var root = canonicalRoot(root)
@@ -436,6 +440,10 @@ actor TreeCopySession {
         let index = SnapshotIndex(actual.entries)
         let parent = try Descriptor.open(root.deletingLastPathComponent().path, flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         let descriptor = try openNode(parent: parent.value, name: root.lastPathComponent, expectedDevice: actual.entries.first?.identity.device)
+        // Remove only caller-owned management metadata after the original root
+        // has passed verification. The caller restores its root metadata; the
+        // no-extra-entries check and per-node checks still precede deletion.
+        try prepareForRemoval?()
         if actual.entries.first?.kind == .directory {
             // Excluded names were never content-verified. Their mere presence
             // blocks cleanup before any deletion, including product markers.

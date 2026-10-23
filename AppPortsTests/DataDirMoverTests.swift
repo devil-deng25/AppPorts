@@ -1123,9 +1123,12 @@ final class DataDirMoverTests: XCTestCase {
         } catch { }
         try assertRealDirectory(source)
         XCTAssertEqual(try String(contentsOf: payload), "after!")
-        XCTAssertEqual(try String(contentsOf: workspace.externalRootURL.appendingPathComponent("Cache/payload.txt")), "before")
         let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("data-transfers.plist"))
-        XCTAssertEqual(try store.transfers().first?.phase, .needsRecovery)
+        let pending = try XCTUnwrap(try store.transfers().first)
+        XCTAssertEqual(pending.phase, .needsRecovery)
+        XCTAssertNil(pending.baseline)
+        let candidate = URL(fileURLWithPath: try XCTUnwrap(pending.preparationPath))
+        XCTAssertEqual(try String(contentsOf: candidate.appendingPathComponent("payload.txt")), "before")
     }
 
     func testDestinationSymlinkIsNotRemovedOrReused() async throws {
