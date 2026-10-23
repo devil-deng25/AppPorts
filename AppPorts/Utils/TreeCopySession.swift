@@ -16,6 +16,11 @@ import Foundation
 actor TreeCopySession {
     enum OwnershipRole: Equatable, Sendable { case source, destination }
 
+    /// Only scheduling varies; every scan still produces the same complete proof.
+    @TaskLocal static var concurrentScanReads = 4
+    @TaskLocal private static var scanReadCancellation: ScanReadCancellation?
+    @TaskLocal private static var isParallelScanRead = false
+
     typealias ExtentSeek = @Sendable (Int32, off_t, Int32) -> off_t
     private let extentSeek: ExtentSeek
     private let profile: TreeCopyProfile
@@ -847,7 +852,8 @@ actor TreeCopySession {
         var hardlinks: [TreeCopySnapshot.Identity: ScannedHardlinks] = [:]
         try walk(fd: fd.value, parent: parent.value, name: root.lastPathComponent, path: "", device: rootInfo.st_dev,
                  exclusions: exclusions, entries: &entries, hardlinks: &hardlinks, profile: profile,
-                 includeFinderMetadata: includeFinderMetadata)
+                 includeFinderMetadata: includeFinderMetadata,
+                 concurrentReads: profile.recordsContentDigests ? min(4, max(1, concurrentScanReads)) : 1)
         // A count and canonical name prove the same hardlink relationships as
         // grouping whole entries, without a second manifest and one array for
         // every ordinary single-link file.
@@ -879,12 +885,107 @@ actor TreeCopySession {
         var canonicalPath: String
     }
 
+    private typealias CapturedNode = (before: stat, entry: TreeCopySnapshot.Entry)
+    private struct SerialCaptureRequired: Error {}
+
+    private final class ScanReadCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+        func checkpoint() throws {
+            lock.lock(); let value = cancelled; lock.unlock()
+            if value { throw CancellationError() }
+        }
+    }
+
+    private struct ScanRead: @unchecked Sendable {
+        let descriptor: Descriptor
+        let name: String
+        let path: String
+    }
+
+    private final class ScanReadResults: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [Result<CapturedNode, Error>?]
+
+        init(count: Int) { values = Array(repeating: nil, count: count) }
+        func set(_ value: Result<CapturedNode, Error>, at index: Int) {
+            lock.lock(); defer { lock.unlock() }
+            values[index] = value
+        }
+        func result(at index: Int) throws -> Result<CapturedNode, Error> {
+            lock.lock(); defer { lock.unlock() }
+            guard let value = values[index] else { throw TreeCopyError.verificationFailed("") }
+            return value
+        }
+    }
+
+    /// Descriptors are bounded by the batch size, and remain owned until every
+    /// worker has joined. No worker changes the manifest or hardlink inventory.
+    nonisolated private static func captureBatch(_ reads: [ScanRead], parent: Int32,
+                                                 profile: TreeCopyProfile) throws -> ScanReadResults {
+        let results = ScanReadResults(count: reads.count)
+        if reads.count == 1 {
+            let read = reads[0]
+            results.set(Result {
+                try captureStableNode(fd: read.descriptor.value, parent: parent,
+                    name: read.name, path: read.path, hardlinkGroup: nil, profile: profile)
+            }, at: 0)
+            return results
+        }
+        let group = DispatchGroup()
+        let cancellation = ScanReadCancellation()
+        let session = DataTransferSession.current
+        let progress = DataTransferSession.progress
+        let control = MigrationExecution.control
+        for (index, read) in reads.enumerated() {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { group.leave() }
+                let result = Result {
+                    try DataTransferSession.$current.withValue(session) {
+                        try DataTransferSession.$progress.withValue(progress) {
+                            try MigrationExecution.$control.withValue(control) {
+                                try $scanReadCancellation.withValue(cancellation) {
+                                    try $isParallelScanRead.withValue(true) {
+                                        try captureStableNode(fd: read.descriptor.value, parent: parent,
+                                            name: read.name, path: read.path, hardlinkGroup: nil, profile: profile)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                results.set(result, at: index)
+            }
+        }
+        // Dispatch threads have no Swift task. Bridge cancellation only for
+        // this joined batch, never into a later independent recovery task.
+        while group.wait(timeout: .now() + .milliseconds(20)) == .timedOut {
+            if Task.isCancelled {
+                cancellation.cancel()
+                // A paused worker is sleeping on this control's condition;
+                // the batch flag alone cannot wake it to observe cancellation.
+                control?.cancel()
+            }
+        }
+        try MigrationExecution.checkpoint()
+        return results
+    }
+
+    nonisolated private static func scanReadCheckpoint() throws {
+        try scanReadCancellation?.checkpoint()
+        try MigrationExecution.checkpoint()
+    }
+
     nonisolated private static func walk(fd: Int32, parent: Int32, name: String, path: String, device: Int32,
                                         exclusions: Set<String>, entries: inout [TreeCopySnapshot.Entry],
                                         hardlinks: inout [TreeCopySnapshot.Identity: ScannedHardlinks],
-                                        profile: TreeCopyProfile, includeFinderMetadata: Bool) throws {
+                                        profile: TreeCopyProfile, includeFinderMetadata: Bool,
+                                        concurrentReads: Int = 1, capturedNode: CapturedNode? = nil) throws {
         try MigrationExecution.checkpoint()
-        let captured = try captureStableNode(fd: fd, parent: parent, name: name, path: path,
+        let captured = try capturedNode ?? captureStableNode(fd: fd, parent: parent, name: name, path: path,
             hardlinkGroup: nil, profile: profile)
         let before = captured.before
         let entry = captured.entry
@@ -910,13 +1011,38 @@ actor TreeCopySession {
             if profile.toleratesUnsupportedResourceFork {
                 names.removeAll { $0.hasPrefix("._") && !exclusions.contains($0) }
             }
+            var pending: [ScanRead] = []
+            func finishPending() throws {
+                guard !pending.isEmpty else { return }
+                let results = try captureBatch(pending, parent: fd, profile: profile)
+                for (index, read) in pending.enumerated() {
+                    let captured: CapturedNode?
+                    switch try results.result(at: index) {
+                    case .success(let value): captured = value
+                    case .failure(is SerialCaptureRequired): captured = nil
+                    case .failure(let error): throw error
+                    }
+                    try walk(fd: read.descriptor.value, parent: fd, name: read.name, path: read.path,
+                        device: device, exclusions: exclusions, entries: &entries, hardlinks: &hardlinks,
+                        profile: profile, includeFinderMetadata: includeFinderMetadata, capturedNode: captured)
+                }
+                pending.removeAll(keepingCapacity: true)
+            }
             for child in names where !path.isEmpty || !exclusions.contains(child) {
                 if !includeFinderMetadata, try isFinderMetadata(parent: fd, name: child) { continue }
                 let childFD = try openNode(parent: fd, name: child, expectedDevice: device)
+                let childPath = path.isEmpty ? child : path + "/" + child
+                if concurrentReads > 1, try status(childFD.value).st_mode & S_IFMT == S_IFREG {
+                    pending.append(ScanRead(descriptor: childFD, name: child, path: childPath))
+                    if pending.count == concurrentReads { try finishPending() }
+                    continue
+                }
+                try finishPending()
                 try walk(fd: childFD.value, parent: fd, name: child, path: path.isEmpty ? child : path + "/" + child,
                          device: device, exclusions: exclusions, entries: &entries, hardlinks: &hardlinks,
-                         profile: profile, includeFinderMetadata: includeFinderMetadata)
+                         profile: profile, includeFinderMetadata: includeFinderMetadata, concurrentReads: concurrentReads)
             }
+            try finishPending()
         }
         try assertStable(before, try status(fd), path: path, profile: profile)
     }
@@ -935,7 +1061,7 @@ actor TreeCopySession {
         -> (before: stat, entry: TreeCopySnapshot.Entry) {
         let identityBeforeReading = identity(try status(fd))
         for attempt in 0..<3 {
-            try MigrationExecution.checkpoint()
+            try scanReadCheckpoint()
             try requireNamedIdentity(parent: parent, name: name, expected: identityBeforeReading)
             let before = try status(fd)
             do {
@@ -977,6 +1103,12 @@ actor TreeCopySession {
         }
         try validateFlags(before, path: path, descriptor: fd)
         let attributeNames = try extendedAttributeNames(fd: fd, path: path)
+        // Resource-fork loops retain their existing Swift-task cancellation
+        // semantics. Retry this node on the caller, including a fork added
+        // after enumeration, rather than moving those loops to Dispatch.
+        if isParallelScanRead, attributeNames.contains(ResourceForkStream.attributeName) {
+            throw SerialCaptureRequired()
+        }
         let attributes = try extendedAttributes(fd: fd, names: attributeNames, path: path)
         let resourceFork: TreeCopySnapshot.ResourceFork?
         if attributeNames.contains(ResourceForkStream.attributeName) {
@@ -1074,7 +1206,7 @@ actor TreeCopySession {
     nonisolated private static func extendedAttributes(fd: Int32, names: [String], path: String) throws -> [String: Data] {
         var result: [String: Data] = [:]
         for name in names where name != ResourceForkStream.attributeName && !systemManagedAttributes.contains(name) {
-            try MigrationExecution.checkpoint()
+            try scanReadCheckpoint()
             let count = fgetxattr(fd, name, nil, 0, 0, 0)
             guard count >= 0 else {
                 throw metadataPOSIXError(fd: fd, path: path, operation: .readAttributeSize(name))
@@ -1134,7 +1266,7 @@ actor TreeCopySession {
         var buffer = [UInt8](repeating: 0, count: max(1, min(1024 * 1024, Int(clamping: try status(fd).st_size))))
         var offset: off_t = 0
         while true {
-            try MigrationExecution.checkpoint()
+            try scanReadCheckpoint()
             let count = pread(fd, &buffer, buffer.count, offset)
             if count < 0 { if errno == EINTR { continue }; throw posix(path) }
             if count == 0 { break }

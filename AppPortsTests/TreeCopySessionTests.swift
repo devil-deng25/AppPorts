@@ -6,6 +6,130 @@ import XCTest
 final class TreeCopySessionTests: XCTestCase {
     private let fm = FileManager.default
 
+    func testParallelScanPreservesManifestHardlinksResourceForkAndExactReadAccounting() throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        try fm.createDirectory(at: w.source.appendingPathComponent("nested"), withIntermediateDirectories: false)
+        let bytes = Data(repeating: 0x73, count: 2 * 1024 * 1024 + 37)
+        for index in 0..<9 {
+            try bytes.write(to: w.source.appendingPathComponent("file-\(index)"))
+        }
+        let linked = w.source.appendingPathComponent("nested/linked")
+        XCTAssertEqual(link(w.source.appendingPathComponent("file-0").path, linked.path), 0)
+        let fork = Data(repeating: 0x31, count: 256 * 1024 + 3)
+        try setXattr("com.apple.ResourceFork", fork, w.source.appendingPathComponent("file-1"))
+        let serial = try TreeCopySession.$concurrentScanReads.withValue(1) {
+            try TreeCopySession.snapshot(at: w.source)
+        }
+        let session = DataTransferSession()
+        let progress = DataTransferProgress()
+        let parallel = try DataTransferSession.$current.withValue(session) {
+            try DataTransferSession.$progress.withValue(progress) {
+                try TreeCopySession.$concurrentScanReads.withValue(4) {
+                    try TreeCopySession.snapshot(at: w.source)
+                }
+            }
+        }
+        XCTAssertEqual(parallel, serial)
+        let expectedBytes = Int64(bytes.count * 10 + fork.count)
+        XCTAssertEqual(session.measurements["hashReadBytes"], Double(expectedBytes))
+        XCTAssertEqual(progress.snapshot().readBytes, expectedBytes)
+        XCTAssertEqual(progress.snapshot().completedItems, parallel.entries.count)
+        XCTAssertNil(DataTransferSession.current)
+        XCTAssertNil(DataTransferSession.progress)
+    }
+
+    func testParallelScanBridgesTaskCancellationAndIndependentRetryStillWorks() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        // Sparse logical data keeps the fixture small while leaving enough
+        // hashing work to observe a cancellation within an active batch.
+        for index in 0..<4 {
+            let file = w.source.appendingPathComponent("large-\(index)")
+            XCTAssertTrue(fm.createFile(atPath: file.path, contents: nil))
+            let handle = try FileHandle(forWritingTo: file)
+            try handle.truncate(atOffset: 512 * 1024 * 1024)
+            try handle.close()
+        }
+        let progress = DataTransferProgress()
+        let task = Task.detached {
+            try DataTransferSession.$progress.withValue(progress) {
+                try TreeCopySession.snapshot(at: w.source)
+            }
+        }
+        try await waitForScan(task: task) { progress.snapshot().readBytes > 0 }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("Parallel scan ignored task cancellation") }
+        catch is CancellationError {}
+        catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertLessThan(progress.snapshot().readBytes, Int64(2 * 1024 * 1024 * 1024))
+        let stopped = progress.snapshot().readBytes
+        try await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(progress.snapshot().readBytes, stopped, "All workers must join before returning")
+        for index in 0..<4 {
+            let handle = try FileHandle(forWritingTo: w.source.appendingPathComponent("large-\(index)"))
+            try handle.truncate(atOffset: 4096)
+            try handle.close()
+        }
+        XCTAssertEqual(try TreeCopySession.snapshot(at: w.source).logicalBytes, 4 * 4096)
+    }
+
+    func testParallelScanWaitsForPausedControlAndCancellationReleasesWorkers() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        for index in 0..<4 {
+            let file = w.source.appendingPathComponent("file-\(index)")
+            XCTAssertTrue(fm.createFile(atPath: file.path, contents: nil))
+            let handle = try FileHandle(forWritingTo: file)
+            try handle.truncate(atOffset: 512 * 1024 * 1024)
+            try handle.close()
+        }
+        let control = MigrationTaskControl()
+        control.pause()
+        let task = Task.detached {
+            try MigrationExecution.$control.withValue(control) { try TreeCopySession.snapshot(at: w.source) }
+        }
+        try await waitForScan(task: task, control: control) { control.snapshot().paused }
+        control.resume()
+        let resumed = try await task.value
+        XCTAssertEqual(resumed.logicalBytes, 2 * 1024 * 1024 * 1024)
+        let progress = DataTransferProgress()
+        let cancelled = Task.detached {
+            try DataTransferSession.$progress.withValue(progress) {
+                try MigrationExecution.$control.withValue(control) { try TreeCopySession.snapshot(at: w.source) }
+            }
+        }
+        try await waitForScan(task: cancelled, control: control) { progress.snapshot().readBytes > 0 }
+        control.pause()
+        try await waitForScan(task: cancelled, control: control) { control.snapshot().paused }
+        let watchdog = Task.detached {
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            control.cancel()
+        }
+        defer { watchdog.cancel() }
+        let cancelStarted = ProcessInfo.processInfo.systemUptime
+        cancelled.cancel()
+        do { _ = try await cancelled.value; XCTFail("Paused scan ignored cancellation") }
+        catch is CancellationError {}
+        catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - cancelStarted, 4,
+                          "Task cancellation must wake paused workers without the watchdog")
+    }
+
+    private func waitForScan<T>(task: Task<T, Error>, control: MigrationTaskControl? = nil,
+                               _ condition: () -> Bool) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        while !condition() {
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                control?.cancel()
+                task.cancel()
+                _ = try? await task.value
+                throw CocoaError(.coderReadCorrupt)
+            }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
     func testVerifiedObservationDoesNotAdoptLaterCandidateWrites() async throws {
         let w = try workspace()
         defer { cleanup(w.root) }

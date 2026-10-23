@@ -27,6 +27,7 @@ Status: implemented
 
 ## Related decisions
 
+- 完整扫描内部的有界并发读取见[保留原证明契约的数据扫描调度](../architecture/2026-10-24-bounded-data-scan-reads.md)，不改变本篇的读取预算、恢复及删除授权边界。
 - 数据迁移的阶段解释与快照刷新见[按真实工作阶段显示进度](../../implemented/feature/2026-10-14-data-transfer-progress.md)，不改变本篇的内容证明边界。
 - 复用不能省略恢复与清理要求的新鲜证明，见[由持久化事务自动完成 APFS 恢复与清理](../architecture/2026-10-12-apfs-automatic-recovery.md)。
 - 优化受严格复制与清理不变量约束，见[目录显示、执行权限与严格数据复制分开约束](../../implemented/architecture/2026-10-01-data-path-copy-safety.md)。
