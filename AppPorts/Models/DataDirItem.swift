@@ -323,6 +323,10 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
     /// `showNonMigratableDirectories` 才是把全部不可迁移目录一并放出的开关。
     func matchesVisibility(showZeroByteDirectories: Bool,
                            showNonMigratableDirectories: Bool = true) -> Bool {
+        // Explicit problems and ordinary existing links need an inspection entry,
+        // even when the directory is not eligible for a new migration.
+        if pathPolicy?.reason == .runtimeConflict || pathPolicy?.reason == .readFailure { return true }
+        if status == DataDirStatus.existingSymlink && !isUserDirectoryLink { return true }
         if isMigrationUnsupported && !showNonMigratableDirectories { return false }
         if needsRecoveryOrAttention || hasMountTransferRecord { return true }
         if isUserDirectoryLink { return false }

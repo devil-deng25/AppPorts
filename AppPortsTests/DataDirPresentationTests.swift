@@ -5,15 +5,16 @@ import Testing
 struct DataDirPresentationTests {
     private let home = URL(fileURLWithPath: "/fixture/presentation-home")
 
-    @Test("Unsupported directories obey their visibility toggle even with links or read errors")
+    @Test("Unsupported directories hide while inspectable links and requested ancestors remain visible")
     func unsupportedDirectoryVisibility() {
         for status in [DataDirStatus.local, DataDirStatus.existingSymlink, DataDirStatus.linked] {
             var item = DataDirItem(name: "AddressBook", path: home.appendingPathComponent("AddressBook"),
                                    type: .containers, priority: .optional, description: "",
                                    status: status, isMigratable: false)
             item.sizeIsIncomplete = true
-            #expect(!item.matchesVisibility(showZeroByteDirectories: true,
-                                           showNonMigratableDirectories: false))
+            let inspectable = status != DataDirStatus.local
+            #expect(item.matchesVisibility(showZeroByteDirectories: true,
+                                          showNonMigratableDirectories: false) == inspectable)
             #expect(item.matchesVisibility(showZeroByteDirectories: true,
                                           showNonMigratableDirectories: true))
 
@@ -21,9 +22,12 @@ struct DataDirPresentationTests {
             child.path = item.path.appendingPathComponent("Business")
             child.isMigratable = true
             let tree = DataDirTree.visibleTree(from: [item, child], showZeroByteDirectories: true,
-                                              showLockedStructure: true, matchingIDs: [item.id, child.id],
+                                              showLockedStructure: false, matchingIDs: [item.id, child.id],
                                               showNonMigratableDirectories: false)
-            #expect(DataDirTree.rows(in: tree).map(\.id) == [child.id])
+            #expect(DataDirTree.rows(in: tree).map(\.id) == (inspectable ? [item.id, child.id] : [child.id]))
+            let withAncestors = DataDirTree.visibleTree(from: [item, child], showZeroByteDirectories: true,
+                showLockedStructure: true, matchingIDs: [item.id, child.id], showNonMigratableDirectories: false)
+            #expect(DataDirTree.rows(in: withAncestors).map(\.id) == [item.id, child.id])
         }
     }
 

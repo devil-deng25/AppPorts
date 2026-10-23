@@ -29,6 +29,8 @@ if !isMigratable { return showLockedStructure }                              // 
 
 - **显示不支持迁移目录**（`showNonMigratableDirectories`）保持“全量放出”的语义，作用在 `DataDirItem.matchesVisibility` 的单条判断上。
 
+明确的路径冲突、策略读取失败和非个人快捷入口的现有软链先保留检查入口，不被“不支持迁移”过滤器隐藏。普通个人目录入口仍隐藏；没有显式故障或可恢复记录、仅大小读取不全的真正锁定目录仍跟随“不支持迁移”开关。显示例外不授予迁移权限。
+
 `matchesVisibility` 因此回到两个参数：它只回答“这一条本身该不该出现”，祖先补充交给树层，避免让单条判断依赖兄弟节点。
 
 表头计数改为按最终渲染的行数统计（`visibleLibraryItemCount`），否则补回的祖先行会让“显示 X / 67”和列表对不上。
@@ -58,3 +60,11 @@ if !isMigratable { return showLockedStructure }                              // 
 - 祖先判定按路径前缀在**当前分组内**计算，跨类型分组（例如 Application Support 与 Containers）之间的层级不会被补回。
 - 用户目录快捷入口（Desktop/Downloads 等）即使作为祖先也不会补回，避免把个人目录当成应用数据展示。
 - `visibleTree` 的默认参数由 `true` 改为 `false`，未显式传参的调用方（主要是测试）行为随之收紧。
+
+## 2026-10-23 CI regression verification
+
+GitHub Actions [39878791223 / 120170860283](https://github.com/wzh4869/AppPorts/actions/runs/39878791223/job/120170860283) 的必需回归步骤在 `DataDirPresentationTests` 记录 10 个问题：旧测试把已链接目录也当作应隐藏项，并在启用锁定结构时仍期待祖先消失；同时真正的冲突/读取失败和普通现有软链被过早的不支持迁移判断隐藏。原失败在本机相同源码快照复现后，修复过滤优先级，测试分别断言关闭/开启祖先补回与可检查链接的行为，保留个人快捷入口隐藏和大小排除断言。
+
+定向执行 86 项 XCTest（含还原父路径安全、56 项扫描、目录树与路径策略）和 9 项 Swift Testing，全部通过；日志位于本机 `build/Validation/ci-fix-20261023/targeted.log`。全量业务回归仍由推送后的隔离 CI runner 运行，不在开发机执行真实磁盘集成矩阵。
+
+本轮最终源码另执行 14 项本地化审计全部通过，普通 Release clean build（arm64/x86_64）成功，笔记结构与 diff 检查通过；日志见本机 `build/Validation/ci-fix-20261023/`。

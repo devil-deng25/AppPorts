@@ -41,7 +41,8 @@ final class ContainerRestoreParentSafetyTests: XCTestCase {
         XCTAssertEqual(try DataPathIdentity.capture(retainedSource), originalIdentity)
         try TreeCopySession.verifyUnchanged(at: retainedSource, against: original)
         let stagedCopy = moved.appendingPathComponent(URL(fileURLWithPath: try XCTUnwrap(pending.stagingPath)).lastPathComponent)
-        let copied = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: XCTUnwrap(pending.baseline))
+        XCTAssertNil(pending.baseline, "An interrupted pre-switch check must not claim a verified copy")
+        let copied = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: XCTUnwrap(pending.sourceBaseline))
         try TreeCopySession.verifyCopy(at: stagedCopy, against: copied)
     }
 

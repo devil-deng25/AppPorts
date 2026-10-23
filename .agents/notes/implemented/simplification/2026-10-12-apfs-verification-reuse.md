@@ -62,3 +62,11 @@ Status: implemented
 三组的散列读取量均为迁出 6 → 5 倍、迁回 6 → 4 倍；2 GiB 组迁回验证阶段为 5.54 s → 3.63 s，但复制/同步与建卷波动仍影响总耗时。结果证明读取量下降，不支持宣称所有数据集整体更快；2 GiB 组迁出总时间基本持平，迁回约缩短 6.8%。镜像位于内置 SSD，不能外推 30 GB 微信外盘耗时。12 次往返均确认当前内容恢复、旧卷清理和测试镜像卸载。
 
 逐轮阶段数据保存在本机 `build/Validation/lifecycle-benchmark-20261022T223000Z.json` 与 `build/Validation/lifecycle-benchmark-20261022T224844Z.json`（文件名使用 UTC，测试日期为本地 10 月 23 日）；它们是本轮工作区实测，不能归到历史 build 27/30。成功夹具在核对 nonce、目录/镜像身份及已卸载后清理，报告和测试日志保留。
+
+## Interrupted restore regression
+
+2026-10-23 CI 的 `ContainerRestoreParentSafetyTests` 在切换前回调替换父路径后，仍要求事务已有完成 `baseline`。目标验证延迟到切换前后，这一拒绝点只保证准备 `sourceBaseline` 已持久化，不得提前声称副本已验证。回归现在显式要求完成基线为 nil，并使用准备基线独立验证保留的暂存副本；原件身份/内容、挂载记录仍在、事务为 needsRecovery、未调用任何磁盘命令的断言全部保留。测试不修改生产验证时序，也不把准备基线用作删除或切换授权。
+
+原失败本机复现，修复后两项父路径 XCTest 以及相关目录扫描、树、策略与呈现测试共 95 项通过；日志为本机 `build/Validation/ci-fix-20261023/targeted.log`。该补充与上方历史 391 项性能验收属于不同运行，不合并统计。
+
+本轮最终源码另执行 14 项本地化审计全部通过，普通 Release clean build（arm64/x86_64）成功，笔记结构与 diff 检查通过；日志见本机 `build/Validation/ci-fix-20261023/`。
