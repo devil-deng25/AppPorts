@@ -28,6 +28,15 @@ enum MigrationPreferences {
     /// 启动提醒里用户点过「以后再说」的应用集合（真实应用路径）。
     static let dismissedSignatureRepairKey = "signatureRepairDismissedApps"
 
+    /// 迁移应用时一并迁移它的关联数据目录。
+    static let migrateCompanionDataKey = "migrateAppCompanionData"
+
+    /// 默认开启：应用搬走而数据留在本机，等于「迁移完成」名不副实。
+    /// 用 `object(forKey:)` 而不是 `bool(forKey:)`，才能把「没设置过」和「显式关闭」区分开。
+    static var shouldMigrateCompanionData: Bool {
+        (UserDefaults.standard.object(forKey: migrateCompanionDataKey) as? Bool) ?? true
+    }
+
     /// 经典模式是否可用。macOS 27 上被重签名的沙盒应用可能无法打开，
     /// 但 QQ 音乐等实测正常，因此不按版本禁用，只在确认框里说明。
     static var isClassicModeSupported: Bool { true }

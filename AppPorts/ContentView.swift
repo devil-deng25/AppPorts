@@ -1938,9 +1938,15 @@ struct ContentView: View {
 
     private func enqueueAppTransfer(_ app: AppItem, destination: URL, restoring: Bool = false,
                                     wholeSymlink: Bool = false, lockExternal: Bool = true,
+                                    companionDataRoot: URL? = nil,
                                     replacementChoice: AppMigrationService.ReplacementChoice? = nil,
                                     presentDetails: Bool = true) {
-        let title = (restoring ? "正在还原应用".localized : "正在迁移应用".localized) + " · " + app.displayName
+        // 标题先按是否会带数据走给出来：同一个任务里搬完应用接着搬数据，
+        // 只写「正在迁移应用」会让随后的大段数据拷贝显得没有来由。
+        let carriesData = !restoring && companionDataRoot != nil && MigrationPreferences.shouldMigrateCompanionData
+        let title = (restoring ? "正在还原应用".localized
+                     : (carriesData ? "正在迁移应用与数据".localized : "正在迁移应用".localized))
+            + " · " + app.displayName
         MigrationTaskCenter.shared.submit(title: title, category: .apps,
             resources: MigrationResources.application(paths: [app.path, app.displayURL, destination], appURL: app.displayURL),
             presentDetails: presentDetails, operation: { progress in
@@ -1966,6 +1972,14 @@ struct ContentView: View {
                         try FileManager.default.createSymbolicLink(at: item.path, withDestinationURL: external)
                     })
                 } else { service = AppMigrationService() }
+                // 应用搬家前先算好要带走的数据目录：搬完后本地入口变成外置符号链接，
+                // 扫描器读到的应用状态和路径都会变。规划为空时再迁移也能顺带报出
+                // 「数据是沙盒容器、需要挂载迁移」这件事。
+                let companionRoot = MigrationPreferences.shouldMigrateCompanionData ? companionDataRoot : nil
+                var companionPlan: AppCompanionDataMigration.Plan?
+                if let companionRoot {
+                    companionPlan = await AppCompanionDataMigration.plan(for: app, externalRoot: companionRoot)
+                }
                 let result = try await service.moveAndLink(appToMove: app, destinationURL: destination,
                     isRunning: running, lockExternal: lockExternal, replacementChoice: replacementChoice,
                     deleteSourceFallback: AppMigrationService.removeItemViaFinder(at:),
@@ -1974,7 +1988,18 @@ struct ContentView: View {
                     recordCompletedTransfer(.movedOut(app, destination: destination,
                         isMASExternal: !wholeSymlink && app.isAppStoreApp && AppMigrationService.isMASExternalInstallSupported))
                 }
-                return result.pendingMessage
+                // 应用已经搬好并记账；数据搬运的失败只作为提示，不推翻应用迁移的结果。
+                var message = result.pendingMessage
+                if let companionRoot, let companionPlan {
+                    let outcome = await AppCompanionDataMigration.migrate(
+                        companionPlan, externalRoot: companionRoot,
+                        progressHandler: { progress.update($0) })
+                    if outcome.cancelled { try Task.checkCancellation() }
+                    if let note = outcome.message {
+                        message = [message, note].compactMap { $0 }.joined(separator: "\n")
+                    }
+                }
+                return message
             }, completion: { scanBothAppsAtomic() })
     }
 
@@ -1988,7 +2013,8 @@ struct ContentView: View {
     private func executeMoveOutWholeSymlink(_ app: AppItem, destination: URL,
                                             replacementChoice: AppMigrationService.ReplacementChoice?) {
         enqueueAppTransfer(app, destination: AppSearchExclusionService.destination(for: app, in: destination),
-                           wholeSymlink: true, replacementChoice: replacementChoice)
+                           wholeSymlink: true, companionDataRoot: destination,
+                           replacementChoice: replacementChoice)
     }
 
     func linkApp(appToLink: AppItem, destinationURL: URL) async throws {
@@ -2387,7 +2413,8 @@ struct ContentView: View {
         }
         for (index, app) in apps.enumerated() {
             enqueueAppTransfer(app, destination: AppSearchExclusionService.destination(for: app, in: destination),
-                lockExternal: lockExternal, replacementChoice: replacementChoices[app.id], presentDetails: index == 0)
+                lockExternal: lockExternal, companionDataRoot: destination,
+                replacementChoice: replacementChoices[app.id], presentDetails: index == 0)
         }
         selectedLocalApps.removeAll()
     }
