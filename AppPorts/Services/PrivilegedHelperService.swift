@@ -60,7 +60,7 @@ enum PrivilegedHelperService {
     /// 导出给客户端的实现。
     private final class HelperImplementation: NSObject, AppPortsPrivilegedHelperProtocol {
         func handshake(reply: @escaping (String, String) -> Void) {
-            reply(PrivilegedHelperConstants.protocolVersion, PeerTrust.selfCDHash?.base64EncodedString() ?? "")
+            reply(PrivilegedHelperConstants.protocolVersion, PeerTrust.selfFingerprint ?? "")
         }
 
         func runMountCommand(_ executable: String, arguments: [String],
@@ -139,20 +139,17 @@ enum PrivilegedHelperService {
 
 /// 调用方身份校验。
 ///
-/// 两层：
-/// 1. 正式签名构建（带 Team ID）用 `SecRequirement` 把调用方钉到「同一个 bundle id +
-///    同一个 Team ID」，这是 macOS 上特权助手的常规做法；
-/// 2. 本地开发签名或临时签名没有 Team ID，退化为「cdhash 与自身镜像完全一致」，
-///    保证只有这一份二进制能驱动助手。
+/// 两步：
+/// 1. `SecCodeCheckValidity` 确认调用方的签名本身有效——被改写过的副本在这一步出局；
+/// 2. 把调用方的签名身份压成指纹（`CodeIdentity`），与自己这份镜像逐字比较。
 ///
-/// 两种情况都要求调用方进程能通过代码签名有效性校验，未签名或被改写的副本会被拒绝。
+/// 用签名身份而不是 cdhash，是因为 cdhash 每次重新构建都会变：过去只要出一次新包，
+/// 已经装好的助手就把用户的新应用当成陌生人。指纹在「同一张证书签的」这一层是稳定的，
+/// Developer ID 或本机自签证书签出来的构建因此可以一直用下去；adhoc 构建没有证书，
+/// 指纹只能退回 cdhash，重新构建后仍需重装——这是签名方式本身决定的，不是这里的取舍。
 enum PeerTrust {
-    /// 自身镜像的 cdhash。
-    static let selfCDHash: Data? = {
-        var code: SecCode?
-        guard SecCodeCopySelf(SecCSFlags(rawValue: 0), &code) == errSecSuccess, let code else { return nil }
-        return cdHash(of: code)
-    }()
+    /// 自身镜像的签名身份指纹。
+    static let selfFingerprint: String? = CodeIdentity.currentFingerprint
 
     static func isTrusted(connection: NSXPCConnection) -> Bool {
         let processIdentifier = connection.processIdentifier
@@ -164,45 +161,15 @@ enum PeerTrust {
         // 调用方的签名必须先是有效的：被改写过的副本在这一步就出局。
         guard SecCodeCheckValidity(peer, SecCSFlags(rawValue: 0), nil) == errSecSuccess else { return false }
 
-        let information = signingInformation(peer)
-        let identifier = information[kSecCodeInfoIdentifier as String] as? String
-        let teamIdentifier = information[kSecCodeInfoTeamIdentifier as String] as? String
-
-        if let teamIdentifier, let requirement = teamRequirement(identifier: identifier, team: teamIdentifier),
-           SecCodeCheckValidity(peer, SecCSFlags(rawValue: 0), requirement) == errSecSuccess {
-            return true
-        }
-        // 没有 Team ID（本地开发构建）时，只认与自身完全一致的镜像。
-        guard let ownCDHash = selfCDHash, let peerCDHash = cdHash(of: peer), ownCDHash == peerCDHash else {
+        guard let own = selfFingerprint,
+              let peerSnapshot = CodeIdentity.snapshot(for: peer) else { return false }
+        let peerFingerprint = CodeIdentity.fingerprint(peerSnapshot)
+        guard peerFingerprint == own else {
+            // 两边的身份都记下来：排查「为什么被拒」时，这一行比什么都直接。
+            PrivilegedHelperService.log("rejected peer identity \(CodeIdentity.shortKind(peerFingerprint))"
+                + ", own \(CodeIdentity.shortKind(own))")
             return false
         }
         return true
-    }
-
-    private static func teamRequirement(identifier: String?, team: String) -> SecRequirement? {
-        guard let identifier, !identifier.isEmpty,
-              identifier.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") }),
-              !team.isEmpty, team.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
-        let text = "anchor apple generic and identifier \"\(identifier)\" and certificate leaf[subject.OU] = \"\(team)\""
-        var requirement: SecRequirement?
-        guard SecRequirementCreateWithString(text as CFString, SecCSFlags(rawValue: 0), &requirement) == errSecSuccess else {
-            return nil
-        }
-        return requirement
-    }
-
-    private static func signingInformation(_ code: SecCode) -> [String: Any] {
-        // SecCodeCopySigningInformation 只吃静态代码对象，动态的 SecCode 要先落下磁盘镜像。
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(code, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
-              let staticCode else { return [:] }
-        var information: CFDictionary?
-        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
-              let dictionary = information as? [String: Any] else { return [:] }
-        return dictionary
-    }
-
-    private static func cdHash(of code: SecCode) -> Data? {
-        signingInformation(code)[kSecCodeInfoUnique as String] as? Data
     }
 }

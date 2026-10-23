@@ -17,18 +17,21 @@ final class PrivilegedHelperClient: @unchecked Sendable {
 
         var errorDescription: String? {
             switch self {
-            case .unreachable(let detail): return "特权助手不可用：" + detail
-            case .timedOut: return "特权助手响应超时"
-            case .refused(let detail): return "特权助手拒绝执行：" + detail
+            case .unreachable(let detail):
+                return String(format: "特权助手不可用：%@".localized, detail)
+            case .timedOut: return "特权助手响应超时".localized
+            case .refused(let detail):
+                return String(format: "特权助手拒绝执行：%@".localized, detail)
             case .staleHelper(let installed):
-                return "特权助手运行的仍是旧镜像（\(installed)），重装后才能使用"
+                return String(format: "特权助手与当前构建不匹配（%@），重装后才能使用".localized, installed)
             }
         }
     }
 
     struct Handshake: Sendable {
         let version: String
-        let cdHash: String
+        /// 助手的签名身份指纹，见 `CodeIdentity`。
+        let fingerprint: String
     }
 
     private let lock = NSLock()
@@ -46,21 +49,24 @@ final class PrivilegedHelperClient: @unchecked Sendable {
         FileManager.default.fileExists(atPath: PrivilegedHelperConstants.daemonPlistPath)
     }
 
-    /// 握手：确认守护进程可用，且跑的是与当前客户端一致的镜像。
+    /// 握手：确认守护进程可用，且与当前客户端属于同一个签名身份、同一版协议。
+    ///
+    /// 比的是签名身份而不是 cdhash：同一张证书重新构建出来的应用不必让用户重装助手。
+    /// 只有 adhoc 构建没有证书，指纹才会随镜像变化——那正是它需要重装的情况。
     func handshake() throws -> Handshake {
-        guard Self.isInstalled else { throw ClientError.unreachable("尚未安装") }
+        guard Self.isInstalled else { throw ClientError.unreachable("尚未安装".localized) }
         let handshake = try perform(timeout: handshakeTimeout) { proxy, box in
-            proxy.handshake { version, cdHash in
-                box.store(.success(Handshake(version: version, cdHash: cdHash)))
+            proxy.handshake { version, fingerprint in
+                box.store(.success(Handshake(version: version, fingerprint: fingerprint)))
             }
         }
         guard handshake.version == PrivilegedHelperConstants.protocolVersion else {
             throw ClientError.staleHelper(installed: handshake.version)
         }
-        // 两边都有 cdhash 时才比对：开发构建可能根本没有 cdhash，那由守护进程一侧
-        // 的签名校验把关，这里不重复判断。
-        if let own = Self.selfCDHash, !handshake.cdHash.isEmpty, own != handshake.cdHash {
-            throw ClientError.staleHelper(installed: String(handshake.cdHash.prefix(12)))
+        // 两边都读得到指纹时才比对：读不到就意味着签名信息不完整，
+        // 这种情况由守护进程一侧的有效性校验把关，这里不重复判断。
+        if let own = Self.selfFingerprint, !handshake.fingerprint.isEmpty, own != handshake.fingerprint {
+            throw ClientError.staleHelper(installed: CodeIdentity.shortKind(handshake.fingerprint))
         }
         return handshake
     }
@@ -73,7 +79,7 @@ final class PrivilegedHelperClient: @unchecked Sendable {
     /// 执行一条挂载类命令。命令不在白名单里时直接抛错，不打扰助手。
     func run(executable: String, arguments: [String]) throws -> ShellCommandResult {
         guard PrivilegedMountCommand.isSupported(executable: executable, arguments: arguments) else {
-            throw ClientError.refused("命令不在挂载白名单内")
+            throw ClientError.refused("命令不在挂载白名单内".localized)
         }
         let reply = try perform(timeout: commandTimeout) { proxy, box in
             proxy.runMountCommand(executable, arguments: arguments) { status, output, error in
@@ -107,7 +113,7 @@ final class PrivilegedHelperClient: @unchecked Sendable {
         }
         guard let typed = proxy as? AppPortsPrivilegedHelperProtocol else {
             invalidate()
-            throw ClientError.unreachable("无法转换为助手接口")
+            throw ClientError.unreachable("无法转换为助手接口".localized)
         }
         body(typed, box)
         guard box.wait(timeout) else {
@@ -117,7 +123,7 @@ final class PrivilegedHelperClient: @unchecked Sendable {
         switch box.value {
         case .success(let value): return value
         case .failure(let error): throw error
-        case nil: throw ClientError.unreachable("助手没有返回结果")
+        case nil: throw ClientError.unreachable("助手没有返回结果".localized)
         }
     }
 
@@ -149,18 +155,8 @@ final class PrivilegedHelperClient: @unchecked Sendable {
         return created
     }
 
-    private static let selfCDHash: String? = {
-        var code: SecCode?
-        guard SecCodeCopySelf(SecCSFlags(rawValue: 0), &code) == errSecSuccess, let code else { return nil }
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(code, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
-              let staticCode else { return nil }
-        var information: CFDictionary?
-        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
-              let dictionary = information as? [String: Any],
-              let hash = dictionary[kSecCodeInfoUnique as String] as? Data else { return nil }
-        return hash.base64EncodedString()
-    }()
+    /// 自身镜像的签名身份指纹，比较逻辑见 `CodeIdentity`。
+    private static let selfFingerprint: String? = CodeIdentity.currentFingerprint
 }
 
 /// XPC 回调在别的队列上执行，用一把锁把结果交回等待方。

@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import Security
 
 /// 特权助手（LaunchDaemon）的固定身份。
 ///
@@ -15,7 +17,98 @@ enum PrivilegedHelperConstants {
     static var daemonPlistURL: URL { URL(fileURLWithPath: daemonPlistPath) }
 
     /// 协议版本。握手时与客户端比对，不一致就要求重装，避免新旧接口互相调用。
-    static let protocolVersion = "1"
+    ///
+    /// v2 起握手带回的是签名身份指纹而不是 cdhash（见 `CodeIdentity`）。字段类型没变，
+    /// 但含义变了，所以必须升版本：否则旧助手回一个 base64 cdhash，客户端只会认为
+    /// 「身份不一致」，用户看到的是一串看不懂的乱码，而不是「需要重装」。
+    static let protocolVersion = "2"
+}
+
+/// 一份代码签名身份的可比较摘要。
+///
+/// 这里刻意不再只认 cdhash。cdhash 每次重新构建都会变，于是「换了一个签名身份」和
+/// 「只是重新编译了一次」在下游看起来完全一样，后果是每次出包都要求用户重装一次助手、
+/// 再输一次密码。签名身份本身是稳定的，按强度分三层比较：
+///
+/// - 有 Team ID（Developer ID / Apple Development）：只认 identifier + Team。
+///   重新编译、证书续期都不影响，这才是「装一次长期有效」的前提。
+/// - 没有 Team 但有叶子证书（本机自签的 Code Signing 证书）：认 identifier + 叶子证书指纹。
+/// - 两者都没有（adhoc）：只能退回 cdhash，重新构建后必须重装。
+///
+/// 无论哪一层，调用方都必须先通过 `SecCodeCheckValidity`：被改写过的副本在这里就出局。
+enum CodeIdentity {
+    struct Snapshot: Equatable, Sendable {
+        var identifier: String
+        var teamIdentifier: String?
+        /// 叶子证书 DER 的 SHA-256 前缀；adhoc 签名没有证书。
+        var leafCertificateDigest: String?
+        var cdHash: String?
+    }
+
+    /// 读取一份代码的签名信息。运行中的 `SecCode` 要先落成静态代码对象才能取信息。
+    static func snapshot(for code: SecCode) -> Snapshot? {
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
+              let staticCode else { return nil }
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
+              let dictionary = information as? [String: Any] else { return nil }
+
+        let identifier = dictionary[kSecCodeInfoIdentifier as String] as? String ?? ""
+        let team = dictionary[kSecCodeInfoTeamIdentifier as String] as? String
+        let certificates = dictionary[kSecCodeInfoCertificates as String] as? [SecCertificate]
+        let cdHash = (dictionary[kSecCodeInfoUnique as String] as? Data)?.base64EncodedString()
+
+        return Snapshot(
+            identifier: identifier,
+            teamIdentifier: team?.isEmpty == false ? team : nil,
+            leafCertificateDigest: certificates?.first.map { digest(of: $0) },
+            cdHash: cdHash
+        )
+    }
+
+    static func snapshotForCurrentProcess() -> Snapshot? {
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(rawValue: 0), &code) == errSecSuccess, let code else { return nil }
+        return snapshot(for: code)
+    }
+
+    /// 把快照压成一个可比较的字符串。顺序即优先级：Team > 叶子证书 > cdhash。
+    static func fingerprint(_ snapshot: Snapshot) -> String {
+        if let team = snapshot.teamIdentifier, !team.isEmpty {
+            return "team|\(snapshot.identifier)|\(team)"
+        }
+        if let certificate = snapshot.leafCertificateDigest, !certificate.isEmpty {
+            return "cert|\(snapshot.identifier)|\(certificate)"
+        }
+        if let cdHash = snapshot.cdHash, !cdHash.isEmpty {
+            return "adhoc|\(snapshot.identifier)|\(cdHash)"
+        }
+        return "unsigned|\(snapshot.identifier)"
+    }
+
+    /// 当前进程的指纹。adhoc 构建下它会随每次重新构建而变，这是签名本身决定的，
+    /// 不是这里可以绕开的东西。
+    static let currentFingerprint: String? = snapshotForCurrentProcess().map(fingerprint)
+
+    /// 指纹的人读形式，用于日志与提示：`team|com.shimoko.AppPorts|MQ7XG7WM3F` → `team:MQ7XG7WM3F`。
+    static func shortKind(_ fingerprint: String) -> String {
+        let parts = fingerprint.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return fingerprint }
+        switch parts[0] {
+        case "team": return "team:" + parts[2]
+        case "cert": return "cert:" + String(parts[2].prefix(12))
+        case "adhoc": return "adhoc:" + String(parts[2].prefix(8))
+        default: return String(parts[0])
+        }
+    }
+
+    /// 证书只用来做同一性比较，取 SHA-256 前 16 字节足够，也让日志里不至于出现一长串。
+    private static func digest(of certificate: SecCertificate) -> String {
+        let data = SecCertificateCopyData(certificate) as Data
+        let hash = SHA256.hash(data: data)
+        return hash.prefix(16).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 /// 特权助手对外只暴露挂载类操作。
@@ -34,10 +127,11 @@ enum PrivilegedHelperConstants {
                          arguments: [String],
                          reply: @escaping (Int32, Data, Data) -> Void)
 
-    /// 自报协议版本与自身镜像的 cdhash。
+    /// 自报协议版本与自身的签名身份指纹。
     ///
-    /// 客户端据此判断守护进程跑的是不是当前这份二进制：应用更新后镜像变了，
-    /// 旧进程会一直握着旧镜像，只有重装才能让它换成新的。
+    /// 客户端据此判断守护进程是不是「同一个发布者签的、接口仍然兼容」的镜像。
+    /// 指纹按 Team ID / 证书 / cdhash 三级取值（见 `CodeIdentity`），
+    /// 因此用同一张证书重新构建的应用不会因为镜像变了就要求用户重装助手。
     func handshake(reply: @escaping (String, String) -> Void)
 }
 

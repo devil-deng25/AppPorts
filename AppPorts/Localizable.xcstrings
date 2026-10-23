@@ -213215,6 +213215,1102 @@
         }
       }
     },
+    "特权助手与当前构建不匹配（%@），重装后才能使用" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "المساعد ذو الصلاحيات لا يطابق هذه النسخة (%@). أعد تثبيته قبل الاستخدام."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑⠀⠏⠗⠊⠧⠊⠇⠑⠛⠑⠙⠀⠓⠑⠇⠏⠑⠗⠀⠙⠕⠑⠎⠀⠝⠕⠞⠀⠍⠁⠞⠉⠓⠀⠞⠓⠊⠎⠀⠃⠥⠊⠇⠙⠀⠐%@⠴⠲⠀⠠⠗⠑⠊⠝⠎⠞⠁⠇⠇⠀⠊⠞⠀⠃⠑⠋⠕⠗⠑⠀⠥⠎⠑⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der privilegierte Helfer passt nicht zu diesem Build (%@). Vor der Nutzung neu installieren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The privileged helper does not match this build (%@). Reinstall it before use."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La privilegia helpanto ne kongruas kun ĉi tiu konstruo (%@). Reinstalu ĝin antaŭ uzo."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El asistente privilegiado no coincide con esta versión (%@). Reinstálalo antes de usarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'assistant privilégié ne correspond pas à cette version (%@). Réinstallez-le avant utilisation."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "विशेष सहायक इस बिल्ड से मेल नहीं खाता (%@)। उपयोग से पहले इसे फिर से इंस्टॉल करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper istimewa tidak cocok dengan build ini (%@). Pasang ulang sebelum digunakan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'helper privilegiato non corrisponde a questa build (%@). Reinstallalo prima dell'uso."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特権ヘルパーがこのビルドと一致しません（%@）。使用するには再インストールが必要です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "권한 도우미가 현재 빌드와 일치하지 않습니다(%@). 다시 설치해야 사용할 수 있습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De bevoorrechte helper hoort niet bij deze build (%@). Installeer hem opnieuw voordat je hem gebruikt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uprawniony pomocnik nie odpowiada tej kompilacji (%@). Zainstaluj go ponownie."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O auxiliar privilegiado não corresponde a esta compilação (%@). Reinstale-o antes de usar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Привилегированный помощник не соответствует этой сборке (%@). Переустановите его."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตัวช่วยสิทธิ์พิเศษไม่ตรงกับบิลด์นี้ (%@) โปรดติดตั้งใหม่ก่อนใช้งาน"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ayrıcalıklı yardımcı bu derlemeyle eşleşmiyor (%@). Kullanmadan önce yeniden kurun."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trình trợ giúp đặc quyền không khớp với bản dựng này (%@). Hãy cài lại trước khi dùng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特权助手与当前构建不匹配（%@），重装后才能使用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式與目前建置不匹配（%@），重新安裝後才能使用"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式與目前建置不匹配（%@），重新安裝後才能使用"
+          }
+        }
+      }
+    },
+    "特权助手不可用：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "المساعد ذو الصلاحيات غير متاح: %@"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠏⠗⠊⠧⠊⠇⠑⠛⠑⠙⠀⠓⠑⠇⠏⠑⠗⠀⠥⠝⠁⠧⠁⠊⠇⠁⠃⠇⠑⠒⠀%@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privilegierter Helfer nicht verfügbar: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privileged helper unavailable: %@"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privilegia helpanto ne haveblas: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asistente privilegiado no disponible: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assistant privilégié indisponible : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "विशेष सहायक उपलब्ध नहीं: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper istimewa tidak tersedia: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper privilegiato non disponibile: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特権ヘルパーを利用できません：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "권한 도우미를 사용할 수 없습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bevoorrechte helper niet beschikbaar: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uprawniony pomocnik niedostępny: %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auxiliar privilegiado indisponível: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Привилегированный помощник недоступен: %@"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตัวช่วยสิทธิ์พิเศษใช้งานไม่ได้: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ayrıcalıklı yardımcı kullanılamıyor: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trình trợ giúp đặc quyền không khả dụng: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特权助手不可用：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式無法使用：%@"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式無法使用：%@"
+          }
+        }
+      }
+    },
+    "特权助手响应超时" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "انتهت مهلة استجابة المساعد ذي الصلاحيات"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠏⠗⠊⠧⠊⠇⠑⠛⠑⠙⠀⠓⠑⠇⠏⠑⠗⠀⠞⠊⠍⠑⠙⠀⠕⠥⠞"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeitüberschreitung beim privilegierten Helfer"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privileged helper timed out"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tempolimo de la privilegia helpanto"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se agotó el tiempo de espera del asistente privilegiado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Délai dépassé pour l'assistant privilégié"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "विशेष सहायक से उत्तर देर से मिला"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper istimewa melewati batas waktu"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Timeout dell'helper privilegiato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特権ヘルパーの応答がタイムアウトしました"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "권한 도우미 응답 시간이 초과되었습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-out van de bevoorrechte helper"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przekroczono czas oczekiwania pomocnika"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O auxiliar privilegiado não respondeu a tempo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Истекло время ожидания привилегированного помощника"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตัวช่วยสิทธิ์พิเศษหมดเวลา"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ayrıcalıklı yardımcı yanıt vermedi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trình trợ giúp đặc quyền hết thời gian chờ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特权助手响应超时"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式回應逾時"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式回應逾時"
+          }
+        }
+      }
+    },
+    "特权助手拒绝执行：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "رفض المساعد ذو الصلاحيات التنفيذ: %@"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠏⠗⠊⠧⠊⠇⠑⠛⠑⠙⠀⠓⠑⠇⠏⠑⠗⠀⠗⠑⠋⠥⠎⠑⠙⠀⠞⠕⠀⠗⠥⠝⠀⠊⠞⠒⠀%@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privilegierter Helfer hat die Ausführung abgelehnt: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privileged helper refused to run it: %@"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La privilegia helpanto rifuzis plenumi: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El asistente privilegiado rechazó ejecutarlo: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'assistant privilégié a refusé d'exécuter : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "विशेष सहायक ने चलाने से इनकार किया: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper istimewa menolak menjalankannya: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'helper privilegiato ha rifiutato di eseguirlo: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特権ヘルパーが実行を拒否しました：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "권한 도우미가 실행을 거부했습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De bevoorrechte helper weigerde het uit te voeren: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uprawniony pomocnik odmówił wykonania: %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O auxiliar privilegiado recusou executar: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Привилегированный помощник отказался выполнять: %@"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตัวช่วยสิทธิ์พิเศษปฏิเสธการเรียกใช้: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ayrıcalıklı yardımcı çalıştırmayı reddetti: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trình trợ giúp đặc quyền từ chối chạy: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特权助手拒绝执行：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式拒絕執行：%@"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式拒絕執行：%@"
+          }
+        }
+      }
+    },
+    "尚未安装" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "لم يتم التثبيت بعد"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠝⠕⠞⠀⠊⠝⠎⠞⠁⠇⠇⠑⠙⠀⠽⠑⠞"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "noch nicht installiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "not installed yet"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ankoraŭ ne instalita"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "aún no instalado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pas encore installé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "अभी इंस्टॉल नहीं है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "belum dipasang"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "non ancora installato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未インストール"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 설치되지 않음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nog niet geïnstalleerd"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "jeszcze nie zainstalowano"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ainda não instalado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ещё не установлен"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ยังไม่ได้ติดตั้ง"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "henüz kurulmadı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "chưa được cài đặt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未安装"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未安裝"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未安裝"
+          }
+        }
+      }
+    },
+    "命令不在挂载白名单内" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الأمر ليس في قائمة السماح الخاصة بالتحميل"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠞⠓⠑⠀⠉⠕⠍⠍⠁⠝⠙⠀⠊⠎⠀⠝⠕⠞⠀⠕⠝⠀⠞⠓⠑⠀⠍⠕⠥⠝⠞⠀⠺⠓⠊⠞⠑⠇⠊⠎⠞"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Befehl steht nicht auf der Mount-Whitelist"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "the command is not on the mount whitelist"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "la komando ne estas en la permeslisto de muntado"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "el comando no está en la lista blanca de montaje"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "la commande n'est pas dans la liste blanche de montage"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "कमांड माउंट अनुमति सूची में नहीं है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "perintah tidak ada dalam daftar putih pemasangan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "il comando non è nella lista consentita di mount"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コマンドはマウント許可リストにありません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "명령이 마운트 허용 목록에 없습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "de opdracht staat niet op de mount-witlijst"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "polecenie nie jest na liście dozwolonych montowań"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "o comando não está na lista de permissões de montagem"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "команда отсутствует в списке разрешённых для монтирования"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "คำสั่งไม่อยู่ในรายการที่อนุญาตสำหรับการเมานต์"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "komut bağlama izin listesinde değil"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "lệnh không nằm trong danh sách cho phép gắn kết"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令不在挂载白名单内"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令不在掛載白名單內"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令不在掛載白名單內"
+          }
+        }
+      }
+    },
+    "无法转换为助手接口" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تعذّر التحويل إلى واجهة المساعد"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠉⠕⠥⠇⠙⠀⠝⠕⠞⠀⠉⠁⠎⠞⠀⠞⠕⠀⠞⠓⠑⠀⠓⠑⠇⠏⠑⠗⠀⠊⠝⠞⠑⠗⠋⠁⠉⠑"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Konnte nicht in die Helfer-Schnittstelle umgewandelt werden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "could not cast to the helper interface"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ne eblas konverti al la helpanta interfaco"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "no se pudo convertir a la interfaz del asistente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "impossible de convertir vers l'interface de l'assistant"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "सहायक इंटरफ़ेस में बदल नहीं सका"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tidak dapat dikonversi ke antarmuka helper"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "impossibile convertire nell'interfaccia dell'helper"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ヘルパーのインターフェースに変換できません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도우미 인터페이스로 변환할 수 없습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "kon niet converteren naar de helper-interface"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nie można rzutować na interfejs pomocnika"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "não foi possível converter para a interface do auxiliar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не удалось привести к интерфейсу помощника"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "แปลงเป็นอินเทอร์เฟซของตัวช่วยไม่ได้"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "yardımcı arayüzüne dönüştürülemedi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "không thể chuyển sang giao diện của trình trợ giúp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法转换为助手接口"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法轉換為輔助程式介面"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法轉換為輔助程式介面"
+          }
+        }
+      }
+    },
+    "助手没有返回结果" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "لم يُرجع المساعد أي نتيجة"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠞⠓⠑⠀⠓⠑⠇⠏⠑⠗⠀⠗⠑⠞⠥⠗⠝⠑⠙⠀⠝⠕⠀⠗⠑⠎⠥⠇⠞"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Helfer hat kein Ergebnis geliefert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "the helper returned no result"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "la helpanto ne redonis rezulton"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "el asistente no devolvió ningún resultado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "l'assistant n'a renvoyé aucun résultat"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "सहायक ने कोई परिणाम नहीं दिया"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "helper tidak mengembalikan hasil"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "l'helper non ha restituito alcun risultato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ヘルパーが結果を返しませんでした"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도우미가 결과를 반환하지 않았습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "de helper gaf geen resultaat terug"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pomocnik nie zwrócił wyniku"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "o auxiliar não devolveu resultado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "помощник не вернул результат"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตัวช่วยไม่ส่งผลลัพธ์กลับมา"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "yardımcı sonuç döndürmedi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "trình trợ giúp không trả về kết quả"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "助手没有返回结果"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程式沒有傳回結果"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程式沒有傳回結果"
+          }
+        }
+      }
+    },
     "速度: %@ MB/s" : {
       "extractionState" : "manual",
       "localizations" : {

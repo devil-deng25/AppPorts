@@ -9,8 +9,9 @@ import Foundation
 /// 有意保留的限制：
 /// - 只允许从 `/Applications` 安装。守护进程以 root 执行磁盘上的可执行文件，
 ///   若允许外置卷或用户可写目录，等于把 root 交给那个目录的写权限。
-/// - 描述文件里的可执行路径是固定的。应用被移动或更新后镜像会变，必须重装一次，
-///   否则助手继续跑旧镜像（客户端握手会识别并提示重装）。
+/// - 描述文件里的可执行路径是固定的。应用被移动或换了签名身份后必须重装一次，否则助手
+///   继续跑旧镜像（客户端握手会识别并提示重装）。**重新编译不算换身份**：只要签名身份不变，
+///   出多少次新包都不用重装，判定逻辑见 `CodeIdentity`。
 enum PrivilegedHelperInstaller {
     enum InstallError: LocalizedError {
         case outsideApplications(String)
