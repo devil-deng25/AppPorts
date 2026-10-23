@@ -117,6 +117,17 @@ struct CustomDirsView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+
+                // 照片图库是这类迁移里最常见、也最容易手滑的一个（包目录、体积大、
+                // 要求照片 App 保持关闭），所以单独给一张卡片，走的仍是同一条迁移通路。
+                PhotoLibrarySection(
+                    isActive: isActive,
+                    configs: configs,
+                    onMove: { config in addAndMigrateConfig(config) },
+                    onRestore: { config in restorePhotoLibrary(config) },
+                    onRelink: { config in relinkPhotoLibrary(config) }
+                )
+
                 if retainedTransfers.contains(where: { $0.needsAttention }) {
                     HStack {
                         Text(retainedTransfers.contains(where: { $0.cleanupDisposition == .deferred })
@@ -471,6 +482,27 @@ struct CustomDirsView: View {
 
     private func relinkSelected() {
         submitDirectoryTasks(title: "正在接回目录".localized, pairs: relinkablePairs) { pair, _ in
+            try await DataDirMover().createLink(localPath: pair.config.localURL,
+                                               externalPath: pair.config.externalDestinationURL)
+            return nil
+        }
+    }
+
+    /// 照片图库卡片上的「还原」：与列表里的还原是同一个动作，只是入口更直接。
+    private func restorePhotoLibrary(_ config: CustomDirConfig) {
+        submitDirectoryTasks(title: "正在还原目录".localized,
+                             pairs: [CustomDirPair.pendingMigration(for: config)]) { pair, handler in
+            let result = try await DataDirMover().restoreAndComplete(
+                item: pair.local.dataDirItem,
+                progressHandler: handler
+            )
+            return result.cleanupWarning
+        }
+    }
+
+    private func relinkPhotoLibrary(_ config: CustomDirConfig) {
+        submitDirectoryTasks(title: "正在接回目录".localized,
+                             pairs: [CustomDirPair.pendingMigration(for: config)]) { pair, _ in
             try await DataDirMover().createLink(localPath: pair.config.localURL,
                                                externalPath: pair.config.externalDestinationURL)
             return nil

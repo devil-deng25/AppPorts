@@ -92,10 +92,12 @@ AppPorts/
 │   │   ├── ContainerMountModels.swift # ContainerMountRecord (mount migration record)
 │   │   ├── MigrationPreferences.swift # Classic-mode gate, repair-reminder dismissals
 │   │   ├── CustomDirModels.swift   # CustomDirConfig, validation, display entries
+│   │   ├── PhotoLibraryModels.swift # Photo library discovery, location state, resolver
 │   │   └── AppLanguageOption.swift # Language catalog (AppLanguageCatalog)
 │   ├── Views/
 │   │   ├── DataDirsView.swift      # Tool dirs + app data management
 │   │   ├── CustomDirsView.swift    # User-selected folder migration tab
+│   │   ├── PhotoLibrarySection.swift # Photo Library card at the top of the folder-migration tab
 │   │   ├── AppStoreSettingsView.swift # Settings sheet (incl. classic data migration mode)
 │   │   ├── SignatureRepairSheet.swift # Four-step repair panel for apps with replaced signatures
 │   │   └── Components/
@@ -115,6 +117,7 @@ AppPorts/
 │   │   ├── PrivilegedHelperService.swift  # Root-side listener: peer validation + whitelisted execution
 │   │   ├── PrivilegedHelperInstaller.swift # One-time LaunchDaemon install/uninstall through the admin prompt
 │   │   ├── PrivilegedHelperClient.swift   # App-side XPC client with graceful fallback
+│   │   ├── PhotoLibraryService.swift # Photo library scan, size, Photos quit gate, destination capability check
 │   │   ├── ContainerMountStore.swift # Persists mount migration records (container-mounts.plist)
 │   │   ├── ContainerMountAgentInstaller.swift # Login agent that remounts container volumes (`--mount-agent`)
 │   │   ├── DataMigrationWorkflow.swift # Ordered signature backup → migration → signing
@@ -303,6 +306,16 @@ AppPorts detects self-updating apps and applies lock protection (`chflags -R uch
 Known tool directories use canonical external destinations under `<externalRoot>/<DataDirType.rawValue>/<lastPathComponent>`, for example `<externalRoot>/工具目录/.gradle`. `scanKnownDotFolders(externalRootURL:)` should hide items that are missing locally and externally, but surface `待接回` when the canonical external directory already exists.
 
 Custom directory migration stores configs in `UserDefaults` under `customDirConfigs`. A config keeps the real local source and an external base directory; the actual destination is `externalBaseURL / localURL.lastPathComponent`. Local sources must be real directories under the current user's home, cannot be the home directory itself, cannot pass through symlinked path components, and cannot overlap with another managed custom directory.
+
+### Photo Library Migration
+
+The Photo Library card (`PhotoLibrarySection`, top of the folder-migration tab) moves `~/Pictures/*.photoslibrary` to an external drive and leaves a symlink at the original path, so Photos keeps working. It only creates a normal `CustomDirConfig`; the move, relink, restore and delete-link all come from the shared custom-directory machinery, so there is no second implementation for the library.
+
+- `PhotoLibraryDiscovery` lists `*.photoslibrary` **directories** under `~/Pictures` (a same-named plain file is excluded), newest first. Photos treats the package as a single file in Finder but it is a directory on disk.
+- `PhotoLibraryStateResolver.resolve(localURL:externalDestination:facts:)` is pure and takes `PhotoLibraryFacts`, so every branch is testable without touching disk: real directory → movable, resolved symlink → on external drive, dangling symlink → external drive not connected, local path missing with a managed copy → awaiting relink.
+- `PhotoLibraryService.quitPhotos` calls `terminate()` and waits; it never calls `forceTerminate`. A library caught mid-write is worse than a refusal, so a Photos instance that will not exit is reported to the user instead of being forced.
+- The destination must pass `StorageCapabilityProbe` for permissions and resource forks. ExFAT/FAT targets are refused before any copy starts: a library copied without those loses data Photos needs, and the failure surfaces only when the library refuses to open.
+- Sizes are measured lazily off the main actor with `measureDirectorySize(at:useCache: false)`; a library is routinely several GB and must not block the page.
 
 ### Sandboxed Apps and Mount Migration
 

@@ -211571,6 +211571,1650 @@
         }
       }
     },
+    "照片图库" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "مكتبة الصور"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠏⠓⠕⠞⠕⠀⠠⠇⠊⠃⠗⠁⠗⠽"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotomediathek"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photo Library"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotbiblioteko"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fototeca"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photothèque"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "फ़ोटो लाइब्रेरी"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Koleksi Foto"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fototeca"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真ライブラリ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사진 보관함"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotobibliotheek"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biblioteka zdjęć"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fototeca"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Медиатека «Фото»"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "คลังภาพ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraf Arşivi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thư viện Ảnh"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "照片图库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "照片圖庫"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "照片圖庫"
+          }
+        }
+      }
+    },
+    "把「照片」图库整体搬到外置盘，本地留链接，照片 App 照常打开" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "انقل مكتبة الصور كاملة إلى قرص خارجي مع إبقاء رابط محلي، وسيعمل تطبيق الصور كالمعتاد"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠍⠕⠧⠑⠀⠞⠓⠑⠀⠺⠓⠕⠇⠑⠀⠠⠏⠓⠕⠞⠕⠎⠀⠇⠊⠃⠗⠁⠗⠽⠀⠞⠕⠀⠁⠝⠀⠑⠭⠞⠑⠗⠝⠁⠇⠀⠙⠗⠊⠧⠑⠂⠀⠅⠑⠑⠏⠀⠁⠀⠇⠊⠝⠅⠀⠊⠝⠀⠏⠇⠁⠉⠑⠂⠀⠁⠝⠙⠀⠕⠏⠑⠝⠀⠠⠏⠓⠕⠞⠕⠎⠀⠁⠎⠀⠥⠎⠥⠁⠇"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die gesamte Fotos-Mediathek auf ein externes Laufwerk verschieben, lokal bleibt ein Link – Fotos funktioniert wie gewohnt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move the whole Photos library to an external drive, keep a link in place, and open Photos as usual"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Movu la tutan fotbibliotekon al ekstera disko, lasu ligilon loke, kaj malfermu Fotoj kiel kutime"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mueve toda la fototeca a un disco externo, deja un enlace en local y abre Fotos como siempre"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer toute la photothèque vers un disque externe, garder un lien en local et ouvrir Photos comme d'habitude"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "पूरी फ़ोटो लाइब्रेरी को बाहरी डिस्क पर ले जाएँ, स्थानीय रूप से लिंक रखें और फ़ोटो ऐप पहले की तरह खोलें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pindahkan seluruh koleksi Foto ke disk eksternal, sisakan tautan lokal, dan buka Foto seperti biasa"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta l'intera fototeca su un disco esterno, lascia un collegamento in locale e apri Foto come sempre"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「写真」のライブラリを外付けドライブへ丸ごと移動し、ローカルにはリンクを残します。写真 App はそのまま使えます"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사진 보관함 전체를 외장 디스크로 옮기고 로컬에는 링크를 남깁니다. 사진 앱은 평소처럼 열립니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verplaats de hele fotobibliotheek naar een externe schijf, laat lokaal een koppeling staan en open Foto's zoals altijd"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przenieś całą bibliotekę zdjęć na dysk zewnętrzny, zostaw lokalne dowiązanie i otwieraj Zdjęcia jak zwykle"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move a fototeca inteira para um disco externo, mantém uma ligação local e abre o Fotos como sempre"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенесите всю медиатеку «Фото» на внешний диск, локально останется ссылка — «Фото» работает как обычно"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ย้ายคลังภาพทั้งหมดไปยังดิสก์ภายนอก เก็บลิงก์ไว้ในเครื่อง แล้วเปิดแอปภาพถ่ายได้ตามปกติ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraf arşivinin tamamını harici diske taşıyın, yerelde bir bağlantı bırakın; Fotoğraflar her zamanki gibi açılır"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chuyển toàn bộ thư viện Ảnh sang ổ ngoài, giữ một liên kết tại chỗ và mở Ảnh như thường lệ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把「照片」图库整体搬到外置盘，本地留链接，照片 App 照常打开"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把「照片」圖庫整體搬到外接磁碟，本機留連結，照片 App 照常開啟"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把「照片」圖庫整體搬到外接磁碟，本機留連結，照片 App 照常開啟"
+          }
+        }
+      }
+    },
+    "移动到外置盘" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نقل إلى قرص خارجي"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠍⠕⠧⠑⠀⠞⠕⠀⠑⠭⠞⠑⠗⠝⠁⠇⠀⠙⠗⠊⠧⠑"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf externes Laufwerk verschieben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to external drive"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Movi al ekstera disko"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mover a disco externo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer vers un disque externe"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बाहरी डिस्क पर ले जाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pindahkan ke disk eksternal"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta su disco esterno"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外付けドライブへ移動"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "외장 디스크로 이동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Naar externe schijf verplaatsen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przenieś na dysk zewnętrzny"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mover para disco externo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести на внешний диск"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ย้ายไปยังดิสก์ภายนอก"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Harici diske taşı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chuyển sang ổ ngoài"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移动到外置盘"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動到外接磁碟"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動到外接磁碟"
+          }
+        }
+      }
+    },
+    "已在外置盘" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "على قرص خارجي"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠕⠝⠀⠑⠭⠞⠑⠗⠝⠁⠇⠀⠙⠗⠊⠧⠑"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf externem Laufwerk"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On external drive"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sur ekstera disko"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "En disco externo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sur un disque externe"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बाहरी डिस्क पर"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Di disk eksternal"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Su disco esterno"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外付けドライブ上"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "외장 디스크에 있음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Op externe schijf"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Na dysku zewnętrznym"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Em disco externo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На внешнем диске"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "อยู่บนดิสก์ภายนอก"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Harici diskte"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trên ổ ngoài"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在外置盘"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在外接磁碟"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在外接磁碟"
+          }
+        }
+      }
+    },
+    "移动照片图库" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نقل مكتبة الصور"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠍⠕⠧⠑⠀⠠⠏⠓⠕⠞⠕⠀⠠⠇⠊⠃⠗⠁⠗⠽"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotomediathek verschieben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move Photo Library"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Movi fotbibliotekon"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mover fototeca"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer la photothèque"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "फ़ोटो लाइब्रेरी ले जाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pindahkan Koleksi Foto"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta fototeca"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真ライブラリを移動"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사진 보관함 이동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotobibliotheek verplaatsen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przenieś bibliotekę zdjęć"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mover fototeca"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенос медиатеки «Фото»"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ย้ายคลังภาพ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraf Arşivini Taşı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chuyển thư viện Ảnh"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移动照片图库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動照片圖庫"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動照片圖庫"
+          }
+        }
+      }
+    },
+    "照片 App 正在运行，需要先退出" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تطبيق الصور قيد التشغيل ويجب إغلاقه أولًا"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠏⠓⠕⠞⠕⠎⠀⠊⠎⠀⠗⠥⠝⠝⠊⠝⠛⠀⠁⠝⠙⠀⠍⠥⠎⠞⠀⠃⠑⠀⠟⠥⠊⠞⠀⠋⠊⠗⠎⠞"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotos läuft und muss zuerst beendet werden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photos is running and must be quit first"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoj funkcias kaj devas esti fermitaj unue"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotos está abierto y debe cerrarse primero"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photos est ouvert et doit d'abord être fermé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "फ़ोटो ऐप चल रहा है, पहले इसे बंद करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Foto sedang berjalan dan harus ditutup dulu"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Foto è aperto e va chiuso prima"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真 App が実行中です。先に終了してください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사진 앱이 실행 중입니다. 먼저 종료해야 합니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Foto's is geopend en moet eerst worden afgesloten"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zdjęcia są uruchomione — najpierw je zamknij"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Fotos está aberto e precisa ser fechado primeiro"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложение «Фото» запущено — сначала закройте его"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "แอปภาพถ่ายกำลังทำงาน ต้องปิดก่อน"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraflar açık, önce kapatılmalı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ứng dụng Ảnh đang chạy, cần thoát trước"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "照片 App 正在运行，需要先退出"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "照片 App 正在執行，需要先結束"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "照片 App 正在執行，需要先結束"
+          }
+        }
+      }
+    },
+    "迁移期间照片 App 必须保持关闭，否则可能损坏图库" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "أبقِ تطبيق الصور مغلقًا أثناء النقل، وإلا فقد تتلف المكتبة"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠅⠑⠑⠏⠀⠠⠏⠓⠕⠞⠕⠎⠀⠉⠇⠕⠎⠑⠙⠀⠙⠥⠗⠊⠝⠛⠀⠞⠓⠑⠀⠍⠕⠧⠑⠆⠀⠕⠞⠓⠑⠗⠺⠊⠎⠑⠀⠞⠓⠑⠀⠇⠊⠃⠗⠁⠗⠽⠀⠉⠁⠝⠀⠃⠑⠀⠙⠁⠍⠁⠛⠑⠙"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotos muss während des Verschiebens geschlossen bleiben, sonst kann die Mediathek beschädigt werden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Photos closed during the move; otherwise the library can be damaged"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tenu Fotoj fermita dum la movado, alie la biblioteko povas difektiĝi"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantén Fotos cerrado durante el traslado; de lo contrario, la fototeca puede dañarse"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gardez Photos fermé pendant le déplacement, sinon la photothèque peut être endommagée"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "स्थानांतरण के दौरान फ़ोटो ऐप बंद रखें, वरना लाइब्रेरी ख़राब हो सकती है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biarkan Foto tertutup selama pemindahan, jika tidak koleksi bisa rusak"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tieni Foto chiuso durante lo spostamento, altrimenti la fototeca può danneggiarsi"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動中は写真 App を閉じたままにしてください。開いているとライブラリが壊れるおそれがあります"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이동하는 동안 사진 앱을 닫아 두세요. 열려 있으면 보관함이 손상될 수 있습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Houd Foto's gesloten tijdens het verplaatsen, anders kan de fotobibliotheek beschadigd raken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Podczas przenoszenia Zdjęcia muszą być zamknięte, inaczej biblioteka może ulec uszkodzeniu"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantenha o Fotos fechado durante a mudança; caso contrário, a fototeca pode ser danificada"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Во время переноса приложение «Фото» должно быть закрыто, иначе медиатека может повредиться"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ปิดแอปภาพถ่ายไว้ระหว่างการย้าย มิฉะนั้นคลังภาพอาจเสียหาย"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taşıma sırasında Fotoğraflar kapalı kalmalı, aksi halde arşiv bozulabilir"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giữ ứng dụng Ảnh đóng trong khi chuyển, nếu không thư viện có thể hỏng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迁移期间照片 App 必须保持关闭，否则可能损坏图库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移期間照片 App 必須保持關閉，否則可能損壞圖庫"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移期間照片 App 必須保持關閉，否則可能損壞圖庫"
+          }
+        }
+      }
+    },
+    "外置盘未连接时照片 App 会提示找不到图库，请连接后再打开照片" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "إذا لم يكن القرص الخارجي موصولًا فسيُبلغك تطبيق الصور بأن المكتبة غير موجودة، لذا وصّله قبل فتح الصور"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠊⠋⠀⠞⠓⠑⠀⠑⠭⠞⠑⠗⠝⠁⠇⠀⠙⠗⠊⠧⠑⠀⠊⠎⠀⠝⠕⠞⠀⠉⠕⠝⠝⠑⠉⠞⠑⠙⠂⠀⠠⠏⠓⠕⠞⠕⠎⠀⠗⠑⠏⠕⠗⠞⠎⠀⠁⠀⠍⠊⠎⠎⠊⠝⠛⠀⠇⠊⠃⠗⠁⠗⠽⠀—⠀⠗⠑⠉⠕⠝⠝⠑⠉⠞⠀⠊⠞⠀⠃⠑⠋⠕⠗⠑⠀⠕⠏⠑⠝⠊⠝⠛⠀⠠⠏⠓⠕⠞⠕⠎"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ist das externe Laufwerk nicht verbunden, meldet Fotos eine fehlende Mediathek – schließen Sie es an, bevor Sie Fotos öffnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If the external drive is not connected, Photos reports a missing library — reconnect it before opening Photos"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se la ekstera disko ne estas konektita, Fotoj raportos mankan bibliotekon — konektu ĝin antaŭ ol malfermi Fotojn"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si el disco externo no está conectado, Fotos avisará de que no encuentra la fototeca; conéctalo antes de abrir Fotos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si le disque externe n'est pas connecté, Photos signale une photothèque introuvable — reconnectez-le avant d'ouvrir Photos"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बाहरी डिस्क जुड़ी न हो तो फ़ोटो ऐप लाइब्रेरी न मिलने की सूचना देगा; फ़ोटो खोलने से पहले उसे जोड़ें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jika disk eksternal tidak terhubung, Foto akan melaporkan koleksi tidak ditemukan; hubungkan dulu sebelum membuka Foto"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se il disco esterno non è collegato, Foto segnala che la fototeca non è trovata; collegalo prima di aprire Foto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外付けドライブが接続されていないと写真 App はライブラリが見つからないと表示します。接続してから写真を開いてください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "외장 디스크가 연결되어 있지 않으면 사진 앱이 보관함을 찾을 수 없다고 표시합니다. 연결한 뒤 사진을 여세요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Is de externe schijf niet aangesloten, dan meldt Foto's dat de fotobibliotheek ontbreekt; sluit de schijf aan voordat je Foto's opent"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jeśli dysk zewnętrzny nie jest podłączony, Zdjęcia zgłoszą brak biblioteki — podłącz go przed otwarciem Zdjęć"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se o disco externo não estiver ligado, o Fotos avisa que não encontra a fototeca; ligue-o antes de abrir o Fotos"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если внешний диск не подключён, «Фото» сообщит, что медиатека не найдена — подключите диск перед запуском"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "หากดิสก์ภายนอกไม่ได้เชื่อมต่อ แอปภาพถ่ายจะแจ้งว่าไม่พบคลังภาพ โปรดเชื่อมต่อก่อนเปิดแอป"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Harici disk bağlı değilse Fotoğraflar arşivin bulunamadığını bildirir; Fotoğraflar'ı açmadan önce diski bağlayın"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nếu ổ ngoài chưa kết nối, ứng dụng Ảnh sẽ báo không tìm thấy thư viện; hãy kết nối trước khi mở Ảnh"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外置盘未连接时照片 App 会提示找不到图库，请连接后再打开照片"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外接磁碟未連接時照片 App 會提示找不到圖庫，請連接後再開啟照片"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外接磁碟未連接時照片 App 會提示找不到圖庫，請連接後再開啟照片"
+          }
+        }
+      }
+    },
+    "迁移完成后直接用照片 App 打开即可，不要按住 Option 启动去切换图库" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "بعد النقل افتح تطبيق الصور مباشرة، ولا تضغط Option عند التشغيل لتبديل المكتبات"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠁⠋⠞⠑⠗⠀⠞⠓⠑⠀⠍⠕⠧⠑⠂⠀⠚⠥⠎⠞⠀⠕⠏⠑⠝⠀⠠⠏⠓⠕⠞⠕⠎⠀⠝⠕⠗⠍⠁⠇⠇⠽⠆⠀⠙⠕⠀⠝⠕⠞⠀⠓⠕⠇⠙⠀⠠⠕⠏⠞⠊⠕⠝⠀⠁⠞⠀⠇⠁⠥⠝⠉⠓⠀⠞⠕⠀⠎⠺⠊⠞⠉⠓⠀⠇⠊⠃⠗⠁⠗⠊⠑⠎"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffnen Sie Fotos nach dem Verschieben einfach normal; halten Sie beim Start nicht Option gedrückt, um Mediatheken zu wechseln"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After the move, just open Photos normally; do not hold Option at launch to switch libraries"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Post la movado simple malfermu Fotojn; ne tenu Option ĉe lanĉo por ŝanĝi bibliotekojn"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tras el traslado, abre Fotos con normalidad; no mantengas Option pulsada al iniciarlo para cambiar de fototeca"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Après le déplacement, ouvrez simplement Photos ; n'appuyez pas sur Option au lancement pour changer de photothèque"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "स्थानांतरण के बाद फ़ोटो ऐप सामान्य रूप से खोलें; लाइब्रेरी बदलने के लिए खोलते समय Option दबाए न रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Setelah dipindahkan, cukup buka Foto seperti biasa; jangan tahan Option saat membuka untuk mengganti koleksi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dopo lo spostamento apri Foto normalmente; non tenere premuto Option all'avvio per cambiare fototeca"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動が終わったら写真 App をそのまま開いてください。Option を押しながら起動してライブラリを切り替える必要はありません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이동이 끝나면 사진 앱을 그냥 여세요. Option을 누른 채 실행해 보관함을 전환할 필요가 없습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Foto's na het verplaatsen gewoon; houd Option niet ingedrukt bij het starten om van fotobibliotheek te wisselen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Po przeniesieniu po prostu otwórz Zdjęcia; nie przytrzymuj Option przy starcie, aby przełączać biblioteki"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Depois da mudança, basta abrir o Fotos normalmente; não segure Option ao iniciar para trocar de fototeca"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "После переноса просто откройте «Фото»; не удерживайте Option при запуске, чтобы переключить медиатеку"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "หลังย้ายเสร็จ เปิดแอปภาพถ่ายตามปกติ ไม่ต้องกด Option ค้างตอนเปิดเพื่อสลับคลังภาพ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taşıma bittikten sonra Fotoğraflar'ı normal açın; arşiv değiştirmek için açılışta Option tuşunu basılı tutmayın"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sau khi chuyển xong, chỉ cần mở Ảnh bình thường; đừng giữ Option khi khởi chạy để đổi thư viện"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迁移完成后直接用照片 App 打开即可，不要按住 Option 启动去切换图库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移完成後直接開啟照片 App 即可，不要按住 Option 啟動去切換圖庫"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移完成後直接開啟照片 App 即可，不要按住 Option 啟動去切換圖庫"
+          }
+        }
+      }
+    },
+    "未发现照片图库" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "لم يتم العثور على مكتبة صور"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠝⠕⠀⠏⠓⠕⠞⠕⠀⠇⠊⠃⠗⠁⠗⠽⠀⠋⠕⠥⠝⠙"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Fotomediathek gefunden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No photo library found"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neniu fotbiblioteko trovita"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se encontró ninguna fototeca"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune photothèque trouvée"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "कोई फ़ोटो लाइब्रेरी नहीं मिली"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Koleksi Foto tidak ditemukan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nessuna fototeca trovata"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真ライブラリが見つかりません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사진 보관함을 찾을 수 없습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geen fotobibliotheek gevonden"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nie znaleziono biblioteki zdjęć"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nenhuma fototeca encontrada"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Медиатека «Фото» не найдена"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ไม่พบคลังภาพ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraf arşivi bulunamadı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Không tìm thấy thư viện Ảnh"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未发现照片图库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未發現照片圖庫"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未發現照片圖庫"
+          }
+        }
+      }
+    },
+    "请先退出照片 App，再重试" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "أغلق تطبيق الصور ثم أعد المحاولة"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠟⠥⠊⠞⠀⠠⠏⠓⠕⠞⠕⠎⠂⠀⠞⠓⠑⠝⠀⠞⠗⠽⠀⠁⠛⠁⠊⠝"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beenden Sie Fotos und versuchen Sie es erneut"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quit Photos, then try again"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fermu Fotojn, poste reprovu"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cierra Fotos y vuelve a intentarlo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fermez Photos, puis réessayez"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "फ़ोटो ऐप बंद करें, फिर पुनः प्रयास करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tutup Foto lalu coba lagi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chiudi Foto e riprova"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真 App を終了してから、もう一度お試しください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사진 앱을 종료한 뒤 다시 시도하세요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sluit Foto's en probeer het opnieuw"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zamknij Zdjęcia i spróbuj ponownie"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Feche o Fotos e tente novamente"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закройте «Фото» и повторите попытку"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ปิดแอปภาพถ่ายแล้วลองอีกครั้ง"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraflar'ı kapatıp yeniden deneyin"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hãy thoát ứng dụng Ảnh rồi thử lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先退出照片 App，再重试"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先結束照片 App，再重試"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先結束照片 App，再重試"
+          }
+        }
+      }
+    },
+    "目标盘不支持文件所有者或扩展属性，照片图库可能无法打开；请换用 APFS 或 Mac OS 扩展格式的磁盘" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "لا يمكن للوجهة تخزين مالك الملف أو السمات الموسّعة، لذا قد لا يفتح تطبيق الصور المكتبة؛ استخدم قرصًا بصيغة APFS أو Mac OS Extended"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑⠀⠙⠑⠎⠞⠊⠝⠁⠞⠊⠕⠝⠀⠉⠁⠝⠝⠕⠞⠀⠎⠞⠕⠗⠑⠀⠋⠊⠇⠑⠀⠕⠺⠝⠑⠗⠎⠓⠊⠏⠀⠕⠗⠀⠑⠭⠞⠑⠝⠙⠑⠙⠀⠁⠞⠞⠗⠊⠃⠥⠞⠑⠎⠂⠀⠎⠕⠀⠠⠏⠓⠕⠞⠕⠎⠀⠍⠁⠽⠀⠝⠕⠞⠀⠕⠏⠑⠝⠀⠞⠓⠑⠀⠇⠊⠃⠗⠁⠗⠽⠆⠀⠥⠎⠑⠀⠁⠝⠀⠠⠁⠠⠏⠠⠋⠠⠎⠀⠕⠗⠀⠠⠍⠁⠉⠀⠠⠕⠠⠎⠀⠠⠑⠭⠞⠑⠝⠙⠑⠙⠀⠙⠊⠎⠅⠀⠊⠝⠎⠞⠑⠁⠙"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Ziel kann Dateieigentümer oder erweiterte Attribute nicht speichern, daher öffnet Fotos die Mediathek möglicherweise nicht. Verwenden Sie ein APFS- oder Mac OS Extended-Laufwerk"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The destination cannot store file ownership or extended attributes, so Photos may not open the library; use an APFS or Mac OS Extended disk instead"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La celo ne povas konservi dosierposedanton aŭ etenditajn atributojn, do Fotoj eble ne malfermos la bibliotekon; uzu diskon APFS aŭ Mac OS Extended"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El destino no puede guardar el propietario ni los atributos extendidos, así que Fotos podría no abrir la fototeca; usa un disco APFS o Mac OS Plus"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La destination ne peut pas stocker le propriétaire ni les attributs étendus ; Photos risque de ne pas ouvrir la photothèque. Utilisez un disque APFS ou Mac OS étendu"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "गंतव्य फ़ाइल स्वामी या विस्तारित विशेषताएँ संग्रहीत नहीं कर सकता, इसलिए फ़ोटो ऐप लाइब्रेरी नहीं खोल सकता; APFS या Mac OS Extended डिस्क इस्तेमाल करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tujuan tidak dapat menyimpan pemilik file atau atribut tambahan, sehingga Foto mungkin tidak dapat membuka koleksi; gunakan disk APFS atau Mac OS Extended"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La destinazione non può memorizzare proprietario e attributi estesi, quindi Foto potrebbe non aprire la fototeca; usa un disco APFS o Mac OS esteso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動先がファイル所有者や拡張属性を保存できないため、写真ライブラリを開けない可能性があります。APFS または Mac OS 拡張フォーマットのディスクをお使いください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대상 디스크가 파일 소유자나 확장 속성을 저장하지 못해 사진 보관함이 열리지 않을 수 있습니다. APFS 또는 Mac OS 확장 포맷 디스크를 사용하세요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De bestemming kan eigenaar en uitgebreide attributen niet opslaan, waardoor Foto's de fotobibliotheek mogelijk niet opent; gebruik een APFS- of Mac OS Uitgebreid-schijf"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Miejsce docelowe nie przechowuje właściciela pliku ani atrybutów rozszerzonych, więc Zdjęcia mogą nie otworzyć biblioteki; użyj dysku APFS lub Mac OS Extended"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O destino não consegue guardar o proprietário nem os atributos estendidos, pelo que o Fotos pode não abrir a fototeca; use um disco APFS ou Mac OS Expandido"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Назначение не хранит владельца файла и расширенные атрибуты, поэтому «Фото» может не открыть медиатеку; используйте диск APFS или Mac OS Extended"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ปลายทางไม่สามารถเก็บเจ้าของไฟล์หรือแอตทริบิวต์เพิ่มเติมได้ แอปภาพถ่ายอาจเปิดคลังภาพไม่ได้ โปรดใช้ดิสก์รูปแบบ APFS หรือ Mac OS Extended"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hedef, dosya sahibini veya genişletilmiş öznitelikleri saklayamıyor; Fotoğraflar arşivi açamayabilir. APFS veya Mac OS Genişletilmiş biçimli bir disk kullanın"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đích không lưu được chủ sở hữu tệp hoặc thuộc tính mở rộng nên Ảnh có thể không mở được thư viện; hãy dùng đĩa APFS hoặc Mac OS Extended"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目标盘不支持文件所有者或扩展属性，照片图库可能无法打开；请换用 APFS 或 Mac OS 扩展格式的磁盘"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目標磁碟不支援檔案擁有者或延伸屬性，照片圖庫可能無法開啟；請改用 APFS 或 Mac OS 擴充格式的磁碟"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目標磁碟不支援檔案擁有者或延伸屬性，照片圖庫可能無法開啟；請改用 APFS 或 Mac OS 擴充格式的磁碟"
+          }
+        }
+      }
+    },
     "速度: %@ MB/s" : {
       "extractionState" : "manual",
       "localizations" : {
