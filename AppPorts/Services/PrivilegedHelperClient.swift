@@ -152,8 +152,11 @@ final class PrivilegedHelperClient: @unchecked Sendable {
     private static let selfCDHash: String? = {
         var code: SecCode?
         guard SecCodeCopySelf(SecCSFlags(rawValue: 0), &code) == errSecSuccess, let code else { return nil }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
+              let staticCode else { return nil }
         var information: CFDictionary?
-        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
               let dictionary = information as? [String: Any],
               let hash = dictionary[kSecCodeInfoUnique as String] as? Data else { return nil }
         return hash.base64EncodedString()

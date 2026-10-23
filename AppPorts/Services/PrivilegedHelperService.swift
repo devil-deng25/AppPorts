@@ -192,8 +192,12 @@ enum PeerTrust {
     }
 
     private static func signingInformation(_ code: SecCode) -> [String: Any] {
+        // SecCodeCopySigningInformation 只吃静态代码对象，动态的 SecCode 要先落下磁盘镜像。
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
+              let staticCode else { return [:] }
         var information: CFDictionary?
-        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
               let dictionary = information as? [String: Any] else { return [:] }
         return dictionary
     }

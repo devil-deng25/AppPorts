@@ -100,12 +100,19 @@ enum PrivilegedHelperInstaller {
         PrivilegedHelperClient.shared.invalidate()
 
         // 安装脚本返回成功不代表守护进程真的起来了：launchd 可能因为签名、
-        // 权限或描述文件格式拒绝加载。这里用一次握手确认。
-        do {
-            _ = try PrivilegedHelperClient.shared.handshake()
-        } catch {
-            throw InstallError.verification(error.localizedDescription)
+        // 权限或描述文件格式拒绝加载。这里用握手确认，并留出冷启动的余量——
+        // 一次握手失败就要求用户重装，等于让人白输一次密码。
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                _ = try PrivilegedHelperClient.shared.handshake()
+                return
+            } catch {
+                lastError = error
+                if attempt < 3 { Thread.sleep(forTimeInterval: 0.6) }
+            }
         }
+        throw InstallError.verification(lastError?.localizedDescription ?? "未知原因")
     }
 
     /// 把描述文件装到位、在系统域重新注册。`bootout` 允许失败：
@@ -117,6 +124,12 @@ enum PrivilegedHelperInstaller {
         set -e
         /usr/bin/install -m 0644 -o root -g wheel \(shellQuote(stagedPlist)) \(shellQuote(destination))
         /bin/launchctl bootout system/\(label) >/dev/null 2>&1 || true
+        # bootout 是异步的：旧实例还没退干净就 bootstrap，会撞上 “Bootstrap failed: 5”。
+        # 这里等它从 launchd 里消失再注册，最多等 3 秒。
+        for _ in 1 2 3 4 5 6; do
+            /bin/launchctl print system/\(label) >/dev/null 2>&1 || break
+            /bin/sleep 0.5
+        done
         /bin/launchctl enable system/\(label) >/dev/null 2>&1 || true
         /bin/launchctl bootstrap system \(shellQuote(destination))
         """
