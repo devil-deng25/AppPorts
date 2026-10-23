@@ -295,7 +295,7 @@ struct ContentView: View {
     @State private var previousExternalDriveURL: URL?
 
     // 插盘通知：重新挂载容器卷
-    @State private var volumeMountObserver: NSObjectProtocol?
+    @State private var libraryVolumeObserver: AppLibraryVolumeObserver?
 
     enum SortOption {
         case name, size
@@ -1111,7 +1111,8 @@ struct ContentView: View {
                 actionButtonText: "选择文件夹".localized,
                 onAction: { _ = openPanelForExternalDrive() },
                 onRefresh: { scanExternalApps(forceSizeRefresh: true) },
-                isRefreshing: externalScanState.isScanning
+                isRefreshing: externalScanState.isScanning,
+                accessory: AnyView(DiskEjectionControls(externalURL: externalDriveURL))
             )
 
         ZStack {
@@ -2802,6 +2803,7 @@ struct ContentView: View {
     private func scheduleMonitorRescan(local: Bool) {
         monitorRescanDebouncer.schedule { [self] in
             Task { @MainActor in
+                guard self.isVisible else { return }
                 AppLogger.shared.logContext("Monitor 防抖触发扫描", details: [("trigger", local ? "local" : "external")], level: "TRACE")
                 if let root = self.externalDriveURL { self.startMonitoringExternal(url: root) }
                 self.scanBothAppsAtomic()
@@ -3011,27 +3013,25 @@ struct ContentView: View {
 
     // MARK: - 容器卷自动挂载
 
-    /// 挂载迁移的记录在 AppPorts 运行期间自动重挂：启动时一次，之后每次有卷挂载到系统时再试一次。
+    /// 插拔后目录监控的旧描述符不能复用；同时刷新外部列表和本地入口状态。
+    @MainActor
     private func startObservingVolumeMounts() {
         stopObservingVolumeMounts()
-        let center = NSWorkspace.shared.notificationCenter
-        volumeMountObserver = center.addObserver(
-            forName: NSWorkspace.didMountNotification,
-            object: nil,
-            queue: .main
-        ) { _ in
-            Task { @MainActor in
-                self.remountContainerVolumes(trigger: "volume-mounted")
-            }
+        let observer = AppLibraryVolumeObserver(center: NSWorkspace.shared.notificationCenter)
+        observer.start { isMount in
+            guard self.isVisible else { return }
+            // Reuse the scan debounce so sibling APFS volume events coalesce.
+            // Its callback rebuilds monitoring at the current mount and scans both panes.
+            self.scheduleMonitorRescan(local: false)
+            if isMount { self.remountContainerVolumes(trigger: "volume-mounted") }
         }
+        libraryVolumeObserver = observer
     }
 
+    @MainActor
     private func stopObservingVolumeMounts() {
-        let center = NSWorkspace.shared.notificationCenter
-        if let volumeMountObserver {
-            center.removeObserver(volumeMountObserver)
-        }
-        volumeMountObserver = nil
+        libraryVolumeObserver?.stop()
+        libraryVolumeObserver = nil
     }
 
     @MainActor

@@ -68,13 +68,15 @@ enum SignatureBackupStorage {
     /// Prefer the application's external volume, then an existing migration
     /// volume, then the eligible volume with the most free space. No picker or
     /// new location preference is required, and internal volumes never qualify.
-    static func candidates(_ volumes: [Volume], applicationVolume: String?, knownVolume: String?, requiredBytes: Int64) -> [Volume] {
+    static func candidates(_ volumes: [Volume], applicationVolume: String?, knownVolume: String?, requiredBytes: Int64,
+                           excluding ejection: DiskEjectionPauseStore.Snapshot = .init(pauses: [])) -> [Volume] {
         func rank(_ volume: Volume) -> Int {
             if volume.uuid.caseInsensitiveCompare(applicationVolume ?? "") == .orderedSame { return 0 }
             if volume.uuid.caseInsensitiveCompare(knownVolume ?? "") == .orderedSame { return 1 }
             return 2
         }
-        return volumes.filter { $0.isExternal && $0.isLocal && $0.isWritable && $0.isPhysical && !$0.uuid.isEmpty && $0.availableBytes >= requiredBytes }
+        return volumes.filter { $0.isExternal && $0.isLocal && $0.isWritable && $0.isPhysical && !$0.uuid.isEmpty
+            && $0.availableBytes >= requiredBytes && !ejection.blocks(volumeUUIDs: [$0.uuid], paths: [$0.url.path]) }
             .sorted {
                 if rank($0) != rank($1) { return rank($0) < rank($1) }
                 if $0.availableBytes != $1.availableBytes { return $0.availableBytes > $1.availableBytes }
@@ -83,6 +85,7 @@ enum SignatureBackupStorage {
     }
 
     static func automaticDestination(for app: URL, requiredBytes: Int64) throws -> SignatureDirectoryLocation {
+        let ejection = try DiskEjectionPauseStore().snapshot()
         let keys: Set<URLResourceKey> = [.volumeUUIDStringKey, .volumeIsInternalKey, .volumeIsLocalKey, .volumeIsReadOnlyKey]
         let roots = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: Array(keys), options: []) ?? []
         let volumes: [Volume] = roots.compactMap { root in
@@ -96,7 +99,8 @@ enum SignatureBackupStorage {
         let knownVolume = UserDefaults.standard.string(forKey: "ExternalDrivePath").flatMap {
             try? URL(fileURLWithPath: $0).resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
         }
-        for volume in candidates(volumes, applicationVolume: appVolume, knownVolume: knownVolume, requiredBytes: requiredBytes) {
+        for volume in candidates(volumes, applicationVolume: appVolume, knownVolume: knownVolume,
+                                 requiredBytes: requiredBytes, excluding: ejection) {
             try Task.checkCancellation()
             do {
                 // Re-read after enumeration: an unmounted volume's surviving

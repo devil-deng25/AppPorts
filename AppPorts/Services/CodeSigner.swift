@@ -1656,8 +1656,15 @@ extension CodeSigner {
             let locks = try acquireLocks()
             defer { locks.forEach { $0.release() } }
             let inventory = try operations.inventory()
+            let pauseDirectory = backupDirectoryURL.standardizedFileURL == Self.defaultBackupDirectoryURL.standardizedFileURL
+                ? OperationLock.defaultFileURL.deletingLastPathComponent() : backupDirectoryURL.deletingLastPathComponent()
+            let ejection = try DiskEjectionPauseStore(directory: pauseDirectory).snapshot()
             warnings += inventory.unreadableRecords.map(\.detail)
             for record in inventory.records {
+                if ejection.blocks(volumeUUIDs: [record.applicationIdentity.volumeUUID,
+                    record.applicationParentIdentity.volumeUUID, record.directoryIdentity?.volumeUUID],
+                    paths: [record.applicationPath, record.directoryPath] + [record.originalSourcePath].compactMap { $0 })
+                    || record.originalBackup.map({ ejection.blocks($0.backup) }) == true { continue }
                 do {
                     let result = try await reconcilePendingSignature(record)
                     if let warning = result.cleanupWarning { warnings.append(warning) }
@@ -1666,6 +1673,7 @@ extension CodeSigner {
             for url in try history.records() {
                 do {
                     let backup = try history.read(at: url)
+                    if ejection.blocks(backup) { continue }
                     if try await retireUnrecoverableRecord(backup, recordURL: url) {
                         continue
                     } else if backup.relocation != nil {
@@ -1680,6 +1688,7 @@ extension CodeSigner {
             }
             // Finish older, already authorized deletion journals as well.
             for deletion in try history.deletions() {
+                if ejection.blocks(deletion) { continue }
                 do { _ = try finishMaterialDeletion(deletion) }
                 catch { warnings.append(error.localizedDescription) }
             }
@@ -1756,6 +1765,10 @@ extension CodeSigner {
             let source = try history.verifiedSnapshot(for: backup)
             let budget = try Self.temporarySpaceRequirement(appURL: source)
             let destination = try backupDestination((try? Self.resolveAppURL(at: app)) ?? source, budget.requiredAdditionalBytes)
+            let pauseDirectory = backupDirectoryURL.standardizedFileURL == Self.defaultBackupDirectoryURL.standardizedFileURL
+                ? OperationLock.defaultFileURL.deletingLastPathComponent() : backupDirectoryURL.deletingLastPathComponent()
+            guard try !DiskEjectionPauseStore(directory: pauseDirectory).snapshot()
+                .blocks(volumeUUIDs: [destination.volumeUUID], paths: [destination.path]) else { throw DiskEjectionError.paused }
             let parent = try destination.resolve()
             guard parent.path != source.deletingLastPathComponent().standardizedFileURL.path else { return false }
             try requireTemporarySpace(.init(parentURL: parent, logicalSourceBytes: budget.logicalSourceBytes,

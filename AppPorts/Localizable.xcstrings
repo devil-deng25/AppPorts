@@ -1,6 +1,222 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "所有卷已卸载，设备仍连接。请拔下设备后重新插入。": {
+      "comment": "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所有卷已卸载，设备仍连接。请拔下设备后重新插入。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All volumes are unmounted. The device is still connected. Unplug and reconnect the device."
+          }
+        }
+      }
+    },
+    "正在请求弹出，自动挂载已暂停。": {
+      "comment": "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在请求弹出，自动挂载已暂停。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requesting ejection. Automatic mounting is paused."
+          }
+        }
+      }
+    },
+    "磁盘尚未弹出，自动挂载已暂停。": {
+      "comment": "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "磁盘尚未弹出，自动挂载已暂停。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The disk has not been ejected. Automatic mounting is paused."
+          }
+        }
+      }
+    },
+    "磁盘已离线，请重新插入设备。": {
+      "comment": "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "磁盘已离线，请重新插入设备。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The disk is offline. Reconnect the device."
+          }
+        }
+      }
+    },
+    "无法确认磁盘是否已离线，自动挂载仍已暂停。": {
+      "comment": "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法确认磁盘是否已离线，自动挂载仍已暂停。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to determine whether the disk is offline. Automatic mounting remains paused."
+          }
+        }
+      }
+    },
+    "弹出外置硬盘" : {
+      "comment" : "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "弹出外置硬盘"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eject External Disk"
+          }
+        }
+      }
+    },
+    "重试弹出" : {
+      "comment" : "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试弹出"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry Eject"
+          }
+        }
+      }
+    },
+    "弹出整块外置硬盘及其所有卷。" : {
+      "comment" : "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "弹出整块外置硬盘及其所有卷。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eject the external disk and all its volumes."
+          }
+        }
+      }
+    },
+    "此磁盘的自动挂载已暂停。请重新插入设备以恢复自动挂载。": {
+      "comment": "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此磁盘的自动挂载已暂停。请重新插入设备以恢复自动挂载。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic mounting is paused for this disk. Reconnect the device to resume automatic mounting."
+          }
+        }
+      }
+    },
+    "无法确认外置物理磁盘，请连接磁盘后重试。" : {
+      "comment" : "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法确认外置物理磁盘，请连接磁盘后重试。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The external physical disk could not be identified. Connect it and try again."
+          }
+        }
+      }
+    },
+    "无法读取弹出状态，已暂停自动恢复。请重试或检查日志。" : {
+      "comment" : "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取弹出状态，已暂停自动恢复。请重试或检查日志。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The ejection state could not be read. Automatic recovery is paused. Retry or check the logs."
+          }
+        }
+      }
+    },
+    "无法请求 Finder 弹出磁盘。请检查自动化权限后重试。" : {
+      "comment" : "Approved 2026-10-23: Chinese and English only; other locales explicitly fall back to English.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法请求 Finder 弹出磁盘。请检查自动化权限后重试。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finder could not be asked to eject the disk. Check Automation permissions and retry."
+          }
+        }
+      }
+    },
     "准备" : {
       "extractionState" : "manual",
       "localizations" : {

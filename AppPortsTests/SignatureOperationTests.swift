@@ -198,6 +198,19 @@ struct SignatureOperationTests {
         backup.applicationParentLocation = nil
         try history.write(backup)
         let location = try SignatureBackupStorage.prepareDirectory(fixture.root.appendingPathComponent("AppPorts Backups"))
+        // Even before there is a relocation intent, a newly selected paused
+        // destination must not acquire one or receive the snapshot.
+        let ejection = DiskEjectionPauseStore(directory: fixture.root)
+        let paused = try ejection.pause(.init(deviceIdentifier: "fixture", connectionID: "fixture:1", displayName: "Fixture",
+            volumeUUIDs: ["PAUSED-FIXTURE"], containerUUIDs: [], mountPaths: [location.path]))
+        let beforePause = try history.read(bundleIdentifier: fixture.identifier)
+        _ = await fixture.signer(officialEvidence: true, captureOfficialOriginal: true,
+            copy: { _, _ in Issue.record("A newly selected paused destination must not be copied into"); throw Injected.failure },
+            backupDestination: { _, _ in location }).performAutomaticMaintenance()
+        #expect(try history.read(bundleIdentifier: fixture.identifier) == beforePause)
+        #expect(try SignatureSnapshot.fingerprint(of: source) == original)
+        _ = try ejection.reconcile(.init(disks: [.init(deviceIdentifier: "fixture", connectionID: "fixture:2",
+                displayName: paused.displayName, volumeUUIDs: paused.volumeUUIDs, containerUUIDs: paused.containerUUIDs, mountPaths: paused.mountPaths)]))
         let signer = fixture.signer(officialEvidence: true, captureOfficialOriginal: true, copy: { from, to in
             if interruption == "copy" {
                 try FileManager.default.createDirectory(at: to.appendingPathComponent("Contents"), withIntermediateDirectories: false)
@@ -218,6 +231,16 @@ struct SignatureOperationTests {
             #expect(pending.relocation != nil)
             #expect(pending.relocation?.published == (interruption == "remove"))
             #expect(try SignatureSnapshot.entryExists(source))
+            let pauses = DiskEjectionPauseStore(directory: fixture.root)
+            let pause = try pauses.pause(.init(deviceIdentifier: "fixture", connectionID: "fixture:1", displayName: "Fixture",
+                volumeUUIDs: ["PAUSED-FIXTURE"], containerUUIDs: [], mountPaths: [location.path]))
+            _ = await fixture.signer(officialEvidence: true, captureOfficialOriginal: true,
+                copy: { _, _ in Issue.record("Paused relocation must not copy"); throw Injected.failure },
+                deleteTemporary: { _, _, _, _ in Issue.record("Paused relocation must not delete"); throw Injected.failure },
+                backupDestination: { _, _ in location }).performAutomaticMaintenance()
+            #expect(try history.read(bundleIdentifier: fixture.identifier) == pending)
+            _ = try pauses.reconcile(.init(disks: [.init(deviceIdentifier: "fixture", connectionID: "fixture:2",
+                displayName: pause.displayName, volumeUUIDs: pause.volumeUUIDs, containerUUIDs: pause.containerUUIDs, mountPaths: pause.mountPaths)]))
             #expect(await fixture.signer(officialEvidence: true, captureOfficialOriginal: true,
                 backupDestination: { _, _ in location }).performAutomaticMaintenance().isEmpty)
         }
@@ -1899,6 +1922,15 @@ struct SignatureOperationTests {
         let recordURL = try history.recordURL(bundleIdentifier: fixture.identifier)
         let retainedRecord = try Data(contentsOf: recordURL)
         let actionID = "history-cleanup:" + deletion.id.uuidString
+        let pauses = DiskEjectionPauseStore(directory: fixture.root)
+        let pause = try pauses.pause(.init(deviceIdentifier: "fixture", connectionID: "fixture:1", displayName: "Fixture",
+            volumeUUIDs: [deletion.parentIdentity.volumeUUID ?? "PAUSED-FIXTURE"], containerUUIDs: [], mountPaths: [fixture.backups.path]))
+        _ = await fixture.signer(synchronizeDirectory: { try fault.synchronize($0) }).performAutomaticMaintenance()
+        #expect(fault.calls == 1)
+        #expect(try Data(contentsOf: receipt) == retainedReceipt)
+        #expect(try Data(contentsOf: recordURL) == retainedRecord)
+        _ = try pauses.reconcile(.init(disks: [.init(deviceIdentifier: "fixture", connectionID: "fixture:2",
+                displayName: pause.displayName, volumeUUIDs: pause.volumeUUIDs, containerUUIDs: pause.containerUUIDs, mountPaths: pause.mountPaths)]))
         // A newly constructed service sees no target. EIO still prevents it
         // from deleting the record or its independent cleanup receipt.
         await #expect(throws: POSIXError(.EIO)) {

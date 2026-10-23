@@ -806,10 +806,15 @@ extension ContainerVolumeMigrator {
     private func performScheduledMaintenance(only operationID: UUID?, ignoresRetryBackoff: Bool) async -> [String] {
         var warnings: [String] = []
         let transfers: [DataTransferRecord]
-        do { transfers = try store.transfers() }
+        let ejection: DiskEjectionPauseStore.Snapshot
+        do {
+            ejection = try await DiskEjectionPauseStore(store: store).refreshed(using: disk)
+            transfers = try store.transfers()
+        }
         catch { return [error.localizedDescription] }
         for transfer in transfers where transfer.mode == .mount && !transfer.isDataSwitchComplete && transfer.needsAutomaticCompletion
             && (operationID == nil || transfer.operationID == operationID) {
+            if ejection.blocks(transfer) { continue }
             if Task.isCancelled { return warnings }
             // Defer expensive residue checks only if a usable original entry
             // still exists. Never defer the work needed to restore that entry.
@@ -834,6 +839,7 @@ extension ContainerVolumeMigrator {
         guard let completed = try? store.transfers() else { return warnings }
         for transfer in completed where transfer.mode == .mount && transfer.isDataSwitchComplete && transfer.needsAutomaticCompletion
             && (operationID == nil || transfer.operationID == operationID) {
+            if ejection.blocks(transfer) { continue }
             if Task.isCancelled { return warnings }
             guard ignoresRetryBackoff || !CleanupRetryBackoff.shouldDefer(until: transfer.nextAutomaticRetryAt, now: CleanupRetryContext.now()) else { continue }
             guard let record = transfer.recoveryMountRecord else { continue }
@@ -845,6 +851,8 @@ extension ContainerVolumeMigrator {
         }
         guard operationID == nil else { return warnings }
         for cleanup in (try? store.pendingCleanups()) ?? [] {
+            if ejection.blocks(volumeUUIDs: [cleanup.mountRecord.volumeUUID],
+                paths: [cleanup.localPath, cleanup.mountRecord.externalRootPath]) { continue }
             // Legacy restore staging can be required for recovering the entry.
             guard ignoresRetryBackoff || cleanup.restoreStagingPath != nil
                 || !CleanupRetryBackoff.shouldDefer(until: cleanup.nextAutomaticRetryAt, now: CleanupRetryContext.now()) else { continue }
@@ -867,6 +875,10 @@ extension ContainerVolumeMigrator {
     func cleanupPreservedRestoreMaterials(at originalPath: String? = nil, ignoresRetryBackoff: Bool? = nil) async -> [String] {
         var warnings: [String] = []
         for material in (try? store.preservedMaterials()) ?? [] {
+            do {
+                if try DiskEjectionPauseStore(store: store).snapshot().blocks(volumeUUIDs: [material.volumeUUID],
+                    paths: material.paths, containerUUID: material.containerUUID) { continue }
+            } catch { return [error.localizedDescription] }
             guard (ignoresRetryBackoff ?? !CleanupRetryContext.automatic)
                 || !CleanupRetryBackoff.shouldDefer(until: material.nextAutomaticRetryAt, now: CleanupRetryContext.now()) else { continue }
             guard originalPath == nil || originalPath == material.originalPath,

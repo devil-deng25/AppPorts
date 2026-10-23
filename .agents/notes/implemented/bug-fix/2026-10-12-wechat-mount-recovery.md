@@ -18,11 +18,17 @@ Status: implemented
 
 错误标题与实际入口状态一致，不用“数据已就位”掩盖未接回；卸载日志记录事实，不把本进程的命令归为外部卸载。TCC 授权针对当前二进制代码要求，bundle ID 和版本相同不能证明 Debug 已继承安装版授权。
 
+本机替换用户正在使用的安装版时保留原有 Apple Development 签名身份；关闭签名的 Release 构建仅用于编译检查，不能直接作为已具备生产权限的安装包。安装验收分别核对代码签名、已有 TCC 代码要求和真实原位挂载结果，不能用隔离测试、主窗口正常启动或外部卷可读代替。授权仍绑定旧临时签名时，由用户在系统设置重新授权；不修改 TCC 数据库或绕过拒绝。
+
 ## Incident evidence
 
 来源通过保存的 FDA 代码要求验证：安装版匹配，事发 Debug 不匹配；没有取得 tccd 拒绝事件，也没有修改 TCC 数据库。持现有操作锁核对卷 UUID、容器、标记和原目录后，将活动卷按 noowners 接回；生产迁移记录内容未改，用户确认最近聊天及文件正常。该恢复不等于早晨的内盘还原已经完成。
 
 来源同时记录目标访问拒绝、租约失败和自身 overlap 的回归复现。真实隔离 APFS 用目录权限模拟访问拒绝，没有制造真实 TCC 失效；10 月 13 日已完成真实微信原位还原。
+
+2026-10-24 的[主动弹出功能](../feature/2026-10-23-explicit-disk-ejection.md)本机安装再次暴露签名验收缺口：build 47 是 linker-signed ad hoc，已有 AllFiles 授权绑定另一个 cdhash，AppDataDetailed 授权绑定原 Apple Development 身份。tccd 明确记录两项代码要求不匹配。接回后暂停文件已为空，两个数据卷停在系统默认 `/Volumes/AppPorts-…`，原 msg/business 是 mode 000 本地保护目录；主程序及代理在准备目标租约时失败，未卸载仍可用的外卷。三份微信崩溃栈均经过 weakly_canonical/filesystem_error 后 abort；该证据与原入口不可访问一致，但不能单独证明全部闪退原因或数据完整性。
+
+build 48 使用项目原有 Apple Development 身份通过 Release clean build，安装前后 strict 签名验证和原开发证书要求匹配通过，安装包与构建哈希一致。旧安装保留备份。用户重新添加 AllFiles 授权并重启后，只读核对确认授权允许且代码要求匹配新版；原后台代理自动将 msg/business 两卷接回账本指定原目录，UUID 一致，均为 noowners、nobrowse。用户随后确认登录正常、最近聊天正常。此轮不修改微信数据或迁移账本，不另行弹出业务盘；这次应用验收不扩大为全量数据完整性检查。
 
 ## Related decisions
 

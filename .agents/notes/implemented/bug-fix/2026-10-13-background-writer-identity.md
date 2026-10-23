@@ -24,6 +24,9 @@ Status: implemented
 - 进程准入与持久化格式共同约束写入，见[迁移以持久化切换和可重试清理为完成依据](../../implemented/architecture/2026-10-10-verified-transfer-lifecycle.md)。
 - 代理登记与代理在未完成恢复期间的生命周期相关，见[由持久化事务自动完成 APFS 恢复与清理](../architecture/2026-10-12-apfs-automatic-recovery.md)。
 
+
+[主动弹出外盘](../feature/2026-10-23-explicit-disk-ejection.md)把 required capability 提升到 `appports-verified-writer-v7-disk-ejection`，确保旧写入进程不能忽略新暂停文件。
+
 ## Alternatives considered
 
 - **拒绝同 UID 的全部不可读进程**：保守但把无关程序变成全局操作障碍。

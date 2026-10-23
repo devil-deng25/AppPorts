@@ -36,6 +36,19 @@ final class LocalizationAuditTests: XCTestCase {
         XCTAssertEqual(codes.count, Set(codes).count, "语言注册表存在重复语言代码")
     }
 
+    func testDiskEjectionFallbackHasOnlyTheApprovedTranslationScope() throws {
+        let strings = try stringCatalog()
+        for key in DiskEjectionStrings.englishFallbackKeys {
+            let entry = try XCTUnwrap(strings[key] as? [String: Any])
+            let locales = try XCTUnwrap(entry["localizations"] as? [String: Any])
+            XCTAssertEqual(Set(locales.keys), ["zh-Hans", "en"], key)
+            XCTAssertTrue(localizationHasTranslatedValue(locales["zh-Hans"] as Any), key)
+            XCTAssertTrue(localizationHasTranslatedValue(locales["en"] as Any), key)
+        }
+        LanguageManager.shared.language = "fr"
+        XCTAssertEqual("弹出外置硬盘".localized, "Eject External Disk")
+    }
+
     func testStringCatalogContainsTranslationsForAllSupportedLanguages() throws {
         let supportedLocales = Set(AppLanguageCatalog.selectableLanguages.map(\.code))
         let catalogURL = try repositoryRootURL()
@@ -59,6 +72,7 @@ final class LocalizationAuditTests: XCTestCase {
 
             let localizations = entry["localizations"] as? [String: Any] ?? [:]
             for locale in supportedLocales.sorted() {
+                if DiskEjectionStrings.englishFallbackKeys.contains(key), !["zh-Hans", "en"].contains(locale) { continue }
                 guard let localization = localizations[locale],
                       localizationHasTranslatedValue(localization) else {
                     findings.append("缺少翻译: [\(locale)] \(key)")

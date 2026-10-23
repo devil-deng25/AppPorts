@@ -1670,6 +1670,8 @@ actor ContainerVolumeMigrator {
     /// 把记录对应的卷重新挂到容器内挂载点上；已挂载则直接返回。
     func mount(record: ContainerMountRecord) async throws {
         let mountPoint = record.mountPointURL
+        guard try !DiskEjectionPauseStore(store: store).snapshot().blocks(volumeUUIDs: [record.volumeUUID],
+            paths: [record.mountPointPath, record.externalRootPath]) else { throw DiskEjectionError.paused }
         guard try store.recordsStrict().contains(record) else { throw DataOperationSafety.Failure.conflict(mountPoint.path) }
         try safety.requireExistingMigrationPolicy(at: mountPoint, bundleIdentifier: record.bundleIdentifier)
         let history = try store.transfers()
@@ -1819,12 +1821,20 @@ actor ContainerVolumeMigrator {
     func remountAvailableRecords() async -> [RemountOutcome] {
         var outcomes: [RemountOutcome] = []
         let records: [ContainerMountRecord]
-        do { records = try store.recordsStrict() }
+        let ejection: DiskEjectionPauseStore.Snapshot
+        do {
+            ejection = try await DiskEjectionPauseStore(store: store).refreshed(using: disk)
+            records = try store.recordsStrict()
+        }
         catch {
             AppLogger.shared.logError("无法读取挂载记录，自动挂载已停止", error: error)
             return []
         }
         for record in records {
+            if ejection.blocks(volumeUUIDs: [record.volumeUUID], paths: [record.mountPointPath, record.externalRootPath]) {
+                outcomes.append(RemountOutcome(record: record, state: .requiresIntervention(DiskEjectionError.paused.localizedDescription)))
+                continue
+            }
             do {
                 if let reason = try store.remountIntervention(forVolumeUUID: record.volumeUUID) {
                     // A mounted volume may have failed the post-mount lease check.
@@ -2437,6 +2447,9 @@ actor ContainerVolumeMigrator {
         requireOwnership: Bool = false,
         validateBeforeMutation: (() throws -> Void)? = nil
     ) async throws {
+        guard try !DiskEjectionPauseStore(store: store).snapshot().blocks(volumeUUIDs: [volumeUUID], paths: [mountPoint.path]) else {
+            throw DiskEjectionError.paused
+        }
         if !DataTransferSession.isMeasuring(.switching) {
             return try await DataTransferSession.measure(.switching) {
                 try await self.mountVolume(volumeUUID, at: mountPoint, operationID: operationID, knownMountPoint: knownMountPoint,

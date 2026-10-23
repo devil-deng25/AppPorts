@@ -97,6 +97,15 @@ extension String {
     ///   ```
     var localized: String {
         let selectedLang = LanguageManager.shared.language
+        // Explicitly scoped, maintainer-approved fallback for this feature.
+        // Missing translations elsewhere continue through the existing chain.
+        if DiskEjectionStrings.englishFallbackKeys.contains(self) {
+            let effective = selectedLang == "system" ? (Bundle.main.preferredLocalizations.first ?? "en") : selectedLang
+            if !effective.hasPrefix("zh"), !effective.hasPrefix("en"),
+               let path = Bundle.main.path(forResource: "en", ofType: "lproj"), let bundle = Bundle(path: path) {
+                return bundle.localizedString(forKey: self, value: self, table: nil)
+            }
+        }
         if selectedLang == "system" {
             return NSLocalizedString(self, comment: "")
         }

@@ -678,6 +678,7 @@ actor DataDirMover {
     /// failed. Reuse its operation ID; never create a second copy or reservation.
     func resumeVerifiedTransfer(operationID: UUID, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
         guard var transfer = try store.transfer(operationID: operationID) else { return nil }
+        guard try !DiskEjectionPauseStore(store: store).snapshot().blocks(transfer) else { throw DiskEjectionError.paused }
         DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: transfer.originalPath))
         guard transfer.needsAutomaticCompletion else { return nil }
         if transfer.isPreparationRecoverable {

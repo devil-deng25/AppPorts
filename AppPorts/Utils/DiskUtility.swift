@@ -277,17 +277,20 @@ struct DiskUtility: Sendable {
     private let runner: ShellCommandRunning
     private let commandTimeout: TimeInterval
     private let administratorRunner: AdministratorRunner?
+    private let ejectionInventoryOverride: (@Sendable () async throws -> ExternalDiskInventory)?
 
     /// - Parameter administratorRunner: diskutil 或还原时的 mount -u 被权限检查拒绝后，用它重试一次。
     ///   传 nil 表示不能弹出管理员授权框（后台代理）。
     init(
         runner: ShellCommandRunning = ProcessCommandRunner(),
         commandTimeout: TimeInterval = 180,
+        ejectionInventory: (@Sendable () async throws -> ExternalDiskInventory)? = nil,
         administratorRunner: AdministratorRunner? = { try DiskUtility.runWithAdministratorPrivileges(executable: $0, arguments: $1) }
     ) {
         self.runner = runner
         self.commandTimeout = commandTimeout
         self.administratorRunner = administratorRunner
+        self.ejectionInventoryOverride = ejectionInventory
     }
 
     /// 通过共享脚本执行管理员命令，短期保留同一授权会话；是否再次验证由系统决定。
@@ -308,6 +311,13 @@ struct DiskUtility: Sendable {
     }
 
     // MARK: 查询
+
+    func ejectionInventory() async throws -> ExternalDiskInventory {
+        if let ejectionInventoryOverride { return try await ejectionInventoryOverride() }
+        let list = try await runPlist(["list", "-plist"])
+        let apfs = try await runPlist(["apfs", "list", "-plist"])
+        return try ExternalDiskInventory.parse(list: list, apfs: apfs, connection: ExternalDiskInventory.connectionID)
+    }
 
     /// `target` 可以是挂载路径、设备标识（disk5s2）或 Volume UUID。
     func volumeInfo(for target: String) async throws -> VolumeInfo {
@@ -509,6 +519,12 @@ struct DiskUtility: Sendable {
               let plist = try? PropertyListSerialization.propertyList(from: result.standardOutput, format: nil) as? [String: Any] else {
             throw Failure.unexpectedOutput(command: "diskutil apfs list", output: "Diagnostic inventory unavailable")
         }
+        return try Self.parseVolumeStateSnapshot(plist, mounts: Self.kernelMountTable())
+    }
+
+    /// A fresh, caller-owned kernel snapshot includes hidden mounts and APFS
+    /// snapshots, even after a bridge keeps its IOMedia object following eject.
+    static func kernelMountTable() throws -> [String: String] {
         var entries: UnsafeMutablePointer<statfs>?
         let count = getmntinfo_r_np(&entries, MNT_NOWAIT)
         guard count > 0, let entries else {
@@ -526,7 +542,7 @@ struct DiskUtility: Sendable {
             }
             mounts[device] = path
         }
-        return try Self.parseVolumeStateSnapshot(plist, mounts: mounts)
+        return mounts
     }
 
     static func parseVolumeStateSnapshot(_ plist: [String: Any], mounts: [String: String]) throws -> VolumeStateClassifier.Snapshot {

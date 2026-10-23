@@ -46,6 +46,9 @@ Status: implemented
 
 从未启用且有独占归属的失败迁移卷改为可丢弃候选，内容相等要求的局部替代见[失败迁移卷自动收尾](../bug-fix/2026-10-22-failed-migration-candidate-disposal.md)；已启用目标、还原暂存与未知材料仍遵循原保护规则。
 
+
+主动弹出期间，后台恢复还需遵守[整盘暂停准入](../feature/2026-10-23-explicit-disk-ejection.md)，不改变本篇的内容证明与清理授权。
+
 ## Alternatives considered
 
 - **逐个补错误弹窗**：局部修改快，但下一断点仍缺少统一的可用入口恢复。

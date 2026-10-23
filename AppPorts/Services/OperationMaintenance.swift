@@ -109,6 +109,9 @@ actor OperationMaintenance {
         defer { lock.release() }
         var warnings: [String] = []
         let store = ContainerMountStore.shared
+        let ejection: DiskEjectionPauseStore.Snapshot
+        do { ejection = try await DiskEjectionPauseStore(store: store).refreshed(using: DiskUtility(administratorRunner: nil)) }
+        catch { return [error.localizedDescription] }
         if interactive {
             do {
                 for transfer in try store.transfers() where transfer.cleanupDisposition != nil {
@@ -150,6 +153,7 @@ actor OperationMaintenance {
             let transfers = try store.transfers()
             let parents = Set(transfers.filter { $0.rollbackCompletedAt == nil }.compactMap(\.priorOperationID))
             for transfer in transfers where transfer.mode == .symlink && transfer.needsAutomaticCompletion && !parents.contains(transfer.operationID) {
+                if ejection.blocks(transfer) { continue }
                 if !interactive, transfer.isDataSwitchComplete,
                    CleanupRetryBackoff.shouldDefer(until: transfer.nextAutomaticRetryAt, now: Date()) { continue }
                 do {
