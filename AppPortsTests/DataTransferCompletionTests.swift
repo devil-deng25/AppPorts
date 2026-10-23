@@ -4,6 +4,28 @@ import Testing
 @testable import AppPorts
 
 struct DataTransferCompletionTests {
+    @Test("Restoration preserves the application identity from retained history when the link index is missing")
+    func restoreKeepsLaunchIdentityFromHistory() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        var item = fixture.item
+        item.associatedBundleIdentifier = "org.example.launch-protection"
+        try await fixture.mover.migrate(item: item, to: fixture.external, progressHandler: nil)
+        var journal = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: fixture.file), format: nil) as? [String: Any])
+        journal["managedLinks"] = []
+        try PropertyListSerialization.data(fromPropertyList: journal, format: .binary, options: 0).write(to: fixture.file)
+        try await fixture.mover.restore(item: fixture.item, progressHandler: nil)
+        let restored = try #require(try fixture.store.transfers().first(where: { $0.direction == .restore }))
+        #expect(restored.bundleIdentifier == item.associatedBundleIdentifier)
+        #expect(try fixture.payload(at: fixture.source) == "original")
+        let directory = fixture.file.deletingLastPathComponent().appendingPathComponent("launch-locks", isDirectory: true)
+        let launch = try ApplicationLaunchGate.acquire(bundleIdentifier: "org.example.launch-protection", migrating: false, directory: directory)
+        defer { withExtendedLifetime(launch) {} }
+        await #expect(throws: DataOperationSafety.Failure.self) {
+            _ = try await fixture.mover.resumeVerifiedTransfer(operationID: restored.operationID, progressHandler: nil)
+        }
+    }
+
     @Test("Ordinary symlink round trips stay within the reduced content-read budget")
     func contentReadBudget() async throws {
         let fixture = try Fixture()

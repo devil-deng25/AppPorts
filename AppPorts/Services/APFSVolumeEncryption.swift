@@ -142,7 +142,7 @@ enum APFSVolumeEncryption {
         let request = query(uuid)
         let attributes: [String: Any] = [
             kSecValueData as String: Data(credentials.passphrase.utf8),
-            kSecAttrLabel as String: "AppPorts 加密数据卷",
+            kSecAttrLabel as String: "AppPorts 加密数据卷".localized,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
         var item = request

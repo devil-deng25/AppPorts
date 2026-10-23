@@ -69,6 +69,12 @@ extension ContainerVolumeMigrator {
     func recoverWithIndependentBudget(_ transfer: DataTransferRecord,
                                       finishPreparedRestore: Bool = true,
                                       timeoutNanoseconds: UInt64 = 0) async throws -> AutomaticRecoveryResult {
+        let launchDirectory = store.fileURLForDeletionAuthorization.deletingLastPathComponent().appendingPathComponent("launch-locks", isDirectory: true)
+        if !ApplicationLaunchProtection.contains(transfer.bundleIdentifier, directory: launchDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: transfer.bundleIdentifier, directory: launchDirectory) {
+                try await self.recoverWithIndependentBudget(transfer, finishPreparedRestore: finishPreparedRestore, timeoutNanoseconds: timeoutNanoseconds)
+            }
+        }
         guard transfer.needsAutomaticCompletion else { throw RecoveryPaused() }
         let transfer = try store.adoptLegacyRestoreOwnership(transfer)
         let progress = DataTransferSession.progress
@@ -78,7 +84,7 @@ extension ContainerVolumeMigrator {
         // Disk commands have their own deadlines. A dataset-sized verification
         // must not restart forever because it exceeds a fixed 10/90s budget.
         if timeoutNanoseconds == 0 {
-            return try await Task.detached(priority: .userInitiated) {
+            return try await ApplicationLaunchProtection.detached(priority: .userInitiated) {
                 try await DataTransferSession.$current.withValue(session) {
                     try await DataTransferSession.$progress.withValue(progress) {
                         try await DataTransferSession.run {
@@ -91,9 +97,9 @@ extension ContainerVolumeMigrator {
                         }
                     }
                 }
-            }.value
+            }
         }
-        return try await Task.detached(priority: .userInitiated) {
+        return try await ApplicationLaunchProtection.detached(priority: .userInitiated) {
             try await DataTransferSession.$current.withValue(session) {
                 try await DataTransferSession.$progress.withValue(progress) {
                     progress?.begin(.recovering)
@@ -114,7 +120,7 @@ extension ContainerVolumeMigrator {
                     }
                 }
             }
-        }.value
+        }
     }
 
     func recoverFailedMountOperation(at path: String, direction: DataTransferRecord.Direction,

@@ -404,7 +404,7 @@ struct AboutView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     VStack(alignment: .leading, spacing: 9) {
                         AboutLinkRow(label: "作者".localized, title: "wzh4869", url: "https://github.com/wzh4869")
-                        AboutLinkRow(label: "项目地址".localized, title: "AppPorts on GitHub", url: "https://github.com/wzh4869/AppPorts")
+                        AboutLinkRow(label: "项目地址".localized, title: "GitHub 上的 AppPorts".localized, url: "https://github.com/wzh4869/AppPorts")
                         AboutLinkRow(label: "官方网站".localized, title: "appports.shimoko.com", url: "https://appports.shimoko.com/")
                         AboutLinkRow(label: "用户文档".localized, title: "docs-appports.shimoko.com", url: "https://docs-appports.shimoko.com/")
                         AboutLinkRow(label: "发布".localized, title: "GitHub Releases", url: "https://github.com/wzh4869/AppPorts/releases")
@@ -454,10 +454,10 @@ struct AboutView: View {
                     Link(destination: URL(string: "https://github.com/wzh4869/AppPorts/blob/main/LICENSE")!) {
                         Text(verbatim: "Apache License 2.0")
                     }
-                    Link(destination: URL(string: "https://docs-appports.shimoko.com/licenses.html")!) {
+                    Link(destination: URL(string: "https://docs-appports.shimoko.com/docs/licenses")!) {
                         Text("开放源代码许可证".localized)
                     }
-                    Link(destination: URL(string: "https://docs-appports.shimoko.com/privacy.html")!) {
+                    Link(destination: URL(string: "https://docs-appports.shimoko.com/docs/privacy")!) {
                         Text("隐私政策".localized)
                     }
                 }

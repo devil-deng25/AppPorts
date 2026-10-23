@@ -1425,11 +1425,11 @@ actor DataDirScanner {
             let inspection = inspectItem(at: candidateURL, type: .custom)
 
             var item = DataDirItem(
-                name: "Conda 安装目录: \(candidateURL.lastPathComponent)",
+                name: String(format: "Conda 安装目录：%@".localized, candidateURL.lastPathComponent),
                 path: candidateURL,
                 type: .custom,
                 priority: .critical,
-                description: "Conda Python 发行版根目录（包含解释器、包、环境和 Navigator 相关文件）",
+                description: "Conda Python 发行版根目录（包含解释器、包、环境和 Navigator 相关文件）".localized,
                 isMigratable: true
             )
             item.associatedAppName = appName

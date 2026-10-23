@@ -97,34 +97,33 @@ extension String {
     ///   ```
     var localized: String {
         let selectedLang = LanguageManager.shared.language
-        // Explicitly scoped, maintainer-approved fallback for this feature.
-        // Missing translations elsewhere continue through the existing chain.
-        if DiskEjectionStrings.englishFallbackKeys.contains(self) {
-            let effective = selectedLang == "system" ? (Bundle.main.preferredLocalizations.first ?? "en") : selectedLang
-            if !effective.hasPrefix("zh"), !effective.hasPrefix("en"),
-               let path = Bundle.main.path(forResource: "en", ofType: "lproj"), let bundle = Bundle(path: path) {
-                return bundle.localizedString(forKey: self, value: self, table: nil)
-            }
-        }
         if selectedLang == "system" {
             return NSLocalizedString(self, comment: "")
         }
         // 1. 精确匹配 .lproj
         if let path = Bundle.main.path(forResource: selectedLang, ofType: "lproj"),
-           let bundle = Bundle(path: path) {
-            let result = NSLocalizedString(self, tableName: nil, bundle: bundle, value: "", comment: "")
-            if result != self { return result }
+           let bundle = Bundle(path: path),
+           let result = localizedValue(in: bundle) {
+            return result
         }
         // 2. 模糊匹配（通过 preferredLocalizations）
         let preferred = Bundle.preferredLocalizations(from: Bundle.main.localizations, forPreferences: [selectedLang])
         if let best = preferred.first,
            best != selectedLang,
            let path = Bundle.main.path(forResource: best, ofType: "lproj"),
-           let bundle = Bundle(path: path) {
-            let result = NSLocalizedString(self, tableName: nil, bundle: bundle, value: "", comment: "")
-            if result != self { return result }
+           let bundle = Bundle(path: path),
+           let result = localizedValue(in: bundle) {
+            return result
         }
         // 3. 系统默认回退
         return NSLocalizedString(self, comment: "")
+    }
+
+    /// A valid translation can equal its key, especially in the source language.
+    /// Use an explicit missing value instead of treating that equality as a miss.
+    func localizedValue(in bundle: Bundle) -> String? {
+        let missing = "\u{0}AppPorts.MissingLocalization"
+        let result = bundle.localizedString(forKey: self, value: missing, table: nil)
+        return result == missing ? nil : result
     }
 }

@@ -121,6 +121,7 @@ struct AppSearchExclusionPanel: View {
 }
 
 private struct ExclusionColumn: View {
+    @Environment(\.locale) private var locale
     let completed: Bool
     let entries: [AppSearchExclusionReport.Entry]
     let hasResults: Bool
@@ -137,7 +138,7 @@ private struct ExclusionColumn: View {
                     .foregroundStyle(tint)
                     .accessibilityHidden(true)
                 Text(title).font(.headline)
-                Text(entries.count.formatted())
+                Text(entries.count.formatted(.number.locale(locale)))
                     .font(.caption.bold().monospacedDigit())
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(tint.opacity(0.12), in: Capsule())

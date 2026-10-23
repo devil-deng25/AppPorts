@@ -23,6 +23,7 @@ struct DataDirGroup {
 /// - 已知工具 dotFolder（~/.npm、~/.m2 等）
 /// - 本地应用在 ~/Library/ 下的关联数据（需用户选择应用）
 struct DataDirsView: View {
+    @Environment(\.locale) private var locale
     @ObservedObject private var languageManager = LanguageManager.shared
     @ObservedObject private var operationState = AppOperationState.shared
 
@@ -340,7 +341,7 @@ struct DataDirsView: View {
             HStack(spacing: 10) {
                 Group {
                     if let date = toolSizeCacheUpdatedAt {
-                        Text("上次缓存时间".localized + "：" + date.formatted(date: .numeric, time: .shortened))
+                        Text("上次缓存时间".localized + "：" + date.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(locale)))
                     } else {
                         Text("尚无大小缓存".localized)
                     }
@@ -1676,7 +1677,8 @@ struct DataDirsView: View {
         if let target = item.linkedDestination { paths.append(target) }
         if let app { paths += [app.path, app.displayURL] }
         var keys: Set<String> = mount ? ["apfs-layout"] : []
-        let identifier = app.flatMap({ CodeSigner.bundleIdentifier(at: $0.displayURL) }) ?? item.associatedBundleIdentifier
+        let identifier = app.flatMap { try? resolveRealAppURL($0) }.flatMap { CodeSigner.bundleIdentifier(at: $0) }
+            ?? item.associatedBundleIdentifier
         if let identifier {
             keys.insert("application:" + identifier)
         }
@@ -1686,13 +1688,16 @@ struct DataDirsView: View {
             resources: MigrationResources(paths: paths, keys: keys),
             retrying: retrying, recovery: recovery, operation: { progress in
                 try await MigrationExecution.control?.checkpointAsync()
-                if requireAppStopped {
-                    if await MigrationApplicationState.isRunning(appURL: app?.displayURL, bundleIdentifier: identifier) {
+                let directory = ContainerMountStore.shared.fileURLForDeletionAuthorization.deletingLastPathComponent()
+                    .appendingPathComponent("launch-locks", isDirectory: true)
+                return try await ApplicationLaunchProtection.run(identifier: requireAppStopped ? identifier : nil, directory: directory) {
+                    if requireAppStopped,
+                       await MigrationApplicationState.isRunning(appURL: app?.displayURL, bundleIdentifier: identifier) {
                         throw AppMoverError.appIsRunning
                     }
+                    progress.setDirectory(item.path)
+                    return try await operation(progress)
                 }
-                progress.setDirectory(item.path)
-                return try await operation(progress)
             }, completion: { reloadCurrentTab() })
     }
 

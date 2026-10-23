@@ -265,6 +265,13 @@ actor ContainerVolumeMigrator {
     /// lock. The low-level methods remain available for explicit recovery.
     func migrateAndComplete(item: DataDirItem, externalRootURL: URL, appName: String,
                             bundleIdentifier: String?, progressHandler: FileCopier.ProgressHandler?) async throws -> MigrationResult {
+        let launchDirectory = store.fileURLForDeletionAuthorization.deletingLastPathComponent().appendingPathComponent("launch-locks", isDirectory: true)
+        let launchIdentifier = bundleIdentifier
+        if !ApplicationLaunchProtection.contains(launchIdentifier, directory: launchDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: launchIdentifier, directory: launchDirectory) {
+                try await self.migrateAndComplete(item: item, externalRootURL: externalRootURL, appName: appName, bundleIdentifier: bundleIdentifier, progressHandler: progressHandler)
+            }
+        }
         if DataTransferSession.current == nil {
             return try await DataTransferSession.run {
                 try await self.migrateAndComplete(item: item, externalRootURL: externalRootURL, appName: appName,
@@ -321,6 +328,13 @@ actor ContainerVolumeMigrator {
 
     func restoreAndComplete(record: ContainerMountRecord, estimatedTotalBytes: Int64,
                             progressHandler: FileCopier.ProgressHandler?) async throws -> CleanupWarning? {
+        let launchDirectory = store.fileURLForDeletionAuthorization.deletingLastPathComponent().appendingPathComponent("launch-locks", isDirectory: true)
+        let launchIdentifier = record.bundleIdentifier
+        if !ApplicationLaunchProtection.contains(launchIdentifier, directory: launchDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: launchIdentifier, directory: launchDirectory) {
+                try await self.restoreAndComplete(record: record, estimatedTotalBytes: estimatedTotalBytes, progressHandler: progressHandler)
+            }
+        }
         if DataTransferSession.current == nil {
             return try await DataTransferSession.run {
                 try await self.restoreAndComplete(record: record, estimatedTotalBytes: estimatedTotalBytes,
@@ -958,6 +972,13 @@ actor ContainerVolumeMigrator {
     /// lock. A restart must never create another volume or recopy over either
     /// surviving tree just because the last record write failed.
     func resumeVerifiedTransfer(operationID: UUID, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
+        let launchDirectory = store.fileURLForDeletionAuthorization.deletingLastPathComponent().appendingPathComponent("launch-locks", isDirectory: true)
+        let launchIdentifier = try store.transfer(operationID: operationID)?.bundleIdentifier
+        if !ApplicationLaunchProtection.contains(launchIdentifier, directory: launchDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: launchIdentifier, directory: launchDirectory) {
+                try await self.resumeVerifiedTransfer(operationID: operationID, progressHandler: progressHandler)
+            }
+        }
         if DataTransferSession.current == nil {
             return try await DataTransferSession.run {
                 try await self.resumeVerifiedTransfer(operationID: operationID, progressHandler: progressHandler)
@@ -2163,6 +2184,12 @@ actor ContainerVolumeMigrator {
     func cleanupRetainedTransfer(operationID: UUID) async throws {
         guard let transfer = try store.transfer(operationID: operationID),
               transfer.needsAutomaticCompletion, !CleanupRetryContext.shouldDefer(transfer) else { return }
+        let launchDirectory = store.fileURLForDeletionAuthorization.deletingLastPathComponent().appendingPathComponent("launch-locks", isDirectory: true)
+        if !ApplicationLaunchProtection.contains(transfer.bundleIdentifier, directory: launchDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: transfer.bundleIdentifier, directory: launchDirectory) {
+                try await self.cleanupRetainedTransfer(operationID: operationID)
+            }
+        }
         do {
             try await performRetainedTransferCleanup(operationID: operationID)
             CleanupRetryContext.record(.transfer(operationID), failed: false, store: store)

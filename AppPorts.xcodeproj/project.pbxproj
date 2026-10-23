@@ -226,6 +226,8 @@
 			);
 			inputPaths = (
 				"$(SRCROOT)/Tools/StubLauncher/StubLauncherSource.swift",
+				"$(SRCROOT)/AppPorts/Utils/ApplicationLaunchGate.swift",
+				"$(SRCROOT)/AppPorts/Utils/PortalLocalizedStrings.swift",
 				"$(SRCROOT)/script/build_stub_launcher.sh",
 			);
 			name = "Build Stub Launcher";
@@ -402,7 +404,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 49;
+				CURRENT_PROJECT_VERSION = 50;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = MQ7XG7WM3F;
 				ENABLE_APP_INTENTS_METADATA_PROVIDER = NO;
@@ -439,7 +441,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 49;
+				CURRENT_PROJECT_VERSION = 50;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = MQ7XG7WM3F;
 				ENABLE_APP_INTENTS_METADATA_PROVIDER = NO;

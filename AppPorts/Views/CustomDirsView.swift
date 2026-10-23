@@ -36,6 +36,7 @@ enum CustomDirRecoveryEligibility {
 @MainActor
 struct CustomDirsView: View {
     var isActive: Bool = true
+    @Environment(\.locale) private var locale
     @ObservedObject private var operationState = AppOperationState.shared
     @ObservedObject private var configStore = CustomDirConfigStore.shared
     private var configs: [CustomDirConfig] { configStore.configs }
@@ -107,7 +108,7 @@ struct CustomDirsView: View {
             VStack(spacing: 0) {
                 HStack {
                     if let date = sizeCacheUpdatedAt {
-                        Text("上次缓存时间".localized + "：" + date.formatted(date: .numeric, time: .shortened))
+                        Text("上次缓存时间".localized + "：" + date.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(locale)))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()

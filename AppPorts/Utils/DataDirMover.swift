@@ -37,6 +37,18 @@ actor DataDirMover {
     private let managedLinkIdentifier = "com.shimoko.AppPorts"
     private let managedLinkSchemaVersion = 1
 
+    private var launchProtectionDirectory: URL {
+        store.fileURLForDeletionAuthorization.deletingLastPathComponent()
+            .appendingPathComponent("launch-locks", isDirectory: true)
+    }
+
+    private func launchIdentifier(for item: DataDirItem) throws -> String? {
+        let path = item.path.standardizedFileURL.path
+        return try item.associatedBundleIdentifier
+            ?? store.managedLink(forOriginalPath: path)?.bundleIdentifier
+            ?? store.transfers().last(where: { $0.originalPath == path })?.bundleIdentifier
+    }
+
     private struct ManagedLinkMetadata: Codable, Sendable {
         let schemaVersion: Int
         let managedBy: String
@@ -66,6 +78,12 @@ actor DataDirMover {
     /// from a successful data switch. The caller holds the shared operation lock.
     func migrateAndComplete(item: DataDirItem, to externalBaseURL: URL,
                             progressHandler: FileCopier.ProgressHandler?) async throws -> CompletionResult {
+        let identifier = try launchIdentifier(for: item)
+        if !ApplicationLaunchProtection.contains(identifier, directory: launchProtectionDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: identifier, directory: launchProtectionDirectory) {
+                try await self.migrateAndComplete(item: item, to: externalBaseURL, progressHandler: progressHandler)
+            }
+        }
         let path = item.path.standardizedFileURL.path
         guard completingPaths.insert(path).inserted else { throw DataOperationSafety.Failure.occupied(path) }
         defer { completingPaths.remove(path) }
@@ -76,6 +94,12 @@ actor DataDirMover {
 
     func restoreAndComplete(item: DataDirItem,
                             progressHandler: FileCopier.ProgressHandler?) async throws -> CompletionResult {
+        let identifier = try launchIdentifier(for: item)
+        if !ApplicationLaunchProtection.contains(identifier, directory: launchProtectionDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: identifier, directory: launchProtectionDirectory) {
+                try await self.restoreAndComplete(item: item, progressHandler: progressHandler)
+            }
+        }
         try await completeInterruptedMigrationBeforeRestore(at: item.path, progressHandler: progressHandler)
         let path = item.path.standardizedFileURL.path
         guard completingPaths.insert(path).inserted else { throw DataOperationSafety.Failure.occupied(path) }
@@ -87,11 +111,18 @@ actor DataDirMover {
 
     /// Low-level recovery callers may deliberately retain the verified original.
     func migrate(item: DataDirItem, to externalBaseURL: URL, progressHandler: FileCopier.ProgressHandler?) async throws {
+        let identifier = try launchIdentifier(for: item)
+        if !ApplicationLaunchProtection.contains(identifier, directory: launchProtectionDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: identifier, directory: launchProtectionDirectory) {
+                try await self.migrate(item: item, to: externalBaseURL, progressHandler: progressHandler)
+            }
+        }
         _ = try await migrateRetainingOriginal(item: item, to: externalBaseURL, progressHandler: progressHandler)
     }
 
     private func migrateRetainingOriginal(item: DataDirItem, to externalBaseURL: URL,
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
+        let identifier = try launchIdentifier(for: item)
         DataTransferSession.progress?.setDirectory(item.path)
         await progressHandler?(.working(.preparing))
         let source = item.path.standardizedFileURL
@@ -103,7 +134,7 @@ actor DataDirMover {
         try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
         let restored = try completedRestoreLineage(at: source)
         try await safety.requireNewMigration(at: source, destination: destination,
-            bundleIdentifier: item.associatedBundleIdentifier, ownedTransferIDs: Set(restored.map(\.operationID)))
+            bundleIdentifier: identifier, ownedTransferIDs: Set(restored.map(\.operationID)))
         // Reject known permission failures before reserving a recovery record.
         // Directory creation still happens only after the durable intent below.
         let destinationVolumeUUID = try preflightWritePermission(at: externalBaseURL)
@@ -111,7 +142,7 @@ actor DataDirMover {
         let candidate = externalBaseURL.appendingPathComponent(".appports-copy-\(id.uuidString)").standardizedFileURL
         let backup = source.deletingLastPathComponent().appendingPathComponent(".appports-migration-backup-\(source.lastPathComponent)-\(id)")
         var transfer = DataTransferRecord(operationID: id, mode: .symlink, direction: .migrate, sourceID: item.id,
-            appName: item.associatedAppName ?? item.name, bundleIdentifier: item.associatedBundleIdentifier,
+            appName: item.associatedAppName ?? item.name, bundleIdentifier: identifier,
             dataDirType: item.type.rawValue, originalPath: source.path, activePath: source.path,
             destinationPath: destination.path, backupPath: backup.path,
             sourceIdentity: try DataPathIdentity.capture(source), destinationVolumeUUID: destinationVolumeUUID,
@@ -132,7 +163,7 @@ actor DataDirMover {
             transfer = try store.transfer(operationID: id) ?? transfer
             try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
             await progressHandler?(.init(copiedBytes: baseline.logicalBytes, totalBytes: baseline.logicalBytes, currentFile: "正在切换本地入口...".localized, showsByteProgress: false, stage: .switching))
-            try await safety.requireNoKnownWriters(at: source, bundleIdentifier: item.associatedBundleIdentifier)
+            try await safety.requireNoKnownWriters(at: source, bundleIdentifier: identifier)
             try requireIdentity(source, transfer.sourceIdentity)
             try requireMarker(at: source, for: source, type: item.type, allowOwned: false)
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
@@ -177,6 +208,12 @@ actor DataDirMover {
     }
 
     func restore(item: DataDirItem, progressHandler: FileCopier.ProgressHandler?) async throws {
+        let identifier = try launchIdentifier(for: item)
+        if !ApplicationLaunchProtection.contains(identifier, directory: launchProtectionDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: identifier, directory: launchProtectionDirectory) {
+                try await self.restore(item: item, progressHandler: progressHandler)
+            }
+        }
         try await completeInterruptedMigrationBeforeRestore(at: item.path, progressHandler: progressHandler)
         _ = try await restoreRetainingOriginal(item: item, progressHandler: progressHandler)
     }
@@ -193,6 +230,7 @@ actor DataDirMover {
 
     private func restoreRetainingOriginal(item: DataDirItem,
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
+        let identifier = try launchIdentifier(for: item)
         DataTransferSession.progress?.setDirectory(item.path)
         await progressHandler?(.working(.preparing))
         let local = item.path.standardizedFileURL
@@ -225,12 +263,12 @@ actor DataDirMover {
         try safety.requireNoOverlap(at: local, ownedTransferIDs: ownedIDs, ownedLinkPath: indexed?.originalPath)
         try safety.requireNoOverlap(at: external, ownedTransferIDs: ownedIDs, ownedLinkPath: indexed?.originalPath)
         try requireLocalRestoreParent(local)
-        try await safety.requireNoKnownWriters(at: external, bundleIdentifier: item.associatedBundleIdentifier ?? indexed?.bundleIdentifier)
+        try await safety.requireNoKnownWriters(at: external, bundleIdentifier: identifier)
         let id = reusingOperationID ?? UUID()
         let staging = local.deletingLastPathComponent().appendingPathComponent(".appports-restore-\(id)")
         let copyURL = staging.appendingPathComponent("data")
         var transfer = DataTransferRecord(operationID: id, mode: .symlink, direction: .restore, sourceID: item.id,
-            appName: item.associatedAppName ?? item.name, bundleIdentifier: item.associatedBundleIdentifier ?? indexed?.bundleIdentifier,
+            appName: item.associatedAppName ?? item.name, bundleIdentifier: identifier,
             dataDirType: item.type.rawValue, originalPath: local.path, activePath: external.path, destinationPath: local.path,
             backupPath: external.path, stagingPath: staging.path, sourceIdentity: sourceIdentity,
             backupIdentity: sourceIdentity, priorOperationID: prior)
@@ -678,6 +716,11 @@ actor DataDirMover {
     /// failed. Reuse its operation ID; never create a second copy or reservation.
     func resumeVerifiedTransfer(operationID: UUID, progressHandler: FileCopier.ProgressHandler?) async throws -> String? {
         guard var transfer = try store.transfer(operationID: operationID) else { return nil }
+        if !ApplicationLaunchProtection.contains(transfer.bundleIdentifier, directory: launchProtectionDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: transfer.bundleIdentifier, directory: launchProtectionDirectory) {
+                try await self.resumeVerifiedTransfer(operationID: operationID, progressHandler: progressHandler)
+            }
+        }
         guard try !DiskEjectionPauseStore(store: store).snapshot().blocks(transfer) else { throw DiskEjectionError.paused }
         DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: transfer.originalPath))
         guard transfer.needsAutomaticCompletion else { return nil }
@@ -1296,6 +1339,11 @@ actor DataDirMover {
     func cleanupRetainedTransfer(operationID: UUID) async throws {
         guard let transfer = try store.transfer(operationID: operationID),
               transfer.needsAutomaticCompletion, !CleanupRetryContext.shouldDefer(transfer) else { return }
+        if !ApplicationLaunchProtection.contains(transfer.bundleIdentifier, directory: launchProtectionDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: transfer.bundleIdentifier, directory: launchProtectionDirectory) {
+                try await self.cleanupRetainedTransfer(operationID: operationID)
+            }
+        }
         do {
             try await performRetainedTransferCleanup(operationID: operationID)
             CleanupRetryContext.record(.transfer(operationID), failed: false, store: store)

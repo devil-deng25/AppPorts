@@ -2292,10 +2292,9 @@ struct AppMigrationService {
     private func copyNativeLauncher(to macosDir: URL, resourcesDir: URL, externalURL: URL) throws {
         // 从 AppPorts bundle 中复制预编译的原生 launcher 二进制
         guard let bundledLauncher = Bundle.main.url(forResource: "StubLauncherBinary", withExtension: nil) else {
-            // 降级：如果找不到原生二进制，回退到 bash 脚本
-            AppLogger.shared.log("未找到原生 launcher 二进制，回退到 bash 脚本", level: "WARN")
-            try writeBashLauncher(at: macosDir, externalURL: externalURL)
-            return
+            // A script fallback cannot participate in launch protection.
+            // Preserve the existing portal when its replacement is unavailable.
+            throw CocoaError(.fileReadNoSuchFile)
         }
         let launcherPath = macosDir.appendingPathComponent("launcher")
         try fileManager.copyItem(at: bundledLauncher, to: launcherPath)
@@ -2306,16 +2305,22 @@ struct AppMigrationService {
         try externalURL.path.write(to: realAppPathFile, atomically: true, encoding: .utf8)
     }
 
-    /// 写入 bash launcher 脚本（降级回退或 iOS stub 用）
+    /// iOS stub keeps its launch path, but shares the native localized error dialog.
     private func writeBashLauncher(at macosDir: URL, externalURL: URL) throws {
         let launcherPath = macosDir.appendingPathComponent("launcher")
+        guard let bundledLauncher = Bundle.main.url(forResource: "StubLauncherBinary", withExtension: nil) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let dialogPath = macosDir.appendingPathComponent("storage-dialog")
+        try fileManager.copyItem(at: bundledLauncher, to: dialogPath)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dialogPath.path)
         let script = """
             #!/bin/bash
             REAL_APP='\(externalURL.path.replacingOccurrences(of: "'", with: "'\\''"))'
             if [ -d "$REAL_APP" ]; then
                 open "$REAL_APP"
             else
-                osascript -e 'display dialog "External storage is not connected. Connect it and try again." buttons {"OK"} default button 1 with icon caution'
+                "$(dirname "$0")/storage-dialog" --storage-missing
             fi
             """
         try script.write(to: launcherPath, atomically: true, encoding: .utf8)

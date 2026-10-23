@@ -12,7 +12,7 @@ Status: implemented
 
 这是对[主动弹出功能](../feature/2026-10-23-explicit-disk-ejection.md)中显式取消暂停决定的部分取代，原篇保留旧选择的理由，其余物理连接识别、暂停准入、独立观察和 Finder 派发继续适用。暂停文档 schema 保持 1，已有暂停按同一重连接规则处理。
 
-新增文案沿用用户确认的中英文范围及定向英文回退，删除此功能已无引用的恢复文案。安装使用原开发签名并递增产品 build，遵守[签名与授权验收](../bug-fix/2026-10-12-wechat-mount-recovery.md)。
+本功能文案现已[补齐全部 22 语言](../testing/2026-10-23-本地化覆盖与英文占位守卫.md)，定向英文回退已移除；删除此功能已无引用的恢复文案。安装使用原开发签名并递增产品 build，遵守[签名与授权验收](../bug-fix/2026-10-12-wechat-mount-recovery.md)。
 
 ## Existing-note audit
 

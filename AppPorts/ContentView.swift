@@ -194,6 +194,7 @@ private struct MarkdownTextView: NSViewRepresentable {
 // MARK: - 主视图
 struct ContentView: View {
 
+    @Environment(\.locale) private var locale
     @ObservedObject private var operationState = AppOperationState.shared
     @ObservedObject private var migrationTasks = MigrationTaskCenter.shared
     private typealias ScanRequest = AppListScanState.Request
@@ -1019,7 +1020,7 @@ struct ContentView: View {
         HStack {
             Group {
                 if let sizeCacheUpdatedAt {
-                    Text("上次缓存时间".localized + "：" + sizeCacheUpdatedAt.formatted(date: .numeric, time: .shortened))
+                    Text("上次缓存时间".localized + "：" + sizeCacheUpdatedAt.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(locale)))
                 } else {
                     Text("尚无大小缓存".localized)
                 }
@@ -1700,7 +1701,7 @@ struct ContentView: View {
         if customLocalScanPaths.isEmpty {
             return base
         }
-        return "\(base) + \(customLocalScanPaths.count) \("个目录".localized)"
+        return base + " + " + String(format: "%lld 个目录".localized, Int64(customLocalScanPaths.count))
     }
 
     private var localScanSourcesMenu: some View {

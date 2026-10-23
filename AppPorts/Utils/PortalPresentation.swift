@@ -3,7 +3,7 @@ import Foundation
 /// Produces only the display metadata of a macOS portal. Call on a private staging
 /// bundle, then sign and install the bundle before registering it with the system.
 enum PortalPresentation {
-    static let formatVersion = 5
+    static let formatVersion = 7
     static let versionKey = "AppPortsPortalFormatVersion"
 
     static func needsRefresh(local: [String: Any], external: [String: Any]) -> Bool {

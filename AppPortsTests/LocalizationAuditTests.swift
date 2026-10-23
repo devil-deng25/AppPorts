@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import AppPorts
 
@@ -36,17 +37,69 @@ final class LocalizationAuditTests: XCTestCase {
         XCTAssertEqual(codes.count, Set(codes).count, "语言注册表存在重复语言代码")
     }
 
-    func testDiskEjectionFallbackHasOnlyTheApprovedTranslationScope() throws {
+    func testStandalonePortalTranslationsMatchTheCatalog() throws {
         let strings = try stringCatalog()
-        for key in DiskEjectionStrings.englishFallbackKeys {
+        let supportedLocales = Set(AppLanguageCatalog.selectableLanguages.map(\.code))
+        XCTAssertEqual(Set(PortalLocalizedStrings.translations.keys), [
+            "外部存储未连接，请连接后重试。", "好", ApplicationLaunchGate.busyMessage,
+            ApplicationLaunchGate.unavailableMessage, "无法打开应用", "系统未能完成启动，请重试。",
+        ])
+        for (key, translations) in PortalLocalizedStrings.translations {
             let entry = try XCTUnwrap(strings[key] as? [String: Any])
             let locales = try XCTUnwrap(entry["localizations"] as? [String: Any])
-            XCTAssertEqual(Set(locales.keys), ["zh-Hans", "en"], key)
-            XCTAssertTrue(localizationHasTranslatedValue(locales["zh-Hans"] as Any), key)
-            XCTAssertTrue(localizationHasTranslatedValue(locales["en"] as Any), key)
+            XCTAssertEqual(Set(translations.keys), supportedLocales, key)
+            for locale in supportedLocales {
+                XCTAssertEqual(translations[locale], localizedStringValue(locales[locale]), "[\(locale)] \(key)")
+            }
         }
+    }
+
+    func testStandalonePortalUsesRegionalAndFallbackLanguagePreferences() {
+        let key = ApplicationLaunchGate.busyMessage
+        let translations = PortalLocalizedStrings.translations[key]!
+        XCTAssertEqual(ApplicationLaunchGate.message(busy: true, languages: ["fr-CA"]), translations["fr"])
+        XCTAssertEqual(ApplicationLaunchGate.message(busy: true, languages: ["zh-Hant-TW"]), translations["zh-Hant"])
+        XCTAssertEqual(ApplicationLaunchGate.message(busy: true, languages: ["zh-HK"]), translations["zh-Hant"])
+        XCTAssertEqual(ApplicationLaunchGate.message(busy: true, languages: ["zh_CN"]), translations["zh-Hans"])
+        XCTAssertEqual(ApplicationLaunchGate.message(busy: true, languages: ["xx", "ja-JP"]), translations["ja"])
+        XCTAssertEqual(ApplicationLaunchGate.message(busy: true, languages: []), translations["en"])
+        XCTAssertEqual(ApplicationLaunchGate.message(busy: false, languages: ["de-DE"]),
+                       PortalLocalizedStrings.translations[ApplicationLaunchGate.unavailableMessage]?["de"])
+    }
+
+    func testCompletedDiskEjectionTranslationsUseTheSelectedLanguage() {
         LanguageManager.shared.language = "fr"
-        XCTAssertEqual("弹出外置硬盘".localized, "Eject External Disk")
+        XCTAssertEqual("弹出外置硬盘".localized, "Éjecter le disque externe")
+        LanguageManager.shared.language = "zh-Hant"
+        XCTAssertEqual("弹出外置硬盘".localized, "退出外接磁碟")
+    }
+
+    func testSourceLanguageTranslationsEqualToTheirKeysArePresent() throws {
+        let path = try XCTUnwrap(Bundle.main.path(forResource: "zh-Hans", ofType: "lproj"))
+        let bundle = try XCTUnwrap(Bundle(path: path))
+        XCTAssertEqual("弹出外置硬盘".localizedValue(in: bundle), "弹出外置硬盘")
+        XCTAssertEqual("好".localizedValue(in: bundle), "好")
+        XCTAssertNil(("missing-localization-" + UUID().uuidString).localizedValue(in: bundle))
+        LanguageManager.shared.language = "zh-Hans"
+        XCTAssertEqual("弹出外置硬盘".localized, "弹出外置硬盘")
+    }
+
+    func testDurabilityErrorKeepsItsPOSIXCodeAndUsesTheSelectedLanguage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let missingRecord = root.appendingPathComponent("record.plist")
+        for locale in ["en", "zh-Hant", "fr"] {
+            LanguageManager.shared.language = locale
+            do {
+                try DurableFileIO.write(Data(), to: missingRecord)
+                XCTFail("A nonexistent parent must fail")
+            } catch let error as NSError {
+                XCTAssertEqual(error.domain, NSPOSIXErrorDomain)
+                XCTAssertEqual(error.code, Int(ENOENT))
+                XCTAssertEqual(error.userInfo[NSFilePathErrorKey] as? String, root.path)
+                XCTAssertTrue(error.localizedDescription.contains("打开同步对象".localized))
+                XCTAssertTrue(error.localizedDescription.contains(String(cString: strerror(ENOENT))))
+            }
+        }
     }
 
     func testStringCatalogContainsTranslationsForAllSupportedLanguages() throws {
@@ -72,7 +125,6 @@ final class LocalizationAuditTests: XCTestCase {
 
             let localizations = entry["localizations"] as? [String: Any] ?? [:]
             for locale in supportedLocales.sorted() {
-                if DiskEjectionStrings.englishFallbackKeys.contains(key), !["zh-Hans", "en"].contains(locale) { continue }
                 guard let localization = localizations[locale],
                       localizationHasTranslatedValue(localization) else {
                     findings.append("缺少翻译: [\(locale)] \(key)")
@@ -629,7 +681,8 @@ final class LocalizationAuditTests: XCTestCase {
         if let dictionary = node as? [String: Any] {
             if let stringUnit = dictionary["stringUnit"] as? [String: Any],
                let value = stringUnit["value"] as? String,
-               !value.isEmpty {
+               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               stringUnit["state"] as? String == "translated" {
                 return true
             }
 
