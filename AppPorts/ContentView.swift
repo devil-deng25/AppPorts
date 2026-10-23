@@ -257,7 +257,7 @@ struct ContentView: View {
     
     // 进度弹窗状态
     @State private var showProgress = false
-    @State private var progressTitle = "正在迁移应用...".localized
+    @State private var progressTitle = "正在迁移应用".localized
     @State private var progressCurrent = 0
     @State private var progressTotal = 0
     @State private var progressAppName = ""
@@ -1174,6 +1174,8 @@ struct ContentView: View {
                         Text(getLinkButtonTitle())
                             .fontWeight(.medium)
                             .font(.system(size: 13))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 28)
@@ -1189,6 +1191,8 @@ struct ContentView: View {
                         Text(getMoveBackButtonTitle())
                             .fontWeight(.medium)
                             .font(.system(size: 13))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 28)

@@ -12,9 +12,23 @@ final class LocalizationAuditTests: XCTestCase {
         let key: String
     }
 
+    private var originalLanguage = "system"
+    private var originalLanguagePreference: Any?
+
+    override func setUp() {
+        super.setUp()
+        originalLanguage = LanguageManager.shared.language
+        originalLanguagePreference = UserDefaults.standard.object(forKey: "selectedLanguage")
+    }
+
     override func tearDown() {
+        LanguageManager.shared.language = originalLanguage
+        if let originalLanguagePreference {
+            UserDefaults.standard.set(originalLanguagePreference, forKey: "selectedLanguage")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "selectedLanguage")
+        }
         super.tearDown()
-        LanguageManager.shared.language = "system"
     }
 
     func testSupportedLanguageCodesAreUnique() {
@@ -301,6 +315,205 @@ final class LocalizationAuditTests: XCTestCase {
         )
     }
 
+    /// Keys whose text is deliberately identical in every language: brand names,
+    /// real `~/Library` folder names that users must recognise on disk, size units,
+    /// and strings that consist only of placeholders or punctuation.
+    private let identicalInEveryLanguage: Set<String> = [
+        "%lld",
+        "1 MB", "2 MB", "5 MB", "10 MB", "50 MB", "100 MB",
+        "App Store", "AppPorts", "GitHub", "Mac", "WebKit",
+        "Application Scripts", "Application Support", "Caches", "Containers",
+        "Group Containers", "HTTPStorages", "Logs", "Preferences", "Saved State",
+        ", ", ", %@",
+    ]
+
+    /// Native cognates: the target language spells this word exactly like English,
+    /// so an identical value is correct rather than a missing translation.
+    private let allowedEnglishLookalikes: Set<String> = [
+        "%@ (%lld 个应用)|de",
+        "%@/秒|es", "%@/秒|fr", "%@/秒|pt", "%@/秒|it", "%@/秒|de",
+        "%@/秒|nl", "%@/秒|pl", "%@/秒|eo",
+        "Auto|fr",
+        "Version %@|fr", "Version %@|de",
+        "• 资源叉|nl",
+        "以后再说|nl", "稍后|nl", "更新|nl", "项目|nl",
+        "可选|de", "名称|de", "应用|de", "应用|nl", "应用: %@|de", "应用: %@|nl",
+        "状态|de", "状态|nl", "状态|id",
+        "筛选|de", "筛选|nl", "筛选|id",
+        "系统|de", "系统|pl", "日志|pt", "日志|nl",
+        "否|es", "否|it", "错误|es", "密码|it",
+        "好|ja", "好的|ja",
+        "操作|fr", "注意|fr", "用户文档|fr",
+        "本地|es", "本地|fr", "本地|pt",
+    ]
+
+    /// Language self-names the picker must always show in their own script, keyed by
+    /// catalog key, then by the locale that has to keep that exact spelling.
+    ///
+    /// These entries are the only place where a value may equal both the English value
+    /// and the Chinese key. The exemption is bound to the expected string: if one of
+    /// them is reworded, translated, or replaces the name with another script, the two
+    /// placeholder guards no longer recognise it, and
+    /// `testLanguageSelfNamesKeepTheirNativeSpelling` fails directly.
+    private let protectedSelfNames: [String: [String: String]] = [
+        "日本語": [
+            "en": "日本語", "zh-Hans": "日本語", "zh-Hant": "日本語", "ja": "日本語",
+        ],
+        "日本語 (AI)": [
+            "en": "日本語 (AI)", "zh-Hans": "日本語 (AI)", "zh-Hant": "日本語 (AI)", "ja": "日本語 (AI)",
+        ],
+        "繁體中文": [
+            "en": "繁體中文", "zh-Hans": "繁體中文", "zh-Hant": "繁體中文",
+            "ja": "繁體中文", "ko": "繁體中文",
+        ],
+        "煋仌呅": [
+            "en": "煋仌呅", "zh-Hans": "煋仌呅", "zh-Hant": "煋仌呅", "zh-martian": "煋仌呅",
+        ],
+    ]
+
+    private func protectedSelfName(key: String, locale: String, value: String) -> Bool {
+        protectedSelfNames[key]?[locale] == value
+    }
+
+    /// Guards against regressing to English placeholders. `br` and `zh-martian` are
+    /// excluded: Braille is derived from the English text by design, and Martian
+    /// Chinese shares symbols with English.
+    func testTranslationsAreNotEnglishPlaceholders() throws {
+        let strings = try stringCatalog()
+        let auditedLocales = Set(AppLanguageCatalog.selectableLanguages.map(\.code))
+            .subtracting(["en", "br", "zh-martian"])
+
+        var findings: [String] = []
+
+        for key in strings.keys.sorted() {
+            guard !key.isEmpty,
+                  let entry = strings[key] as? [String: Any],
+                  entry["shouldTranslate"] as? Bool != false,
+                  let localizations = entry["localizations"] as? [String: Any],
+                  let english = localizedStringValue(localizations["en"]),
+                  english.unicodeScalars.contains(where: CharacterSet.letters.contains) else {
+                continue
+            }
+
+            for locale in auditedLocales.sorted() {
+                guard let value = localizedStringValue(localizations[locale]),
+                      value == english else {
+                    continue
+                }
+                if identicalInEveryLanguage.contains(key) { continue }
+                if allowedEnglishLookalikes.contains("\(key)|\(locale)") { continue }
+                if protectedSelfName(key: key, locale: locale, value: value) { continue }
+                findings.append("英文占位: [\(locale)] \(key)")
+            }
+        }
+
+        XCTAssertTrue(
+            findings.isEmpty,
+            "发现与英文完全相同的译文:\n" + findings.prefix(40).joined(separator: "\n")
+        )
+    }
+
+    /// Latin-script locales must not leak Chinese characters; Japanese and
+    /// Traditional Chinese legitimately share Han characters with the source.
+    func testLatinLocalesDoNotContainHanCharacters() throws {
+        let strings = try stringCatalog()
+        let latinLocales = ["en", "es", "fr", "pt", "it", "de", "ru", "ar", "hi", "vi", "th", "tr", "nl", "pl", "id", "eo"]
+
+        var findings: [String] = []
+
+        for key in strings.keys.sorted() {
+            guard !key.isEmpty,
+                  let entry = strings[key] as? [String: Any],
+                  entry["shouldTranslate"] as? Bool != false,
+                  let localizations = entry["localizations"] as? [String: Any] else {
+                continue
+            }
+
+            for locale in latinLocales {
+                guard let value = localizedStringValue(localizations[locale]),
+                      containsHanCharacters(value) else {
+                    continue
+                }
+                if protectedSelfName(key: key, locale: locale, value: value) { continue }
+                findings.append("非中文译文含汉字: [\(locale)] \(key)")
+            }
+        }
+
+        XCTAssertTrue(
+            findings.isEmpty,
+            "拉丁语系译文仍含汉字:\n" + findings.prefix(40).joined(separator: "\n")
+        )
+    }
+
+    /// Short strings where Japanese legitimately uses the same characters as the
+    /// Simplified Chinese source. Language self-names are handled by
+    /// `protectedSelfNames` instead of being listed here.
+    private let sharedHanKeys: Set<String> = [
+        "作者", "外部", "操作", "注意", "重要", "速度: %@ MB/s", "%@/秒",
+    ]
+
+    /// Catches a translation that was left as the Chinese key (the failure mode that
+    /// hid 187 Japanese strings: they were neither empty nor equal to English).
+    func testNonChineseTranslationsDoNotReuseTheSourceKey() throws {
+        let strings = try stringCatalog()
+        let auditedLocales = ["en", "ja", "ko"] + ["es", "fr", "pt", "it", "de", "ru",
+                                                  "ar", "hi", "vi", "th", "tr", "nl",
+                                                  "pl", "id", "eo"]
+
+        var findings: [String] = []
+
+        for key in strings.keys.sorted() {
+            guard !key.isEmpty, containsHanCharacters(key),
+                  let entry = strings[key] as? [String: Any],
+                  entry["shouldTranslate"] as? Bool != false,
+                  let localizations = entry["localizations"] as? [String: Any] else {
+                continue
+            }
+            if sharedHanKeys.contains(key) { continue }
+
+            for locale in auditedLocales {
+                guard let value = localizedStringValue(localizations[locale]),
+                      value == key else {
+                    continue
+                }
+                if protectedSelfName(key: key, locale: locale, value: value) { continue }
+                findings.append("译文仍为中文 key: [\(locale)] \(key)")
+            }
+        }
+
+        XCTAssertTrue(
+            findings.isEmpty,
+            "发现直接沿用中文 key 的译文:\n" + findings.prefix(40).joined(separator: "\n")
+        )
+    }
+
+    /// The language picker shows every language in its own script. Rewording one of
+    /// those names, translating it, or replacing it with another script has to fail
+    /// here even though the three placeholder guards intentionally let it pass.
+    func testLanguageSelfNamesKeepTheirNativeSpelling() throws {
+        let strings = try stringCatalog()
+        var findings: [String] = []
+
+        for (key, locales) in protectedSelfNames {
+            guard let entry = strings[key] as? [String: Any],
+                  let localizations = entry["localizations"] as? [String: Any] else {
+                findings.append("语言自称缺少条目: \(key)")
+                continue
+            }
+            for (locale, expected) in locales {
+                let actual = localizedStringValue(localizations[locale])
+                if actual != expected {
+                    findings.append("[\(locale)] \(key): 期望「\(expected)」实际「\(actual ?? "nil")」")
+                }
+            }
+        }
+
+        XCTAssertTrue(
+            findings.isEmpty,
+            "语言自称的原名被改动:\n" + findings.prefix(40).joined(separator: "\n")
+        )
+    }
+
     func testByteCountFormattingFollowsSelectedAppLanguage() {
         LanguageManager.shared.language = "en"
         XCTAssertEqual(
@@ -518,6 +731,17 @@ final class LocalizationAuditTests: XCTestCase {
             || literal.contains("...")
             || literal.contains("…")
             || !literal.canBeConverted(to: .ascii)
+    }
+
+    private func containsHanCharacters(_ value: String) -> Bool {
+        value.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF:
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     private func containsCJK(in literal: String) -> Bool {

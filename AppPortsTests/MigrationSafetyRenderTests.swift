@@ -7,6 +7,75 @@ import XCTest
 /// Run with TEST_RUNNER_APPPORTS_RENDER_UI_OUTPUT=/absolute/output/directory.
 /// No DataDirsView, scanner or migration service is instantiated; preferences use isolated test suites.
 final class MigrationSafetyRenderTests: XCTestCase {
+    /// Exercise production sheets with synthetic records only; no migration is submitted.
+    @MainActor
+    func testRenderLocalizationSheets() async throws {
+        guard let path = ProcessInfo.processInfo.environment["APPPORTS_RENDER_UI_OUTPUT"], path.hasPrefix("/") else {
+            throw XCTSkip("Set APPPORTS_RENDER_UI_OUTPUT to inspect localized sheets")
+        }
+        let output = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("LocalizationSheets-\(UUID().uuidString)")
+        let originalLanguage = LanguageManager.shared.language
+        let originalLanguagePreference = UserDefaults.standard.object(forKey: "selectedLanguage")
+        defer {
+            LanguageManager.shared.language = originalLanguage
+            if let originalLanguagePreference {
+                UserDefaults.standard.set(originalLanguagePreference, forKey: "selectedLanguage")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "selectedLanguage")
+            }
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        for language in ["zh-Hans", "en", "de", "pl", "ar"] {
+            LanguageManager.shared.language = language
+            let locale = Locale(identifier: language)
+            let direction: LayoutDirection = language == "ar" ? .rightToLeft : .leftToRight
+            let history = MigrationTaskHistoryStore(fileURL: fixture.appendingPathComponent("\(language).json"))
+            let job = MigrationJob(title: "正在迁移应用".localized, category: .apps,
+                resources: MigrationResources(paths: []), startedAt: Date(timeIntervalSince1970: 1_792_712_096))
+            job.status = .attention
+            job.restoredFraction = 0.94
+            job.restoredElapsed = 125
+            job.message = "部分数据操作尚未完成，已保留副本。".localized
+            history.save([MigrationTaskHistoryStore.Entry(job)])
+            let center = MigrationTaskCenter(historyStore: history)
+            let transfer = DataTransferRecord(mode: .symlink, direction: .migrate,
+                appName: "Example Application", dataDirType: "Application Support",
+                originalPath: "/Synthetic/Library/Application Support/Example Application",
+                activePath: "/Volumes/Example Disk/Example Application",
+                destinationPath: "/Volumes/Example Disk/Example Application",
+                backupPath: "/Synthetic/Library/Application Support/Example Application.backup",
+                sourceIdentity: DataPathIdentity(device: 1, inode: 1), phase: .cleanupRequested,
+                recoverableReason: "部分数据操作尚未完成，已保留副本。".localized)
+            for scheme in [ColorScheme.light, .dark] {
+                let prefix = "localization-\(language)-\(scheme)"
+                func localized<V: View>(_ view: V) -> some View {
+                    view.environment(\.locale, locale).environment(\.layoutDirection, direction)
+                }
+                try await render(localized(MigrationTaskList(center: center)),
+                    size: NSSize(width: 420, height: 280),
+                    to: output.appendingPathComponent("\(prefix)-tasks.png"), colorScheme: scheme)
+                try await render(localized(MigrationTaskDetail(job: job, center: center)),
+                    size: NSSize(width: 460, height: 420),
+                    to: output.appendingPathComponent("\(prefix)-detail.png"), colorScheme: scheme)
+                try await render(localized(DataCleanupResolutionSheet(transfers: [transfer], otherIssues: [],
+                    onRetry: { _ in XCTFail("Rendering must not retry a migration") },
+                    onChanged: { XCTFail("Rendering must not change a record") },
+                    onPermissions: { XCTFail("Rendering must not open system settings") })),
+                    size: NSSize(width: 620, height: 460),
+                    to: output.appendingPathComponent("\(prefix)-recovery.png"), colorScheme: scheme)
+                for creating in [true, false] {
+                    try await render(localized(APFSVolumePasswordSheet(isCreating: creating, onConfirm: { _ in
+                        XCTFail("Rendering must not create or unlock a volume")
+                    })), size: NSSize(width: 440, height: creating ? 400 : 340),
+                    to: output.appendingPathComponent("\(prefix)-password-\(creating ? "create" : "unlock").png"),
+                    colorScheme: scheme)
+                }
+            }
+        }
+    }
+
     @MainActor
     func testRenderAPFSRecoveryEntryPoints() async throws {
         guard let path = ProcessInfo.processInfo.environment["APPPORTS_RENDER_UI_OUTPUT"] else {
@@ -58,7 +127,7 @@ final class MigrationSafetyRenderTests: XCTestCase {
             progress.begin(.copying, currentFile: "Contents/Frameworks/Example")
             progress.update(FileCopier.Progress(copiedBytes: 1_240_000_000, totalBytes: 3_700_000_000,
                 currentFile: "Contents/Frameworks/Example"))
-            try await render(DataDirProgressOverlay(title: "正在迁移应用...".localized, progress: progress),
+            try await render(DataDirProgressOverlay(title: "正在迁移应用".localized, progress: progress),
                              size: NSSize(width: 540, height: 340),
                              to: output.appendingPathComponent("app-transfer-copying.png"))
         }

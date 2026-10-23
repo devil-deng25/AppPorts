@@ -85,18 +85,22 @@ struct DataCleanupResolutionSheet: View {
             if let path = transfer.backupPath {
                 Text(verbatim: path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
-            HStack {
-                Button(disposition == .keep ? "重新尝试清理".localized : "重试".localized) {
-                    dismiss(); onRetry(transfer.id)
-                }
-                if transfer.isDataSwitchComplete {
-                    Button("打开旧副本".localized) { openRetained(transfer) }
-                    if disposition != .keep {
-                        Button("保留副本并结束清理".localized) { keepRequest = transfer; confirmKeep = true }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Button(disposition == .keep ? "重新尝试清理".localized : "重试".localized) {
+                        dismiss(); onRetry(transfer.id)
+                    }
+                    if transfer.isDataSwitchComplete {
+                        Button("打开旧副本".localized) { openRetained(transfer) }
                     }
                 }
-                if disposition == nil {
-                    Button("稍后处理".localized) { decide(.deferred, for: transfer) }
+                HStack {
+                    if transfer.isDataSwitchComplete, disposition != .keep {
+                        Button("保留副本并结束清理".localized) { keepRequest = transfer; confirmKeep = true }
+                    }
+                    if disposition == nil {
+                        Button("稍后处理".localized) { decide(.deferred, for: transfer) }
+                    }
                 }
             }
             .controlSize(.small)

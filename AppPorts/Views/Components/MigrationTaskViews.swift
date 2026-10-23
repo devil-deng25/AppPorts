@@ -2,10 +2,10 @@ import SwiftUI
 
 struct MigrationOverallProgress: View {
     let fraction: Double
-    private let stages: [(String, Double)] = [
-        ("准备", 0), ("扫描", 0.05), ("复制", 0.20),
-        ("校验", 0.60), ("切换", 0.88), ("收尾", 0.94)
-    ]
+    private var stages: [(String, Double)] {
+        [("准备".localized, 0), ("扫描".localized, 0.05), ("复制".localized, 0.20),
+         ("校验".localized, 0.60), ("切换".localized, 0.88), ("收尾".localized, 0.94)]
+    }
 
     var body: some View {
         VStack(spacing: 5) {
@@ -22,7 +22,7 @@ struct MigrationOverallProgress: View {
             HStack {
                 ForEach(stages.indices, id: \.self) { index in
                     if index > 0 { Spacer(minLength: 4) }
-                    Text(stages[index].0.localized)
+                    Text(stages[index].0)
                         .foregroundStyle(fraction >= stages[index].1 ? .primary : .secondary)
                 }
             }
@@ -96,9 +96,13 @@ private struct MigrationTaskListHeightKey: PreferenceKey {
 @MainActor
 struct MigrationTaskList: View {
     @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject private var center = MigrationTaskCenter.shared
+    @ObservedObject private var center: MigrationTaskCenter
     @State private var selection: Set<UUID> = []
     @State private var contentHeight: CGFloat = 90
+
+    init(center: MigrationTaskCenter? = nil) {
+        self.center = center ?? .shared
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -122,7 +126,7 @@ struct MigrationTaskList: View {
                 ScrollView {
                     VStack(spacing: 6) {
                         ForEach(Array(center.jobs.reversed())) { job in
-                            MigrationTaskRow(job: job, selected: Binding(
+                            MigrationTaskRow(job: job, center: center, selected: Binding(
                                 get: { selection.contains(job.id) },
                                 set: { value in
                                     if value { selection.insert(job.id) } else { selection.remove(job.id) }
@@ -138,17 +142,20 @@ struct MigrationTaskList: View {
                 .onPreferenceChange(MigrationTaskListHeightKey.self) { contentHeight = $0 }
             }
             Divider()
-            HStack(spacing: 8) {
-                Group {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
                     Button("暂停".localized) { center.pause(selection) }
                     Button("继续".localized) { center.resume(selection) }
                     Button("取消任务".localized) { center.cancel(selection) }
+                    Spacer(minLength: 0)
                 }
                 .disabled(selection.isEmpty)
-                Spacer()
-                Button("清空已完成".localized) { center.clearCompleted() }
-                    .disabled(!center.jobs.contains { $0.status == .completed })
-                    .help("只清空已完成的任务记录，不删除文件".localized)
+                HStack {
+                    Spacer(minLength: 0)
+                    Button("清空已完成".localized) { center.clearCompleted() }
+                        .disabled(!center.jobs.contains { $0.status == .completed })
+                        .help("只清空已完成的任务记录，不删除文件".localized)
+                }
             }
             .padding(10)
         }
@@ -163,8 +170,9 @@ struct MigrationTaskList: View {
 
 @MainActor
 private struct MigrationTaskRow: View {
+    @Environment(\.locale) private var locale
     @ObservedObject var job: MigrationJob
-    @ObservedObject private var center = MigrationTaskCenter.shared
+    @ObservedObject var center: MigrationTaskCenter
     @Binding var selected: Bool
 
     private var appIconURL: URL? {
@@ -231,8 +239,8 @@ private struct MigrationTaskRow: View {
                     }
                     HStack {
                         if let startedAt = job.startedAt {
-                            Text("开始".localized + "：" + startedAt.formatted(.dateTime.hour().minute().second()))
-                                .help(startedAt.formatted(date: .numeric, time: .standard))
+                            Text("开始".localized + "：" + startedAt.formatted(.dateTime.hour().minute().second().locale(locale)))
+                                .help(startedAt.formatted(Date.FormatStyle(date: .numeric, time: .standard).locale(locale)))
                         } else {
                             Text("尚未开始".localized)
                         }
@@ -291,7 +299,12 @@ struct MigrationTaskDetail: View {
     @State private var showsDataRecovery = false
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var job: MigrationJob
-    @ObservedObject private var center = MigrationTaskCenter.shared
+    @ObservedObject private var center: MigrationTaskCenter
+
+    init(job: MigrationJob, center: MigrationTaskCenter? = nil) {
+        self.job = job
+        self.center = center ?? .shared
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
