@@ -25,8 +25,12 @@ enum WriterAdmissionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .incompatibleWriter(process, reason):
-            return String(format: "仍有无法确认写入兼容性的 AppPorts 进程（PID %@，%@）：%@。请退出该进程后重试；现有副本已保留。".localized,
-                          String(process.processID), process.executablePath, reason)
+            // 阻断时用户最缺的是「这个 PID 从哪来、怎么退」。旧镜像不会自己消失，
+            // 所以把启动时间与磁盘侧被替换的事实一并写进提示。
+            let base = String(format: "仍有无法确认写入兼容性的 AppPorts 进程（PID %@，%@）：%@。请退出该进程后重试；现有副本已保留。".localized,
+                              String(process.processID), process.executablePath, reason)
+            let hint = WriterAdmission.quitHint(for: process)
+            return hint.isEmpty ? base : base + " " + hint
         case let .inspectionFailed(pid, reason):
             if let pid {
                 return String(format: "无法确认运行中的 AppPorts 写入进程（PID %@）：%@。已暂停写入并保留现有副本。".localized,
@@ -44,6 +48,10 @@ enum WriterAdmissionError: LocalizedError {
 /// registration cannot authorize a reused PID or another data directory.
 final class WriterAdmission {
     static let requiredCapability = "appports-verified-writer-v7-disk-ejection"
+    /// 登记目录超过这个文件数才触发清理，避免每次注册都扫目录。
+    static let presencePruneThreshold = 64
+    /// 单次清理上限：积压很多时分批清，不阻塞启动路径。
+    static let presencePruneLimit = 512
     static var defaultDataDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AppPorts", isDirectory: true)
@@ -95,10 +103,61 @@ final class WriterAdmission {
         let presence = WriterPresence(process: process, dataDirectoryPath: dataDirectory.path,
                                       capabilities: [Self.requiredCapability])
         try preparePresenceDirectory()
-        if (try? readPresence(processID: process.processID)) == presence { return }
-        let encoder = PropertyListEncoder()
-        encoder.outputFormat = .binary
-        try DurableFileIO.write(try encoder.encode(presence), to: presenceURL(processID: process.processID))
+        if (try? readPresence(processID: process.processID)) != presence {
+            let encoder = PropertyListEncoder()
+            encoder.outputFormat = .binary
+            try DurableFileIO.write(try encoder.encode(presence), to: presenceURL(processID: process.processID))
+        }
+        pruneStalePresence(keeping: process.processID)
+    }
+
+    /// 退出的实例从不注销自己的登记。长期使用后登记目录会积累上万个文件，
+    /// 因此每次注册后按内核身份清理一轮：进程已不存在，或登记里的启动时间
+    /// 与当前 PID 不符（PID 复用），即为失效登记。
+    ///
+    /// 只删除本用户 0700 目录下、文件名为 PID 的普通 plist；每次限额，
+    /// 避免启动路径被大量 IO 拖慢。清理失败不影响本次写入。
+    private func pruneStalePresence(keeping currentProcessID: Int32) {
+        let entries = (try? FileManager.default.contentsOfDirectory(at: presenceDirectory,
+                                                                    includingPropertiesForKeys: nil)) ?? []
+        // 正常情况只有个位数的活实例；数量很小说明没有需要清理的积压。
+        guard entries.count > Self.presencePruneThreshold else { return }
+        var removed = 0
+        for url in entries {
+            guard removed < Self.presencePruneLimit else { return }
+            guard url.pathExtension == "plist",
+                  let processID = Int32(url.deletingPathExtension().lastPathComponent),
+                  processID != currentProcessID,
+                  isStaleRegistration(processID: processID) else { continue }
+            if (try? FileManager.default.removeItem(at: url)) != nil { removed += 1 }
+        }
+    }
+
+    private func isStaleRegistration(processID: Int32) -> Bool {
+        if Self.processHasExited(processID) { return true }
+        guard let presence = try? readPresence(processID: processID),
+              let live = try? Self.identity(processID: processID) else { return false }
+        return presence.process != live
+    }
+
+    /// 不可兼容写入者的处置提示：说明它是不是更新前启动的旧镜像，并给出退出方法。
+    static func quitHint(for process: WriterProcessIdentity) -> String {
+        let started = Date(timeIntervalSince1970: Double(process.startSeconds)
+                           + Double(process.startMicroseconds) / 1_000_000)
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.dateFormat = "MM-dd HH:mm"
+        var hint = String(format: "该实例启动于 %@。".localized, formatter.string(from: started))
+        if let modified = executableModificationDate(process.executablePath), modified > started.addingTimeInterval(1) {
+            hint += "磁盘上的 AppPorts 在此之后被替换过，它仍在运行替换前的旧镜像，不会自行退出。".localized
+        }
+        hint += String(format: "请在菜单栏的 AppPorts 图标中选择「退出」，或在终端执行 kill %@，然后重试。".localized,
+                       String(process.processID))
+        return hint
+    }
+
+    private static func executableModificationDate(_ path: String) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
     }
 
     func checkCurrentWriters() throws {

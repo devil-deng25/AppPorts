@@ -89,14 +89,17 @@ enum ContainerMountAgentInstaller {
 
     /// 代理的 LaunchAgent 定义。
     ///
-    /// `WatchPaths` 是关键：只靠 `RunAtLoad`，代理要等到登录后约 55 秒才跑，
-    /// 而登录项里的微信在登录后约 43 秒就被拉起 —— 挂载永远慢一步，
-    /// 微信只能读到空的容器路径。加上 `/Volumes` 监听后，系统把外置卷挂上
-    /// （实测登录后约 17 秒）就会立刻再跑一次代理，比微信早约 20 秒完成。
+    /// 触发方式用 `StartOnMount`：登录时外置卷挂上（实测登录后约 17 秒）就会拉起代理，
+    /// 早于登录项里的微信（约 43 秒），这正是原先用 `WatchPaths: ["/Volumes"]` 想解决的问题。
+    ///
+    /// 但不能用 `WatchPaths` 监听 `/Volumes`：它覆盖整棵子树，卷上任何应用的写入都会触发。
+    /// 实测应用数据迁到外置卷后，`/Volumes` 稳定产生约 0.7 个 FSEvents/秒（Chrome 的
+    /// Cookies、Safe Browsing 库在持续写入），代理因此被 launchd 按 10 秒的最小间隔反复拉起：
+    /// 一天两三万次进程启动、日志 30 MB 以上，每个实例还会在 `.writer-presence` 里留下
+    /// 一份永不回收的登记。`StartOnMount` 只在文件系统挂载时触发，语义正好对上"开机/插盘"。
     ///
     /// 代理自己跑起来之后还会在进程内等 `/Volumes` 的变化（`VolumeChangeMonitor`），
-    /// 所以插盘的第一时间就能重试；这里的 `WatchPaths` 负责的是"代理没在跑的时候"：
-    /// 用户开机十分钟后才插上盘，也得有人把代理叫起来。
+    /// 所以插盘的第一时间就能重试，不依赖 launchd 的路径监听。
     ///
     /// `KeepAlive` 里的 `SuccessfulExit: false` 是为了绕开登录时的排队：登录后一段时间
     /// 用户域处于 on-demand-only 模式，`RunAtLoad` 这种"闲着可以等"的任务会被 launchd
@@ -106,6 +109,10 @@ enum ContainerMountAgentInstaller {
     /// （exit 0）不会被反复重启。原来的 `ProcessType: Background` 也去掉了：它等于主动
     /// 告诉 launchd "我不急"，与这里的意图相反。
     /// 抽成纯函数是为了能被测试守住，避免哪天被改回去。
+    ///
+    /// 换成 `StartOnMount` 后需在真机复核两件事：登录竞态是否仍然赢过登录项，
+    /// 以及插盘后是否仍能重挂。若 `StartOnMount` 在该系统上对 LaunchAgent 不生效，
+    /// 退回 `WatchPaths` 时必须同时把登记回收和日志轮转算进去。
     static func launchAgentPayload(executablePath: String, signatureIdentity: String? = nil) -> [String: Any] {
         var payload: [String: Any] = [
             "Label": label,
@@ -113,7 +120,7 @@ enum ContainerMountAgentInstaller {
             "RunAtLoad": true,
             "KeepAlive": ["SuccessfulExit": false],
             "LimitLoadToSessionType": ["Aqua"],
-            "WatchPaths": ["/Volumes"]
+            "StartOnMount": true
         ]
         // Rebootstrap after an in-place update too. launchd binds its managed
         // launch constraint to the signing identity seen at registration.

@@ -10,7 +10,10 @@ final class AdministratorAuthorization: @unchecked Sendable {
     private let lock = NSLock()
     private var script: NSAppleScript?
     private var expiresAt: TimeInterval = 0
-    private let reuseInterval: TimeInterval = 120
+    /// 与系统的授权空闲时限对齐。AuthServices 对 `system.privilege.admin` 的凭据
+    /// 默认 5 分钟空闲才失效，这里若短于系统侧时限，会在授权还有效时先丢掉脚本，
+    /// 让同一批迁移中途多弹一次密码框。改长不会延长系统侧的授权，只是不再提前放弃。
+    private let reuseInterval: TimeInterval = 300
 
     func run(command: String) throws -> ShellCommandResult {
         lock.lock()
