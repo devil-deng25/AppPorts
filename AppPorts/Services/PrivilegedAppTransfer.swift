@@ -4,6 +4,11 @@ import Foundation
 
 /// A one-shot administrator operation, not an elevated GUI or a persistent helper.
 /// The ordinary process keeps its operation lock and owns all journal writes.
+///
+/// 这条通路**不是**默认路径：`AppTransferTransaction` 先用当前用户身份做原子交换，
+/// 只有拿到 EACCES/EPERM（应用属于 root，或「App 管理」权限还没授予）时才会走到这里。
+/// 也刻意不接到常驻特权助手上——助手只放行挂载类命令，而这里要求的是在 `/Applications`
+/// 里做 `RENAME_SWAP`，能力大得多，仍然只该在一次明确授权里完成。
 enum PrivilegedAppTransfer {
     static let argument = "--privileged-app-transfer"
 
@@ -244,7 +249,10 @@ enum PrivilegedAppTransfer {
 @main
 enum AppPortsEntryPoint {
     static func main() {
+        // 两个特权入口都必须在 SwiftUI、偏好设置和写入登记初始化之前分流：
+        // 它们跑在 root 下，不能顺手拉起一整套 GUI 状态。
         if PrivilegedAppTransfer.runIfRequested() { return }
+        if PrivilegedHelperService.runIfRequested() { return }
         AppMoverApp.main()
     }
 }

@@ -209653,6 +209653,1924 @@
         }
       }
     },
+    "正在迁移应用与数据" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "جارٍ نقل التطبيق والبيانات"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠍⠊⠛⠗⠁⠞⠊⠝⠛⠀⠁⠏⠏⠀⠁⠝⠙⠀⠙⠁⠞⠁"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App und Daten werden migriert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrating app and data"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrado de aplikaĵo kaj datumoj"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrando la app y los datos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration de l'app et des données"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ऐप और डेटा माइग्रेट हो रहे हैं"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memindahkan aplikasi dan data"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrazione di app e dati"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリとデータを移行中"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱과 데이터 이전 중"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App en gegevens migreren"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrowanie aplikacji i danych"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrando o app e os dados"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенос приложения и данных"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "กำลังย้ายแอปและข้อมูล"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uygulama ve veriler taşınıyor"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đang di chuyển ứng dụng và dữ liệu"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在迁移应用与数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在遷移應用程式與資料"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在遷移應用程式與資料"
+          }
+        }
+      }
+    },
+    "该实例启动于 %@。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "بدأ هذا المثيل في %@."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠁⠞⠀⠊⠝⠎⠞⠁⠝⠉⠑⠀⠎⠞⠁⠗⠞⠑⠙⠀⠁⠞⠀%@⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Instanz wurde um %@ gestartet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That instance started at %@."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tiu proceso startis je %@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esa instancia se inició a las %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cette instance a démarré à %@."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "वह इंस्टेंस %@ पर शुरू हुआ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instans tersebut dimulai pada %@."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quell'istanza è stata avviata alle %@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このインスタンスは %@ に起動しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "해당 인스턴스는 %@에 시작되었습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dat exemplaar is gestart om %@."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ten proces uruchomiono o %@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Essa instância foi iniciada às %@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот экземпляр запущен в %@."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "อินสแตนซ์นั้นเริ่มเมื่อ %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu örnek %@ tarihinde başlatıldı."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tiến trình đó đã khởi động lúc %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该实例启动于 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該實例啟動於 %@。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該實例啟動於 %@。"
+          }
+        }
+      }
+    },
+    "磁盘上的 AppPorts 在此之后被替换过，它仍在运行替换前的旧镜像，不会自行退出。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم استبدال AppPorts على القرص بعد ذلك، لذا لا يزال هذا المثيل يعمل بالصورة القديمة ولن ينتهي تلقائيًا."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑⠀⠠⠁⠏⠏⠠⠏⠕⠗⠞⠎⠀⠕⠝⠀⠙⠊⠎⠅⠀⠺⠁⠎⠀⠗⠑⠏⠇⠁⠉⠑⠙⠀⠁⠋⠞⠑⠗⠀⠞⠓⠁⠞⠂⠀⠎⠕⠀⠊⠞⠀⠊⠎⠀⠎⠞⠊⠇⠇⠀⠗⠥⠝⠝⠊⠝⠛⠀⠞⠓⠑⠀⠕⠇⠙⠀⠊⠍⠁⠛⠑⠀⠁⠝⠙⠀⠺⠊⠇⠇⠀⠝⠕⠞⠀⠑⠭⠊⠞⠀⠃⠽⠀⠊⠞⠎⠑⠇⠋⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das AppPorts auf dem Datenträger wurde danach ersetzt; diese Instanz läuft weiter mit dem alten Abbild und beendet sich nicht selbst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The AppPorts on disk was replaced after that, so it is still running the old image and will not exit by itself."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La AppPorts surdisko estis anstataŭigita poste, do ĉi tiu proceso ankoraŭ rulas la malnovan bildon kaj ne mem finiĝos."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El AppPorts del disco se reemplazó después, así que esta instancia sigue ejecutando la imagen antigua y no se cerrará sola."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'AppPorts sur le disque a été remplacé depuis ; cette instance exécute encore l'ancienne image et ne quittera pas d'elle-même."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "डिस्क पर AppPorts बाद में बदला गया, इसलिए यह इंस्टेंस अभी भी पुरानी इमेज पर चल रहा है और अपने आप बंद नहीं होगा।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppPorts di disk diganti setelah itu, jadi instans ini masih menjalankan image lama dan tidak akan keluar sendiri."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'AppPorts su disco è stato sostituito dopo, quindi questa istanza esegue ancora la vecchia immagine e non termina da sola."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ディスク上の AppPorts はその後置き換えられたため、このインスタンスは置き換え前の古いイメージのまま動作しており、自動では終了しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "디스크의 AppPorts가 그 이후 교체되었지만, 이 인스턴스는 교체 전 이미지로 계속 실행 중이며 스스로 종료되지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De AppPorts op schijf is daarna vervangen; dit exemplaar draait nog de oude image en stopt niet vanzelf."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppPorts na dysku zostało później zastąpione, więc ten proces nadal działa na starym obrazie i nie zakończy się sam."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O AppPorts no disco foi substituído depois, então esta instância continua executando a imagem antiga e não encerra sozinha."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppPorts на диске был заменён позже, поэтому этот экземпляр работает на старом образе и сам не завершится."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppPorts บนดิสก์ถูกแทนที่หลังจากนั้น อินสแตนซ์นี้จึงยังทำงานด้วยอิมเมจเก่าและจะไม่ปิดตัวเอง"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diskteki AppPorts daha sonra değiştirildi; bu örnek hâlâ eski imajla çalışıyor ve kendiliğinden kapanmaz."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppPorts trên đĩa đã được thay thế sau đó, nên tiến trình này vẫn chạy ảnh cũ và sẽ không tự thoát."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盘上的 AppPorts 在此之后被替换过，它仍在运行替换前的旧镜像，不会自行退出。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁碟上的 AppPorts 在此之後被替換過，它仍在執行替換前的舊映像，不會自行結束。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁碟上的 AppPorts 在此之後被替換過，它仍在執行替換前的舊映像，不會自行結束。"
+          }
+        }
+      }
+    },
+    "请在菜单栏的 AppPorts 图标中选择「退出」，或在终端执行 kill %@，然后重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "اختر إنهاء من أيقونة AppPorts في شريط القوائم، أو نفّذ kill %@ في Terminal، ثم أعد المحاولة."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠉⠓⠕⠕⠎⠑⠀⠠⠟⠥⠊⠞⠀⠋⠗⠕⠍⠀⠞⠓⠑⠀⠠⠁⠏⠏⠠⠏⠕⠗⠞⠎⠀⠊⠉⠕⠝⠀⠊⠝⠀⠞⠓⠑⠀⠍⠑⠝⠥⠀⠃⠁⠗⠂⠀⠕⠗⠀⠗⠥⠝⠀⠅⠊⠇⠇⠀%@⠀⠊⠝⠀⠠⠞⠑⠗⠍⠊⠝⠁⠇⠂⠀⠞⠓⠑⠝⠀⠞⠗⠽⠀⠁⠛⠁⠊⠝⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie im AppPorts-Symbol in der Menüleiste Beenden oder führen Sie kill %@ im Terminal aus und versuchen Sie es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose Quit from the AppPorts icon in the menu bar, or run kill %@ in Terminal, then try again."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elektu Elo en la AppPorts-piktogramo en la menuo, aŭ plenumu kill %@ en Terminal, kaj reprovu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elige Salir en el icono de AppPorts de la barra de menús o ejecuta kill %@ en Terminal y vuelve a intentarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisissez Quitter dans l'icône AppPorts de la barre des menus, ou exécutez kill %@ dans le Terminal, puis réessayez."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "मेन्यू बार में AppPorts आइकन से क्विट चुनें, या Terminal में kill %@ चलाएँ, फिर पुनः प्रयास करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pilih Keluar dari ikon AppPorts di bilah menu, atau jalankan kill %@ di Terminal, lalu coba lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scegli Esci dall'icona AppPorts nella barra dei menu oppure esegui kill %@ nel Terminale, poi riprova."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メニューバーの AppPorts アイコンから「終了」を選ぶか、ターミナルで kill %@ を実行してから、もう一度お試しください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메뉴 막대의 AppPorts 아이콘에서 종료를 선택하거나 터미널에서 kill %@을 실행한 뒤 다시 시도하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kies Stop in het AppPorts-pictogram in de menubalk of voer kill %@ uit in Terminal en probeer het opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wybierz Zakończ w ikonie AppPorts na pasku menu lub uruchom kill %@ w Terminalu, a następnie spróbuj ponownie."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escolha Encerrar no ícone do AppPorts na barra de menus ou execute kill %@ no Terminal e tente novamente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите «Завершить» в меню значка AppPorts или выполните kill %@ в Терминале, затем повторите попытку."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "เลือกออกจากไอคอน AppPorts ในแถบเมนู หรือรัน kill %@ ใน Terminal แล้วลองใหม่"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Menü çubuğundaki AppPorts simgesinden Çık seçin veya Terminal'de kill %@ komutunu çalıştırıp yeniden deneyin."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chọn Thoát từ biểu tượng AppPorts trên thanh menu, hoặc chạy kill %@ trong Terminal, rồi thử lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在菜单栏的 AppPorts 图标中选择「退出」，或在终端执行 kill %@，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在選單列的 AppPorts 圖示中選擇「結束」，或在終端機執行 kill %@，然後重試。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在選單列的 AppPorts 圖示中選擇「結束」，或在終端機執行 kill %@，然後重試。"
+          }
+        }
+      }
+    },
+    "已卸载：之后的挂载操作会重新请求管理员授权" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تمت الإزالة: ستعيد عمليات التركيب طلب تفويض المسؤول."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠥⠝⠊⠝⠎⠞⠁⠇⠇⠑⠙⠒⠀⠍⠕⠥⠝⠞⠊⠝⠛⠀⠺⠊⠇⠇⠀⠁⠎⠅⠀⠋⠕⠗⠀⠁⠙⠍⠊⠝⠊⠎⠞⠗⠁⠞⠕⠗⠀⠁⠥⠞⠓⠕⠗⠊⠵⠁⠞⠊⠕⠝⠀⠁⠛⠁⠊⠝⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entfernt: Künftige Einhängevorgänge fordern wieder eine Administrator-Autorisierung an."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uninstalled: mounting will ask for administrator authorization again."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Malinstalita: sekvaj muntadoj denove petos administrantan rajtigon."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desinstalado: las próximas operaciones de montaje volverán a pedir autorización de administrador."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désinstallé : les prochains montages demanderont de nouveau l'autorisation administrateur."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "हटा दिया गया: आगे के माउंट संचालन फिर से व्यवस्थापक प्राधिकरण माँगेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dihapus: operasi mount berikutnya akan meminta otorisasi administrator lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disinstallato: le prossime operazioni di montaggio richiederanno di nuovo l'autorizzazione amministratore."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除しました。以降のマウント操作では再び管理者認証が求められます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제거했습니다. 이후 마운트 작업은 다시 관리자 승인을 요청합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verwijderd: toekomstige koppelingen vragen weer om beheerdersautorisatie."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odinstalowano: kolejne montowania znów poproszą o autoryzację administratora."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desinstalado: as próximas montagens voltarão a pedir autorização de administrador."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалено: при следующих монтированиях снова потребуется авторизация администратора."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ถอนการติดตั้งแล้ว: การเมานต์ครั้งต่อไปจะขออนุญาตผู้ดูแลระบบอีกครั้ง"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kaldırıldı: Sonraki bağlama işlemleri yönetici yetkilendirmesi isteyecek."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đã gỡ: các thao tác gắn kết tiếp theo sẽ yêu cầu quyền quản trị lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已卸载：之后的挂载操作会重新请求管理员授权"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解除安裝：之後的掛載作業會再次要求管理員授權。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解除安裝：之後的掛載作業會再次要求管理員授權。"
+          }
+        }
+      }
+    },
+    "已安装：之后的挂载操作不再请求密码" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم التثبيت: لن تطلب عمليات التركيب كلمة مرور بعد الآن."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠊⠝⠎⠞⠁⠇⠇⠑⠙⠒⠀⠍⠕⠥⠝⠞⠊⠝⠛⠀⠺⠊⠇⠇⠀⠝⠕⠀⠇⠕⠝⠛⠑⠗⠀⠁⠎⠅⠀⠋⠕⠗⠀⠁⠀⠏⠁⠎⠎⠺⠕⠗⠙⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installiert: Einhänge Vorgänge fragen nicht mehr nach einem Passwort."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installed: mounting will no longer ask for a password."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instalita: muntado ne plu petos pasvorton."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instalado: las operaciones de montaje ya no pedirán contraseña."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installé : les montages ne demanderont plus de mot de passe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "इंस्टॉल हो गया: अब माउंट संचालन पासवर्ड नहीं माँगेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terpasang: operasi mount tidak akan meminta kata sandi lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installato: le operazioni di montaggio non chiederanno più la password."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "インストールしました。以降のマウント操作ではパスワードを求められません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설치했습니다. 이후 마운트 작업은 더 이상 암호를 묻지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geïnstalleerd: koppelen vraagt niet langer om een wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zainstalowano: montowanie nie będzie już prosić o hasło."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instalado: as montagens não pedirão mais senha."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установлено: при монтировании пароль больше не потребуется."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ติดตั้งแล้ว: การเมานต์จะไม่ขอรหัสผ่านอีก"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kuruldu: Bağlama işlemleri artık parola istemeyecek."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đã cài: các thao tác gắn kết sẽ không hỏi mật khẩu nữa."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安装：之后的挂载操作不再请求密码"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安裝：之後的掛載作業不會再要求密碼。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安裝：之後的掛載作業不會再要求密碼。"
+          }
+        }
+      }
+    },
+    "已取消授权" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم إلغاء التفويض"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠁⠥⠞⠓⠕⠗⠊⠵⠁⠞⠊⠕⠝⠀⠉⠁⠝⠉⠑⠇⠇⠑⠙"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autorisierung abgebrochen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Authorization cancelled"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rajtigo nuligita"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autorización cancelada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autorisation annulée"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "प्राधिकरण रद्द किया गया"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Otorisasi dibatalkan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autorizzazione annullata"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "認証をキャンセルしました"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인이 취소되었습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autorisatie geannuleerd"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anulowano autoryzację"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autorização cancelada"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Авторизация отменена"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ยกเลิกการอนุญาตแล้ว"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yetkilendirme iptal edildi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đã hủy cấp quyền"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已取消授权"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已取消授權"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已取消授權"
+          }
+        }
+      }
+    },
+    "迁移应用时一并迁移数据" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نقل بيانات التطبيق مع التطبيق"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠍⠊⠛⠗⠁⠞⠑⠀⠁⠏⠏⠀⠙⠁⠞⠁⠀⠁⠇⠕⠝⠛⠀⠺⠊⠞⠓⠀⠞⠓⠑⠀⠁⠏⠏"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App-Daten zusammen mit der App migrieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrate app data along with the app"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migri aplikaĵajn datumojn kune kun la aplikaĵo"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrar los datos junto con la app"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrer les données avec l'app"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ऐप के साथ उसका डेटा भी माइग्रेट करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pindahkan data aplikasi bersama aplikasinya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migra i dati insieme all'app"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリと一緒にデータも移行"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱과 함께 데이터도 이전"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App-gegevens samen met de app migreren"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migruj dane razem z aplikacją"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrar os dados junto com o app"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переносить данные вместе с приложением"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ย้ายข้อมูลของแอปไปพร้อมกับแอป"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uygulama verilerini uygulamayla birlikte taşı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Di chuyển dữ liệu cùng với ứng dụng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迁移应用时一并迁移数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移應用程式時一併遷移資料"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遷移應用程式時一併遷移資料"
+          }
+        }
+      }
+    },
+    "搬走应用后，接着把它在 ~/Library 下的 Application Support、Caches、WebKit、HTTPStorages 迁到同一块外置盘；沙盒容器需要挂载迁移，仍由「数据目录」页处理" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "بعد نقل التطبيق، تنتقل مجلدات Application Support وCaches وWebKit وHTTPStorages داخل ‎~/Library إلى القرص الخارجي نفسه. تحتاج حاويات العزل إلى نقل بالتركيب وتبقى في صفحة أدلة البيانات."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠁⠋⠞⠑⠗⠀⠞⠓⠑⠀⠁⠏⠏⠀⠍⠕⠧⠑⠎⠂⠀⠊⠞⠎⠀⠠⠁⠏⠏⠇⠊⠉⠁⠞⠊⠕⠝⠀⠠⠎⠥⠏⠏⠕⠗⠞⠂⠀⠠⠉⠁⠉⠓⠑⠎⠂⠀⠠⠺⠑⠃⠠⠅⠊⠞⠀⠁⠝⠙⠀⠠⠓⠠⠞⠠⠞⠠⠏⠠⠎⠞⠕⠗⠁⠛⠑⠎⠀⠋⠕⠇⠙⠑⠗⠎⠀⠥⠝⠙⠑⠗⠀~⠌⠠⠇⠊⠃⠗⠁⠗⠽⠀⠋⠕⠇⠇⠕⠺⠀⠞⠕⠀⠞⠓⠑⠀⠎⠁⠍⠑⠀⠑⠭⠞⠑⠗⠝⠁⠇⠀⠙⠊⠎⠅⠲⠀⠠⠎⠁⠝⠙⠃⠕⠭⠑⠙⠀⠉⠕⠝⠞⠁⠊⠝⠑⠗⠎⠀⠝⠑⠑⠙⠀⠍⠕⠥⠝⠞⠀⠍⠊⠛⠗⠁⠞⠊⠕⠝⠀⠁⠝⠙⠀⠎⠞⠁⠽⠀⠕⠝⠀⠞⠓⠑⠀⠠⠙⠁⠞⠁⠀⠠⠙⠊⠗⠑⠉⠞⠕⠗⠊⠑⠎⠀⠏⠁⠛⠑⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach dem Verschieben der App folgen Application Support, Caches, WebKit und HTTPStorages unter ~/Library auf dieselbe externe Festplatte. Sandbox-Container brauchen eine Einhänge-Migration und bleiben auf der Seite Datenverzeichnisse."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After the app moves, its Application Support, Caches, WebKit and HTTPStorages folders under ~/Library follow to the same external disk. Sandboxed containers need mount migration and stay on the Data Directories page."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Post kiam la aplikaĵo moviĝas, ĝiaj dosierujoj Application Support, Caches, WebKit kaj HTTPStorages sub ~/Library sekvas al la sama ekstera disko. Sabskatolaj ujoj bezonas muntan migradon kaj restas en la paĝo Datumdosierujoj."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tras mover la app, sus carpetas Application Support, Caches, WebKit y HTTPStorages en ~/Library pasan al mismo disco externo. Los contenedores sandbox requieren migración por montaje y se gestionan en la página Directorios de datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Après le déplacement de l'app, ses dossiers Application Support, Caches, WebKit et HTTPStorages sous ~/Library suivent sur le même disque externe. Les conteneurs sandbox exigent une migration par montage et restent gérés dans la page Répertoires de données."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ऐप हटाने के बाद ~/Library के अंदर Application Support, Caches, WebKit और HTTPStorages भी उसी बाहरी डिस्क पर चले जाते हैं। सैंडबॉक्स कंटेनर के लिए माउंट माइग्रेशन चाहिए, वे डेटा निर्देशिकाएँ पेज पर रहते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Setelah aplikasi dipindahkan, folder Application Support, Caches, WebKit, dan HTTPStorages di ~/Library ikut pindah ke disk eksternal yang sama. Kontainer sandbox perlu migrasi mount dan tetap ditangani di halaman Direktori Data."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dopo lo spostamento dell'app, le cartelle Application Support, Caches, WebKit e HTTPStorages in ~/Library seguono sullo stesso disco esterno. I container sandbox richiedono una migrazione tramite montaggio e restano nella pagina Directory dati."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリを移したあと、~/Library 配下の Application Support、Caches、WebKit、HTTPStorages も同じ外付けディスクへ移します。サンドボックスのコンテナはマウント移行が必要なため、「データディレクトリ」ページで扱います。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱을 옮긴 뒤 ~/Library 아래의 Application Support, Caches, WebKit, HTTPStorages도 같은 외장 디스크로 옮깁니다. 샌드박스 컨테이너는 마운트 이전이 필요해 데이터 디렉터리 페이지에서 처리합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Na het verplaatsen van de app volgen Application Support, Caches, WebKit en HTTPStorages onder ~/Library naar dezelfde externe schijf. Sandbox-containers vereisen koppelmigratie en blijven op de pagina Gegevensmappen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Po przeniesieniu aplikacji jej foldery Application Support, Caches, WebKit i HTTPStorages w ~/Library trafiają na ten sam dysk zewnętrzny. Kontenery sandbox wymagają migracji przez montowanie i pozostają na stronie Katalogi danych."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Depois de mover o app, as pastas Application Support, Caches, WebKit e HTTPStorages em ~/Library vão para o mesmo disco externo. Contêineres sandbox exigem migração por montagem e continuam na página Diretórios de dados."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "После переноса приложения его папки Application Support, Caches, WebKit и HTTPStorages в ~/Library переезжают на тот же внешний диск. Для песочниц нужна миграция монтированием — они остаются на странице «Каталоги данных»."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "หลังย้ายแอป โฟลเดอร์ Application Support, Caches, WebKit และ HTTPStorages ใต้ ~/Library จะย้ายไปดิสก์ภายนอกเดียวกันด้วย คอนเทนเนอร์แซนด์บ็อกซ์ต้องย้ายด้วยการเมานต์ จึงยังจัดการในหน้าไดเรกทอรีข้อมูล"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uygulama taşındıktan sonra ~/Library altındaki Application Support, Caches, WebKit ve HTTPStorages klasörleri de aynı harici diske taşınır. Sandbox kapsayıcıları bağlama ile taşıma gerektirir ve Veri Dizinleri sayfasında kalır."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sau khi di chuyển ứng dụng, các thư mục Application Support, Caches, WebKit và HTTPStorages trong ~/Library cũng chuyển sang cùng ổ ngoài. Container sandbox cần di chuyển bằng gắn kết nên vẫn xử lý ở trang Thư mục dữ liệu."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搬走应用后，接着把它在 ~/Library 下的 Application Support、Caches、WebKit、HTTPStorages 迁到同一块外置盘；沙盒容器需要挂载迁移，仍由「数据目录」页处理"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搬走應用程式後，接著把它在 ~/Library 下的 Application Support、Caches、WebKit、HTTPStorages 遷到同一塊外接磁碟；沙箱容器需要掛載遷移，仍由「資料目錄」頁處理"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搬走應用程式後，接著把它在 ~/Library 下的 Application Support、Caches、WebKit、HTTPStorages 遷到同一塊外接磁碟；沙箱容器需要掛載遷移，仍由「資料目錄」頁處理"
+          }
+        }
+      }
+    },
+    "特权助手（一次授权）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "مساعد بامتيازات (تفويض مرة واحدة)"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠏⠗⠊⠧⠊⠇⠑⠛⠑⠙⠀⠓⠑⠇⠏⠑⠗⠀⠐⠁⠥⠞⠓⠕⠗⠊⠵⠑⠀⠕⠝⠉⠑⠴"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privilegierter Helfer (einmal autorisieren)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privileged helper (authorize once)"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privilegia helpilo (unu rajtigo)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asistente con privilegios (autorizar una vez)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assistant privilégié (une seule autorisation)"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "विशेषाधिकार सहायक (एक बार अनुमति)"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper istimewa (otorisasi sekali)"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper con privilegi (autorizza una volta)"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特権ヘルパー（認証は一度だけ）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "권한 도우미(한 번만 승인)"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bevoorrechte helper (eenmalig autoriseren)"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper uprzywilejowany (jedna autoryzacja)"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assistente privilegiado (autorizar uma vez)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Привилегированный помощник (одна авторизация)"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตัวช่วยสิทธิพิเศษ (อนุญาตครั้งเดียว)"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ayrıcalıklı yardımcı (tek seferlik yetki)"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trình trợ giúp đặc quyền (cấp quyền một lần)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特权助手（一次授权）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式（一次授權）"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特權輔助程式（一次授權）"
+          }
+        }
+      }
+    },
+    "装一次之后，挂载与卸载容器卷不再弹密码。卷的创建、删除和签名修复仍会请求一次授权，助手不接管这些操作。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "بعد التثبيت مرة واحدة، لن يطلب تركيب أو فصل أحجام الحاويات كلمة مرور. أما إنشاء الأحجام أو حذفها وإصلاح التواقيع فما زالت تطلب تفويضًا، ولا يتولاها المساعد."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠊⠝⠎⠞⠁⠇⠇⠀⠊⠞⠀⠕⠝⠉⠑⠀⠁⠝⠙⠀⠍⠕⠥⠝⠞⠊⠝⠛⠀⠕⠗⠀⠥⠝⠍⠕⠥⠝⠞⠊⠝⠛⠀⠉⠕⠝⠞⠁⠊⠝⠑⠗⠀⠧⠕⠇⠥⠍⠑⠎⠀⠝⠕⠀⠇⠕⠝⠛⠑⠗⠀⠁⠎⠅⠎⠀⠋⠕⠗⠀⠁⠀⠏⠁⠎⠎⠺⠕⠗⠙⠲⠀⠠⠉⠗⠑⠁⠞⠊⠝⠛⠀⠕⠗⠀⠙⠑⠇⠑⠞⠊⠝⠛⠀⠧⠕⠇⠥⠍⠑⠎⠀⠁⠝⠙⠀⠗⠑⠏⠁⠊⠗⠊⠝⠛⠀⠎⠊⠛⠝⠁⠞⠥⠗⠑⠎⠀⠎⠞⠊⠇⠇⠀⠗⠑⠟⠥⠑⠎⠞⠀⠁⠥⠞⠓⠕⠗⠊⠵⠁⠞⠊⠕⠝⠆⠀⠞⠓⠑⠀⠓⠑⠇⠏⠑⠗⠀⠙⠕⠑⠎⠀⠝⠕⠞⠀⠞⠁⠅⠑⠀⠞⠓⠕⠎⠑⠀⠕⠧⠑⠗⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einmal installiert, fragen Einhängen und Aushängen von Container-Volumes nicht mehr nach einem Passwort. Erstellen, Löschen und Signaturreparatur fordern weiterhin eine Autorisierung an; der Helfer übernimmt sie nicht."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install it once and mounting or unmounting container volumes no longer asks for a password. Creating or deleting volumes and repairing signatures still request authorization; the helper does not take those over."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Post unu instalo, muntado kaj malmuntado de ujaj volumoj ne plu petos pasvorton. Kreo aŭ forigo de volumoj kaj riparo de subskriboj ankoraŭ petas rajtigon; la helpilo ne transprenas ilin."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una vez instalado, montar o desmontar volúmenes contenedor ya no pide contraseña. Crear o eliminar volúmenes y reparar firmas siguen pidiendo autorización; el asistente no se encarga de eso."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une fois installé, monter et démonter des volumes conteneurs ne demande plus de mot de passe. Créer ou supprimer des volumes et réparer les signatures demandent toujours une autorisation ; l'assistant ne s'en charge pas."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "एक बार इंस्टॉल करने के बाद कंटेनर वॉल्यूम माउंट या अनमाउंट करने पर पासवर्ड नहीं माँगा जाएगा। वॉल्यूम बनाना, हटाना और हस्ताक्षर सुधारना अब भी अनुमति माँगेंगे; सहायक ये काम नहीं लेता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Setelah dipasang sekali, mount dan lepas volume kontainer tidak meminta kata sandi lagi. Membuat atau menghapus volume serta memperbaiki tanda tangan tetap meminta otorisasi; helper tidak menanganinya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una volta installato, montare o smontare volumi contenitore non chiede più la password. Creare o eliminare volumi e riparare le firme richiede ancora autorizzazione; l'helper non se ne occupa."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一度インストールすれば、コンテナボリュームのマウントとマウント解除でパスワードを求められません。ボリュームの作成・削除や署名の修復は引き続き認証が必要で、ヘルパーは関与しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "한 번 설치하면 컨테이너 볼륨 마운트와 마운트 해제 시 암호를 묻지 않습니다. 볼륨 생성·삭제와 서명 복구는 여전히 승인을 요청하며 도우미가 처리하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eenmaal geïnstalleerd vragen koppelen en ontkoppelen van containervolumes niet meer om een wachtwoord. Volumes aanmaken of verwijderen en handtekeningen herstellen vragen nog steeds autorisatie; de helper neemt dat niet over."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Po jednorazowej instalacji montowanie i odmontowywanie wolumenów kontenera nie prosi już o hasło. Tworzenie i usuwanie wolumenów oraz naprawa podpisów nadal wymagają autoryzacji, helper tego nie przejmuje."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Depois de instalado, montar ou desmontar volumes contêiner não pede mais senha. Criar ou excluir volumes e reparar assinaturas continuam pedindo autorização; o assistente não cuida disso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "После установки монтирование и размонтирование томов-контейнеров больше не запрашивает пароль. Создание, удаление томов и восстановление подписей по-прежнему требуют авторизации — помощник их не берёт."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ติดตั้งครั้งเดียวแล้ว การเมานต์และถอดคอนเทนเนอร์โวลุ่มจะไม่ขอรหัสผ่านอีก แต่การสร้างหรือลบโวลุ่มและการซ่อมลายเซ็นยังต้องอนุญาต ตัวช่วยไม่รับงานเหล่านี้"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bir kez kurulduktan sonra kapsayıcı birimlerini bağlamak veya çözmek parola sormaz. Birim oluşturma, silme ve imza onarımı yine yetkilendirme ister; yardımcı bunları devralmaz."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cài một lần, thao tác gắn kết và tháo ổ chứa sẽ không hỏi mật khẩu nữa. Việc tạo, xóa ổ và sửa chữ ký vẫn yêu cầu cấp quyền; trình trợ giúp không đảm nhận."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "装一次之后，挂载与卸载容器卷不再弹密码。卷的创建、删除和签名修复仍会请求一次授权，助手不接管这些操作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝一次之後，掛載與卸載容器卷不再彈出密碼。卷的建立、刪除與簽章修復仍會要求一次授權，輔助程式不接管這些操作。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝一次之後，掛載與卸載容器卷不再彈出密碼。卷的建立、刪除與簽章修復仍會要求一次授權，輔助程式不接管這些操作。"
+          }
+        }
+      }
+    },
+    "安装" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تثبيت"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠊⠝⠎⠞⠁⠇⠇"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instali"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instalar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "इंस्टॉल करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasang"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installa"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "インストール"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설치"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installeer"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zainstaluj"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instalar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ติดตั้ง"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kur"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cài đặt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝"
+          }
+        }
+      }
+    },
+    "应用已迁移，但有 %d 个关联数据目录未迁移（%@）。可在「数据目录」页重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نُقل التطبيق، لكن %d من أدلة البيانات المرتبطة لم تُنقل (%@). يمكنك إعادة المحاولة من صفحة أدلة البيانات."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑⠀⠁⠏⠏⠀⠍⠕⠧⠑⠙⠂⠀⠃⠥⠞⠀%d⠀⠗⠑⠇⠁⠞⠑⠙⠀⠙⠁⠞⠁⠀⠋⠕⠇⠙⠑⠗⠎⠀⠺⠑⠗⠑⠀⠝⠕⠞⠀⠍⠊⠛⠗⠁⠞⠑⠙⠀⠐%@⠴⠲⠀⠠⠽⠕⠥⠀⠉⠁⠝⠀⠗⠑⠞⠗⠽⠀⠕⠝⠀⠞⠓⠑⠀⠠⠙⠁⠞⠁⠀⠠⠙⠊⠗⠑⠉⠞⠕⠗⠊⠑⠎⠀⠏⠁⠛⠑⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die App wurde verschoben, aber %d zugehörige Datenverzeichnisse nicht (%@). Auf der Seite Datenverzeichnisse erneut versuchen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The app moved, but %d related data folders were not migrated (%@). You can retry on the Data Directories page."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La aplikaĵo moviĝis, sed %d rilataj datumdosierujoj ne (%@). Reprovu en la paĝo Datumdosierujoj."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La app se movió, pero %d carpetas de datos asociadas no se migraron (%@). Puedes reintentarlo en la página Directorios de datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'app a été déplacée, mais %d répertoires de données associés ne l'ont pas été (%@). Réessayez depuis la page Répertoires de données."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ऐप माइग्रेट हो गया, पर %d संबंधित डेटा निर्देशिकाएँ नहीं हुईं (%@)। डेटा निर्देशिकाएँ पेज पर पुनः प्रयास करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aplikasi dipindahkan, tetapi %d folder data terkait tidak (%@). Coba lagi di halaman Direktori Data."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'app è stata spostata, ma %d cartelle dati associate non sono state migrate (%@). Puoi riprovare nella pagina Directory dati."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリは移行しましたが、関連データディレクトリ %d 件が未移行です（%@）。「データディレクトリ」ページで再試行できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱은 이전했지만 관련 데이터 디렉터리 %d개가 이전되지 않았습니다(%@). 데이터 디렉터리 페이지에서 다시 시도할 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De app is verplaatst, maar %d bijbehorende gegevensmappen niet (%@). Probeer opnieuw op de pagina Gegevensmappen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aplikacja została przeniesiona, ale %d powiązanych katalogów danych nie (%@). Ponów próbę na stronie Katalogi danych."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O app foi movido, mas %d pastas de dados associadas não foram migradas (%@). Você pode tentar de novo na página Diretórios de dados."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложение перенесено, но %d связанных каталогов данных — нет (%@). Повторите на странице «Каталоги данных»."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ย้ายแอปแล้ว แต่ไดเรกทอรีข้อมูลที่เกี่ยวข้อง %d รายการยังไม่ได้ย้าย (%@) ลองใหม่ได้ที่หน้าไดเรกทอรีข้อมูล"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uygulama taşındı ancak %d ilgili veri dizini taşınmadı (%@). Veri Dizinleri sayfasında yeniden deneyin."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đã di chuyển ứng dụng nhưng %d thư mục dữ liệu liên quan chưa được di chuyển (%@). Bạn có thể thử lại ở trang Thư mục dữ liệu."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用已迁移，但有 %d 个关联数据目录未迁移（%@）。可在「数据目录」页重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "應用程式已遷移，但有 %d 個關聯資料目錄未遷移（%@）。可在「資料目錄」頁重試。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "應用程式已遷移，但有 %d 個關聯資料目錄未遷移（%@）。可在「資料目錄」頁重試。"
+          }
+        }
+      }
+    },
+    "应用已迁移；%@ 属于沙盒容器，需要挂载迁移，请在「数据目录」页单独处理。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نُقل التطبيق؛ %@ حاوية معزولة تحتاج إلى نقل بالتركيب، عالجها على حدة في صفحة أدلة البيانات."
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠞⠓⠑⠀⠁⠏⠏⠀⠍⠕⠧⠑⠙⠆⠀%@⠀⠊⠎⠀⠁⠀⠎⠁⠝⠙⠃⠕⠭⠑⠙⠀⠉⠕⠝⠞⠁⠊⠝⠑⠗⠀⠞⠓⠁⠞⠀⠝⠑⠑⠙⠎⠀⠍⠕⠥⠝⠞⠀⠍⠊⠛⠗⠁⠞⠊⠕⠝⠀—⠀⠓⠁⠝⠙⠇⠑⠀⠊⠞⠀⠕⠝⠀⠞⠓⠑⠀⠠⠙⠁⠞⠁⠀⠠⠙⠊⠗⠑⠉⠞⠕⠗⠊⠑⠎⠀⠏⠁⠛⠑⠲"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die App wurde verschoben; %@ ist ein Sandbox-Container und braucht eine Einhänge-Migration. Bitte auf der Seite Datenverzeichnisse separat behandeln."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The app moved; %@ is a sandboxed container that needs mount migration — handle it on the Data Directories page."
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La aplikaĵo moviĝis; %@ estas sabskatola ujo bezonanta muntan migradon — traktu ĝin aparte en la paĝo Datumdosierujoj."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La app se movió; %@ es un contenedor sandbox que requiere migración por montaje. Gestiónalo aparte en la página Directorios de datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'app a été déplacée ; %@ est un conteneur sandbox qui nécessite une migration par montage. Traitez-le séparément dans la page Répertoires de données."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ऐप माइग्रेट हो गया; %@ एक सैंडबॉक्स कंटेनर है जिसे माउंट माइग्रेशन चाहिए, इसे डेटा निर्देशिकाएँ पेज पर अलग से संभालें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aplikasi dipindahkan; %@ adalah kontainer sandbox yang perlu migrasi mount, tangani terpisah di halaman Direktori Data."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'app è stata spostata; %@ è un container sandbox che richiede migrazione tramite montaggio. Gestiscilo separatamente nella pagina Directory dati."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリは移行しました。%@ はサンドボックスコンテナのためマウント移行が必要です。「データディレクトリ」ページで個別に処理してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱은 이전했습니다. %@은 샌드박스 컨테이너라 마운트 이전이 필요합니다. 데이터 디렉터리 페이지에서 따로 처리하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De app is verplaatst; %@ is een sandbox-container die koppelmigratie vereist. Behandel die apart op de pagina Gegevensmappen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aplikacja została przeniesiona; %@ to kontener sandbox wymagający migracji przez montowanie. Obsłuż go osobno na stronie Katalogi danych."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O app foi movido; %@ é um contêiner sandbox que exige migração por montagem. Trate-o separadamente na página Diretórios de dados."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложение перенесено; %@ — контейнер песочницы, ему нужна миграция монтированием. Обработайте его отдельно на странице «Каталоги данных»."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ย้ายแอปแล้ว %@ เป็นคอนเทนเนอร์แซนด์บ็อกซ์ที่ต้องย้ายด้วยการเมานต์ กรุณาจัดการแยกในหน้าไดเรกทอรีข้อมูล"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uygulama taşındı; %@ bir sandbox kapsayıcısı ve bağlama ile taşıma gerektiriyor. Veri Dizinleri sayfasında ayrıca ele alın."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Đã di chuyển ứng dụng; %@ là ổ chứa sandbox cần di chuyển bằng gắn kết, hãy xử lý riêng ở trang Thư mục dữ liệu."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用已迁移；%@ 属于沙盒容器，需要挂载迁移，请在「数据目录」页单独处理。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "應用程式已遷移；%@ 屬於沙箱容器，需要掛載遷移，請在「資料目錄」頁單獨處理。"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "應用程式已遷移；%@ 屬於沙箱容器，需要掛載遷移，請在「資料目錄」頁單獨處理。"
+          }
+        }
+      }
+    },
     "速度: %@ MB/s" : {
       "extractionState" : "manual",
       "localizations" : {

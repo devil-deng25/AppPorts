@@ -285,12 +285,37 @@ struct DiskUtility: Sendable {
         runner: ShellCommandRunning = ProcessCommandRunner(),
         commandTimeout: TimeInterval = 180,
         ejectionInventory: (@Sendable () async throws -> ExternalDiskInventory)? = nil,
-        administratorRunner: AdministratorRunner? = { try DiskUtility.runWithAdministratorPrivileges(executable: $0, arguments: $1) }
+        administratorRunner: AdministratorRunner? = { try DiskUtility.runPrivileged(executable: $0, arguments: $1) }
     ) {
         self.runner = runner
         self.commandTimeout = commandTimeout
         self.administratorRunner = administratorRunner
         self.ejectionInventoryOverride = ejectionInventory
+    }
+
+    /// 提权执行的分发点：先问常驻特权助手，助手不可用或这条命令不在白名单内，
+    /// 才回到会弹密码的一次性授权。
+    ///
+    /// 这样做把「要 root」的场景收缩到挂载类命令：卷的创建、删除这类一次性操作
+    /// 仍然走密码框，反复发生的挂载/卸载/重挂则在装好助手后不再打断用户。
+    static func runPrivileged(executable: String, arguments: [String]) throws -> ShellCommandResult {
+        if PrivilegedMountCommand.isSupported(executable: executable, arguments: arguments) {
+            do {
+                let result = try PrivilegedHelperClient.shared.run(executable: executable, arguments: arguments)
+                AppLogger.shared.logContext("磁盘命令由特权助手执行", details: [
+                    ("command", ([executable] + arguments).joined(separator: " ")),
+                    ("status", String(result.status))
+                ], level: "TRACE")
+                return result
+            } catch {
+                // 助手没装、镜像过期或被拒绝：退回一次性授权，不把这次操作变成失败。
+                AppLogger.shared.logContext("特权助手不可用，改用一次性管理员授权", details: [
+                    ("command", ([executable] + arguments).joined(separator: " ")),
+                    ("reason", error.localizedDescription)
+                ], level: "WARN")
+            }
+        }
+        return try runWithAdministratorPrivileges(executable: executable, arguments: arguments)
     }
 
     /// 通过共享脚本执行管理员命令，短期保留同一授权会话；是否再次验证由系统决定。

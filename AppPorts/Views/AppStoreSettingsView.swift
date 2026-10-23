@@ -14,6 +14,7 @@ import SwiftUI
 /// 提供应用迁移行为和日志管理的配置选项：
 /// - 🏪 **App Store 应用迁移**：默认禁止，启用后无法通过 App Store 更新
 /// - 📱 **iOS 应用迁移**：默认禁止，启用后 Finder 图标会显示箭头
+/// - 📁 **随应用迁移数据**：迁移应用时一并搬运它的 Application Support / Caches 等目录
 /// - 📝 **日志设置**：启用/禁用日志、配置最大大小、查看/清空日志
 ///
 /// ## 设置项说明
@@ -42,6 +43,14 @@ struct AppStoreSettingsView: View {
     
     /// 是否允许迁移 iOS/iPad 应用
     @AppStorage("allowIOSAppMigration") private var allowIOSAppMigration = false
+
+    /// 迁移应用时一并迁移关联数据目录，默认开启
+    @AppStorage(MigrationPreferences.migrateCompanionDataKey) private var migrateCompanionData = true
+
+    /// 特权助手状态：装好之后，挂载类命令不再弹密码
+    @State private var helperStatus: PrivilegedHelperInstaller.Status = .notInstalled
+    @State private var isWorkingOnHelper = false
+    @State private var helperMessage: String?
     
     /// 是否启用日志记录
     @AppStorage("LogEnabled") private var isLoggingEnabled = true
@@ -87,6 +96,51 @@ struct AppStoreSettingsView: View {
         }
         .sheet(isPresented: $showClassicModeAcknowledgement) {
             classicModeAcknowledgementSheet
+        }
+    }
+
+    /// 读取助手状态。握手要连一次守护进程，放到后台，避免打开设置时卡一帧。
+    private func refreshHelperStatus() {
+        DispatchQueue.global(qos: .utility).async {
+            let status = PrivilegedHelperInstaller.status()
+            DispatchQueue.main.async { helperStatus = status }
+        }
+    }
+
+    /// 安装或卸载。两者各自只弹一次管理员授权，结果写回卡片说明里，不额外弹对话框。
+    private func updateHelper() {
+        guard !isWorkingOnHelper else { return }
+        let wasReady = helperStatus.isReady
+        isWorkingOnHelper = true
+        helperMessage = nil
+        Task {
+            do {
+                if wasReady {
+                    try await PrivilegedHelperInstaller.uninstall()
+                    await MainActor.run {
+                        helperMessage = "已卸载：之后的挂载操作会重新请求管理员授权".localized
+                        isWorkingOnHelper = false
+                        refreshHelperStatus()
+                    }
+                } else {
+                    try await PrivilegedHelperInstaller.install()
+                    await MainActor.run {
+                        helperMessage = "已安装：之后的挂载操作不再请求密码".localized
+                        isWorkingOnHelper = false
+                        refreshHelperStatus()
+                    }
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    helperMessage = "已取消授权".localized
+                    isWorkingOnHelper = false
+                }
+            } catch {
+                await MainActor.run {
+                    helperMessage = error.localizedDescription
+                    isWorkingOnHelper = false
+                }
+            }
         }
     }
 
@@ -212,7 +266,71 @@ struct AppStoreSettingsView: View {
                 .background(Color.primary.opacity(0.03))
                 .cornerRadius(12)
             }
-            
+
+            // 下面两张卡片与 App Store 支持情况无关：老系统同样需要「随应用一起迁移数据」，
+            // 也不该因为 macOS 15.1+ 走了另一条分支就消失。
+
+            // 随应用一起迁移数据目录
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "folder.badge.gearshape")
+                                .foregroundColor(.green)
+                            Text("迁移应用时一并迁移数据".localized)
+                                .font(.headline)
+                        }
+                        Text("搬走应用后，接着把它在 ~/Library 下的 Application Support、Caches、WebKit、HTTPStorages 迁到同一块外置盘；沙盒容器需要挂载迁移，仍由「数据目录」页处理".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Toggle("迁移应用时一并迁移数据".localized, isOn: $migrateCompanionData)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+            }
+            .padding()
+            .frame(minHeight: 110)
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(12)
+
+            // 特权助手：把反复出现的挂载类授权收敛成一次安装
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "lock.shield")
+                                .foregroundColor(.blue)
+                            Text("特权助手（一次授权）".localized)
+                                .font(.headline)
+                        }
+                        Text("装一次之后，挂载与卸载容器卷不再弹密码。卷的创建、删除和签名修复仍会请求一次授权，助手不接管这些操作。".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if let helperMessage {
+                            Text(helperMessage)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    Button(helperStatus.isReady ? "卸载".localized : "安装".localized) {
+                        updateHelper()
+                    }
+                    .disabled(isWorkingOnHelper)
+                }
+            }
+            .padding()
+            .frame(minHeight: 110)
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(12)
+            .onAppear { refreshHelperStatus() }
+
             Toggle("退出后清理已完成的任务列表".localized, isOn: $clearCompletedTasksOnExit)
                 .toggleStyle(.checkbox)
                 .padding()

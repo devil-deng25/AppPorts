@@ -1076,13 +1076,7 @@ final class AppMigrationServiceTests: XCTestCase {
         XCTAssertTrue(literal.contains("\\\"quoted\\\""))
         XCTAssertTrue(literal.contains("Slash\\\\Name.app"))
         XCTAssertTrue(literal.contains("it's"))
-
-        let script = CodeSigner.ownershipRepairAppleScript(username: "user'name", appPath: path)
-        XCTAssertTrue(script.contains("set targetPath to \(literal)"))
-        XCTAssertTrue(script.contains("set userName to \"user'name\""))
-        XCTAssertTrue(script.contains("quoted form of userName"))
-        XCTAssertTrue(script.contains("quoted form of targetPath"))
-        XCTAssertFalse(script.contains("'\\(path)'"))
+        XCTAssertFalse(literal.contains("'\(path)'"))
     }
 
     // MARK: - 还原前把「本地入口记录」换成外部本体

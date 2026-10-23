@@ -183,13 +183,9 @@ actor CodeSigner {
         _ = allowAdministratorPrompt
     }
 
-    static func ownershipRepairAppleScript(username: String, appPath: String) -> String {
-        """
-        set targetPath to \(AppMigrationService.appleScriptStringLiteral(appPath))
-        set userName to \(AppMigrationService.appleScriptStringLiteral(username))
-        do shell script "/usr/sbin/chown -R -P " & quoted form of userName & " " & quoted form of targetPath with administrator privileges
-        """
-    }
+    // 曾经有一个把应用整棵树 `chown -R` 回当前用户的管理员脚本。它既要在每次签名
+    // 失败时弹一次密码，又会在多用户共享的应用上改掉别人的所有权，因此在迁移流程
+    // 里已不再使用。需要修所有权时，走「把应用挪回本地再操作」这一条不需要提权的路。
 
     static func resolveAppURL(at appURL: URL) throws -> URL {
         let fileManager = FileManager.default
