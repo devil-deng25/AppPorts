@@ -416,6 +416,7 @@ Missing targets, malformed portals, and cycles fail before signing or backing up
 - **Diagnostics**: step summaries distinguish passed, failed, cancelled, and not-run checks. Advisory jobs can be green after a test failure, so read their summary. Logs and `.xcresult` bundles are uploaded for five days.
 - **Run policy**: a newer commit cancels older checks for the same PR. Post-merge validation is retained for merged commits. Workflows use read-only repository permissions and can also be started manually.
 - Run the full suite on a disposable macOS runner. Some integration tests register temporary app bundles with Launch Services. Do not set `APPPORTS_TEST_EXTERNAL_ROOT` or `APPPORTS_RENDER_UI_OUTPUT` in CI, or run the test process with `sudo`.
+- Before updating `main` after changes to shared copy, scan, or transfer primitives, complete all three test checks and the Release clean build on that disposable runner. Focused migration suites and real-volume round trips do not cover every caller, including normal app termination. A temporary validation branch may run the existing manual workflow without opening a PR; require success for every check, including advisory localization, before advancing `main` to the tested commit.
 
 ## Branch Convention
 

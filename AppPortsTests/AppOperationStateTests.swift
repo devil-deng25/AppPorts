@@ -61,6 +61,12 @@ final class AppOperationStateTests: XCTestCase {
     }
 
     func testNormalQuitCancelsARealDataCopyAndRepliesOnlyAfterItsRecoveryRecordIsSaved() async throws {
+        for copies in [1, 4] {
+            try await checkNormalQuitCancelsARealDataCopy(copies: copies)
+        }
+    }
+
+    private func checkNormalQuitCancelsARealDataCopy(copies: Int) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AppPortsQuit-" + UUID().uuidString)
             .resolvingSymlinksInPath()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -72,6 +78,9 @@ final class AppOperationStateTests: XCTestCase {
         }
         try Data("first current document".utf8).write(to: source.appendingPathComponent("a.txt"))
         try Data("second current document".utf8).write(to: source.appendingPathComponent("b.txt"))
+        try Data("third current document".utf8).write(to: source.appendingPathComponent("c.txt"))
+        try Data("fourth current document".utf8).write(to: source.appendingPathComponent("d.txt"))
+        try Data("not started after quit".utf8).write(to: source.appendingPathComponent("z.txt"))
         let original = try TreeCopySession.snapshot(at: source)
         let ledger = root.appendingPathComponent("records.plist")
         let store = ContainerMountStore(fileURL: ledger)
@@ -83,8 +92,28 @@ final class AppOperationStateTests: XCTestCase {
         let job = try XCTUnwrap(state.startTask(for: token) {
             defer { state.finish(token) }
             do {
-                _ = try await DataDirMover(homeDir: home, store: store).migrateAndComplete(item: item, to: external) { progress in
-                    if progress.currentFile == "a.txt" { await observation.requestQuit() }
+                _ = try await TreeCopySession.$concurrentSmallFileCopies.withValue(copies) {
+                    try await DataDirMover(homeDir: home, store: store).migrateAndComplete(item: item, to: external) { progress in
+                        if progress.currentFile == "a.txt" {
+                            do {
+                                let saved = ContainerMountStore(fileURL: ledger)
+                                let pending = try XCTUnwrap(saved.transfers().first)
+                                let partial = URL(fileURLWithPath: try XCTUnwrap(pending.preparationPath))
+                                let completed = copies == 1 ? ["a.txt"] : ["a.txt", "b.txt", "c.txt", "d.txt"]
+                                for name in completed {
+                                    XCTAssertEqual(try Data(contentsOf: partial.appendingPathComponent(name)),
+                                                   try Data(contentsOf: source.appendingPathComponent(name)))
+                                }
+                                if copies == 1 {
+                                    XCTAssertFalse(FileManager.default.fileExists(atPath: partial.appendingPathComponent("b.txt").path))
+                                }
+                                XCTAssertFalse(FileManager.default.fileExists(atPath: partial.appendingPathComponent("z.txt").path))
+                            } catch {
+                                XCTFail("Cannot inspect the first copy callback: \(error)")
+                            }
+                            await observation.requestQuit()
+                        }
+                    }
                 }
                 XCTFail("The copy must stop at cancellation before switching the live source")
             } catch {
@@ -101,10 +130,26 @@ final class AppOperationStateTests: XCTestCase {
         let reopened = ContainerMountStore(fileURL: ledger)
         let pending = try XCTUnwrap(reopened.transfers().first)
         XCTAssertTrue(pending.isPreparationRecoverable)
+        XCTAssertNil(pending.baseline)
+        XCTAssertFalse(pending.isDataSwitchComplete)
         let partial = URL(fileURLWithPath: try XCTUnwrap(pending.preparationPath))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: partial.appendingPathComponent("a.txt").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.appendingPathComponent("b.txt").path))
+        XCTAssertEqual(try Data(contentsOf: partial.appendingPathComponent("a.txt")),
+                       try Data(contentsOf: source.appendingPathComponent("a.txt")))
+        if copies == 1 {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: partial.appendingPathComponent("b.txt").path))
+        } else {
+            // A batch joins its writes before the first ordered callback. Quit
+            // must stop the next batch rather than discard completed siblings.
+            for name in ["b.txt", "c.txt", "d.txt"] {
+                XCTAssertEqual(try Data(contentsOf: partial.appendingPathComponent(name)),
+                               try Data(contentsOf: source.appendingPathComponent(name)))
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.appendingPathComponent("z.txt").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: external.appendingPathComponent("Payload").path))
+        let stopped = try TreeCopySession.snapshot(at: partial)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: partial), stopped)
 
         try await DataDirMover(homeDir: home, store: reopened).cancelPreparation(operationID: pending.operationID)
         XCTAssertTrue(try reopened.transfers().isEmpty)
