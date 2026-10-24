@@ -50,8 +50,19 @@ enum CodeIdentity {
         var staticCode: SecStaticCode?
         guard SecCodeCopyStaticCode(code, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
               let staticCode else { return nil }
+        return snapshot(of: staticCode)
+    }
+
+    /// 读取静态代码对象（磁盘上的镜像）的签名信息。
+    ///
+    /// 必须带 `kSecCSSigningInformation`：默认标志位下返回的字典里**没有**
+    /// `kSecCodeInfoCertificates`，Team 信息也不一定在。少了这个标志，证书那一层判定
+    /// 永远不会命中，所有构建都会静默退化成 adhoc —— 这正是「签名换了却仍要求重装」
+    /// 那种最难查的故障。
+    static func snapshot(of staticCode: SecStaticCode) -> Snapshot? {
         var information: CFDictionary?
-        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
               let dictionary = information as? [String: Any] else { return nil }
 
         let identifier = dictionary[kSecCodeInfoIdentifier as String] as? String ?? ""

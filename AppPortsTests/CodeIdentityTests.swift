@@ -64,4 +64,24 @@ final class CodeIdentityTests: XCTestCase {
         XCTAssertEqual(CodeIdentity.shortKind("adhoc|com.shimoko.AppPorts|STxJ9tbp8dPm"), "adhoc:STxJ9tbp")
         XCTAssertEqual(CodeIdentity.shortKind("unexpected"), "unexpected")
     }
+
+    /// 真实镜像上跑一遍，专门钉住 `snapshot(of:)` 的标志位。
+    ///
+    /// `SecCodeCopySigningInformation` 默认标志位返回的字典里**没有** `certificates`，
+    /// 只有加了 `kSecCSSigningInformation` 才有。少了它，证书那一层永远不命中，
+    /// 所有构建都会静默退化成 adhoc —— 而这种故障不会报错，只会表现成「换不换签名
+    /// 都要重装助手」，没法从现象倒推。系统二进制一定带证书，拿它当基准最稳。
+    func testReadingARealBinaryExposesItsCertificate() throws {
+        var staticCode: SecStaticCode?
+        let status = SecStaticCodeCreateWithPath(URL(fileURLWithPath: "/bin/cp") as CFURL,
+                                                SecCSFlags(rawValue: 0), &staticCode)
+        let code = try XCTUnwrap(staticCode, "无法读取 /bin/cp 的静态代码（status \(status)）")
+        let snapshot = try XCTUnwrap(CodeIdentity.snapshot(of: code), "读不到 /bin/cp 的签名信息")
+        XCTAssertFalse(snapshot.identifier.isEmpty)
+        XCTAssertNotNil(snapshot.leafCertificateDigest, "系统二进制带证书，读不到说明取签名信息时漏了 kSecCSSigningInformation")
+        XCTAssertNotNil(snapshot.cdHash)
+        let fingerprint = CodeIdentity.fingerprint(snapshot)
+        XCTAssertTrue(fingerprint.hasPrefix("cert|") || fingerprint.hasPrefix("team|"),
+                      "有证书却落到别的层级：\(fingerprint)")
+    }
 }
