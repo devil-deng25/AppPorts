@@ -30,7 +30,11 @@ struct DataDirProgressContent: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: 34, alignment: .topLeading)
 
-            Group {
+            if let overallProgress {
+                MigrationOverallProgress(fraction: overallProgress)
+            }
+
+            HStack {
                 Text((URL(fileURLWithPath: snapshot.directoryPath).pathExtension.lowercased() == "app"
                     ? "当前应用".localized : "当前目录".localized)
                     + "：" + URL(fileURLWithPath: snapshot.directoryPath).lastPathComponent)
@@ -41,12 +45,16 @@ struct DataDirProgressContent: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .opacity(snapshot.directoryPath.isEmpty ? 0 : 1)
                     .accessibilityHidden(snapshot.directoryPath.isEmpty)
+                if snapshot.unitCount > 1 {
+                    Text("\(snapshot.unitIndex + 1) / \(snapshot.unitCount)")
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(height: 18)
 
-            if let overallProgress {
-                MigrationOverallProgress(fraction: overallProgress)
-            }
+            MigrationDirectorySteps(snapshot: snapshot)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -57,7 +65,7 @@ struct DataDirProgressContent: View {
                                 .controlSize(.small)
                                 .frame(width: 16, height: 16)
                                 .accessibilityHidden(true)
-                            Text(verbatim: snapshot.stepTitle.isEmpty ? snapshot.stage.title : snapshot.stepTitle)
+                            Text(verbatim: snapshot.stepTitle.isEmpty ? snapshot.presentationStage.title : snapshot.stepTitle)
                                 .font(.system(size: 13, weight: .semibold))
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
@@ -71,10 +79,10 @@ struct DataDirProgressContent: View {
                         if let fraction = snapshot.fraction {
                             ProgressView(value: fraction)
                                 .progressViewStyle(.linear)
-                                .accessibilityLabel(snapshot.stage.title)
+                                .accessibilityLabel(snapshot.presentationStage.title)
                         }
         
-                        Text(verbatim: snapshot.detail.isEmpty ? snapshot.stage.explanation : snapshot.detail)
+                        Text(verbatim: snapshot.detail.isEmpty ? snapshot.presentationStage.explanation : snapshot.detail)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

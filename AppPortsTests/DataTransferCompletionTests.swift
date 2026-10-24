@@ -106,6 +106,30 @@ struct DataTransferCompletionTests {
         #expect(fixture.source.resolvingSymlinksInPath().path == fixture.destination.path)
     }
 
+    @Test("A new migration clears same-path predecessor cleanup presentation")
+    func migrateAfterRetainedRestoreStartsNewCopyPresentation() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.retainedRoundTrip()
+        let observer = DataTransferProgress()
+        let result = try await observer.track { update in
+            try await fixture.mover.migrateAndComplete(item: fixture.item, to: fixture.external) { value in
+                await update(value)
+                if value.stage == .copying, value.showsByteProgress {
+                    #expect(!observer.snapshot().hasEnteredCleanup)
+                    #expect(!observer.snapshot().hasEnteredEntrySwitch)
+                    #expect(observer.snapshot().directoryStep == 2)
+                    #expect(observer.snapshot().unitFraction <= 0.55)
+                }
+            }
+        }
+        #expect(result.cleanupWarning == nil)
+        #expect(observer.snapshot().directoryStep == 5)
+        #expect(try fixture.store.transfers().isEmpty)
+        #expect(try fixture.payload(at: fixture.destination) == "original")
+        #expect(fixture.source.resolvingSymlinksInPath().path == fixture.destination.path)
+    }
+
     @Test("Explicit cleanup of a completed restore removes its retained ancestors oldest first")
     func retainedLineageOrder() async throws {
         let writes = LedgerWrites()
@@ -116,7 +140,12 @@ struct DataTransferCompletionTests {
         let originalBackup = URL(fileURLWithPath: try #require(records[0].backupPath))
         let restoredIdentity = try DataPathIdentity.capture(fixture.source)
 
-        try await fixture.mover.cleanupRetainedLineage(operationID: records[1].operationID)
+        let observer = DataTransferProgress()
+        try await observer.track { _ in
+            try await fixture.mover.cleanupRetainedLineage(operationID: records[1].operationID)
+        }
+        #expect(observer.snapshot().directoryStep == 5)
+        #expect(observer.snapshot().hasEnteredCleanup)
 
         #expect(writes.cleanupOrder == records.map(\.operationID))
         #expect(try fixture.store.transfers().isEmpty)

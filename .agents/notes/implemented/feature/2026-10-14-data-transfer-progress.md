@@ -27,6 +27,8 @@ Status: implemented
 - 与[APFS 自动恢复与清理](../../implemented/architecture/2026-10-12-apfs-automatic-recovery.md)部分重叠：只补齐脱离取消任务后的可见进度，保留其独立恢复预算。
 - 其余命中“校验／清理”的签名备份、所有权和旧基线重试决定属于执行安全约束，不被此呈现改动吸收或替代。
 
+全任务估算与当前目录步骤的独立显示见[进度显示范围](../bug-fix/2026-10-24-migration-progress-scopes.md)，本篇的观察和执行保护继续成立。
+
 ## Alternatives considered
 
 - **只补旋转动画和计时器**：改动小、没有跨模块观察器，但无法解释当前文件工作，也容易把界面仍在刷新误认为存储仍有进展。

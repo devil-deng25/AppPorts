@@ -998,6 +998,8 @@ actor ContainerVolumeMigrator {
             return nil
         }
         let path = URL(fileURLWithPath: transfer.originalPath).standardizedFileURL.path
+        DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: path))
+        DataTransferSession.progress?.observeDirectoryWorkflow()
         // Admission failures belong to the caller that failed to acquire the
         // path. They must never recover or cancel the operation that owns it.
         guard completingPaths.insert(path).inserted else { throw DataOperationSafety.Failure.occupied(path) }
@@ -1026,12 +1028,14 @@ actor ContainerVolumeMigrator {
         }
         let path = URL(fileURLWithPath: transfer.originalPath).standardizedFileURL.path
         if transfer.isDataSwitchComplete {
+            DataTransferSession.progress?.observeResumedCopy(cleanup: true)
             return await completeVerifiedMountResume(transfer, progressHandler: progressHandler, requireUnchangedActive: false)
         }
         guard transfer.isVerifiedSwitchRecoverable, transfer.cleanupVolumeContainerUUID == nil,
               let encoded = transfer.baseline else {
             throw DataOperationSafety.Failure.inspection(transfer.operationID.uuidString)
         }
+        DataTransferSession.progress?.observeResumedCopy(cleanup: false)
         var state = VerifiedMountResume(transfer: transfer, transfers: try store.transfers(), mounts: try store.recordsStrict(),
             links: try store.managedLinks(), cleanups: try store.pendingCleanups())
         let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
@@ -1232,6 +1236,7 @@ actor ContainerVolumeMigrator {
         let backup = URL(fileURLWithPath: backupPath)
         let staging = URL(fileURLWithPath: stagingPath)
         if !isMountPoint(local), transfer.backupIdentity != nil {
+            DataTransferSession.progress?.observeEntrySwitch()
             // The source was already moved after successful copy verification.
             // Following a reboot the same destination may contain application
             // writes at /Volumes. Finish its activation; never replace it with
@@ -1253,6 +1258,7 @@ actor ContainerVolumeMigrator {
             activating.candidateActivationAttempted = true
             try saveVerifiedResume(activating, state: &state)
             let expectedState = state
+            DataTransferSession.progress?.observeEntrySwitch()
             try await mountVolume(uuid, at: local, operationID: transfer.operationID.uuidString,
                 knownMountPoint: current.map { .mounted(at: $0) } ?? .unmounted,
                 requireOwnership: requiresOwnership,
@@ -1275,6 +1281,7 @@ actor ContainerVolumeMigrator {
                   try DataPathIdentity.capture(local, volumeUUID: uuid).matchesFilesystemObject(destinationIdentity) else {
                 throw DataOperationSafety.Failure.conflict(local.path)
             }
+            DataTransferSession.progress?.observeEntrySwitch()
             var completed = state.transfer
             // Activation is proven by the live volume. A missing or replaced
             // old backup may prevent cleanup, but cannot prevent data retrieval.
@@ -1364,6 +1371,7 @@ actor ContainerVolumeMigrator {
                     throw DataOperationSafety.Failure.conflict(local.path)
                 }
                 try requireVerifiedResumeOriginal(at: local, identity: transfer.sourceIdentity, baseline: baseline)
+                DataTransferSession.progress?.observeEntrySwitch()
                 try moveTree(local, to: backup)
                 try DurableFileIO.syncDirectory(at: local.deletingLastPathComponent())
                 var moved = state.transfer
@@ -1376,6 +1384,7 @@ actor ContainerVolumeMigrator {
             activating.candidateActivationAttempted = true
             try saveVerifiedResume(activating, state: &state)
             let expectedState = state
+            DataTransferSession.progress?.observeEntrySwitch()
             try await mountVolume(uuid, at: local, operationID: transfer.operationID.uuidString, allowRelocation: false,
                 requireOwnership: requiresOwnership,
                 validateBeforeMutation: {
@@ -1442,6 +1451,7 @@ actor ContainerVolumeMigrator {
             guard try !verifiedResumeEntryExists(staging) else { throw DataOperationSafety.Failure.conflict(staging.path) }
             try requireVerifiedResumeLedger(state)
             try safety.requireLocalRestoreParent(at: local, isMountPoint: isMountPoint)
+            DataTransferSession.progress?.observeEntrySwitch()
             try beginVerifiedResumeRestore(&state)
             try requireVerifiedResumeLedger(state)
             try DurableFileIO.syncTree(at: local, excludingRootEntries: Self.volumeSystemArtifacts)
@@ -1510,6 +1520,7 @@ actor ContainerVolumeMigrator {
                 throw DataOperationSafety.Failure.conflict(source.path)
             }
             try safety.requireMountPointParentAccess(at: local)
+            if source == local { DataTransferSession.progress?.observeEntrySwitch() }
             try await unmountVolume(mountPoint: source)
             try requireVerifiedResumeLedger(state)
             guard !isMountPoint(source) else { throw MigrationError.unmountFailed(source, "") }
@@ -1517,6 +1528,7 @@ actor ContainerVolumeMigrator {
             if source == recovery { removeEmptyDirectoryQuietly(at: source) }
             if try verifiedResumeEntryExists(local) { try removeEmptyMountPoint(at: local) }
             try requireVerifiedResumeCopy(at: staging, identity: destinationIdentity, baseline: baseline)
+            DataTransferSession.progress?.observeEntrySwitch()
             try moveTree(staging, to: local)
             try DurableFileIO.syncDirectory(at: local.deletingLastPathComponent())
             try requireVerifiedResumeLedger(state)
@@ -1552,6 +1564,7 @@ actor ContainerVolumeMigrator {
         reusingOperationID: UUID? = nil
     ) async throws -> MigrationResult {
         DataTransferSession.progress?.setDirectory(item.path)
+        DataTransferSession.progress?.observeDirectoryWorkflow()
         await progressHandler?(.working(.preparing))
         let source = item.path.standardizedFileURL
         let restored = try completedRestoreLineage(at: source)
@@ -1655,6 +1668,7 @@ actor ContainerVolumeMigrator {
             transfer.phase = .switching
             try store.updateTransfer(transfer)
             try TreeCopySession.verifyUnchanged(at: source, against: baseline)
+            DataTransferSession.progress?.observeEntrySwitch()
             try moveTree(source, to: backup)
             try DurableFileIO.syncDirectory(at: source.deletingLastPathComponent())
             transfer.backupIdentity = try DataPathIdentity.capture(backup)
@@ -1912,6 +1926,7 @@ actor ContainerVolumeMigrator {
     private func restoreRetainingOriginal(record: ContainerMountRecord, estimatedTotalBytes: Int64,
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
         DataTransferSession.progress?.setDirectory(record.mountPointURL)
+        DataTransferSession.progress?.observeDirectoryWorkflow()
         await progressHandler?(.working(.preparing))
         let mountPoint = record.mountPointURL
         // Exact history ownership is required. A stale UI value cannot authorize recovery.
@@ -2064,6 +2079,7 @@ actor ContainerVolumeMigrator {
             try store.updateTransfer(transfer)
             try safety.requireLocalRestoreParent(at: mountPoint, isMountPoint: isMountPoint)
             try safety.requireMountPointParentAccess(at: mountPoint)
+            DataTransferSession.progress?.observeEntrySwitch()
             try store.beginRestore(transfer: transfer, removingMount: record)
             transfer.phase = .switching
             synchronizeAgent(store)
@@ -2220,6 +2236,7 @@ actor ContainerVolumeMigrator {
               let expectedBackup = transfer.backupIdentity else {
             throw DataOperationSafety.Failure.inspection(operationID.uuidString)
         }
+        DataTransferSession.progress?.observeResumedCopy(cleanup: true)
         let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
         let location = ActiveDataLocation(try store.completedLocation(after: operationID))
         let active = try await requireActiveData(for: transfer, matching: location)

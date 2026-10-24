@@ -64,10 +64,13 @@ AppPorts 的结果显示独立于 Finder。`PhysicalDiskMonitor` 只注册 Disk 
 - **IOMedia 存在即认定卷仍在线**：身份稳定，适合防止把部分卸载误认作整盘消失；但桥接盒可在全部卷卸载后继续保留介质对象。增加内核挂载状态，并使用“全部卸载但仍连接”的独立状态，而不放宽物理重连接识别。
 - **根据 Finder 窗口、脚本退出码或超时推断取消/成功**：接近用户操作，但退出码只证明请求已接受，仍在线也可能只是原生对话框等待，无法可靠判定取消；独立观察内核物理连接，并保留明确恢复入口。
 - **捕获全部外部弹出请求**：覆盖用户直接操作 Finder，但引入常驻仲裁、内部请求区分和原请求替换。本轮只覆盖 AppPorts 入口。
+- **重试前严格读取全部应用记录**：可以一次得到整库合法性，但一条无关损坏 plist 会阻塞已切换事务的清理；单条严格读取已足够取得当前事务的暂停范围，其他诊断继续由 inventory 展示。
 
 ## Recovery and compatibility
 
 暂停覆盖整盘已知卷、容器和原挂载路径，并在自动应用/数据事务重试、签名历史备份搬迁、材料删除、原位挂载入口共同生效。签名备份的新目的地在准备目录前过滤，选址后也核对，避免尚未保存目的地的旧记录绕过暂停。多物理成员的 APFS 构造拒绝全部已知成员，即使其中一个还有普通分区。
+
+`AppMigrationService.retryTransfer` 持锁后按请求的 operationID 严格读取单条应用记录，再检查其卷身份与源、目标、暂存路径是否暂停。无关损坏记录继续由 inventory 隔离并显示，不能在暂停检查时通过严格整库 records() 阻塞合法事务；选中的损坏或缺失记录仍拒绝重试，暂停文件无法读取仍拒绝恢复。原有内容基线、切换凭据和旧副本清理规则继续由事务执行器验证。
 
 EFI FAT UUID 在本机两块无关外盘上实际相同，因此只保留物理分区映射，不将 EFI 的 UUID 或路径作为数据盘身份。其他重复数据卷 UUID 保持歧义拒绝，不能仅凭同名或 diskN 恢复。
 
@@ -75,6 +78,7 @@ EFI FAT UUID 在本机两块无关外盘上实际相同，因此只保留物理�
 
 ## Verification
 
+- CI run `40027290368` 的应用账本回归在重试 `Pending.app` 时因无关截断 plist 抛出 `DecodingError.dataCorrupted`；同一用例在本机修改前复现。单条读取修正后，隔离宿主的 `AppMigrationServiceTests` 61 项、`AppTransferTransactionTests` 76 项及 `DiskEjectionTests` 27 项全部通过（137 项 XCTest、27 项 Swift Testing），结果位于 `build/Validation/CIRetryRecordAfter.xcresult`。原失败用例还验证选中损坏记录拒绝、目标路径暂停时记录及目标指纹不变、暂停记录保留、解除暂停后完成清理，并保留两条无关损坏记录的原始字节和诊断。没有删除测试或放宽清理断言。最终 arm64/x86_64 Release `xcodebuild clean build` 及 bundle 签名验证通过；63 篇笔记目录、格式、归档校验与 `git diff --check` 通过。旧 CI run 对应修正前的提交 dc0e9de，不能作为修正后的验证结果；本轮 CI 修复没有替换安装版。
 - 桥接盒卸载状态修正通过 15 项 XCTest 和 39 项 Swift Testing，覆盖隐藏卷、EFI、快照来源、相似 BSD 前缀、挂载表读取失败以及三种 APFS 映射缺失。显式启用的真实桥接盒测试只读当前 hano：逐卷确认无挂载点，确认原 IOMedia 在线，并验证最终分类为 unmounted；不写暂停账本、不发起挂载或弹出。相关内核挂载表诊断和本地化回归同时通过。
 - 该修正的最终版本为 2.0.0 (47)，Debug/Release 产品配置同步递增 build。Release clean build 通过，备份后替换安装版；安装 Info.plist 与二进制哈希核对一致，原生主窗口启动通过。只删除已核对备份的临时旧安装副本，保留更新备份。
 - build 47 的安装验收未覆盖实际 TCC 代码要求，用户随后发现微信卷无法原位接回。build 48 改用原开发签名并经用户更新授权后，两个卷自动原位挂载且带 nobrowse；签名失配证据、安装约束和应用验收边界见[微信挂载恢复事故](../bug-fix/2026-10-12-wechat-mount-recovery.md)。这不改变上述隔离与只读测试的覆盖范围。

@@ -89,6 +89,30 @@ final class DataTransferProgress: @unchecked Sendable {
             (Double(unitIndex) + unitFraction) / Double(max(1, unitCount))
         }
         var hasStartedCopy = false
+        var tracksEntrySwitchBoundaries = false
+        var hasEnteredEntrySwitch = false
+        var hasEnteredCleanup = false
+        /// Low-level mount operations and protective notifications do not mean
+        /// the effective entry is being replaced. Keep their execution stage,
+        /// but present the directory workflow's actual commit boundary.
+        var presentationStage: DataTransferStage {
+            if hasEnteredCleanup { return .cleaning }
+            if hasEnteredEntrySwitch { return .switching }
+            if stage == .switching, tracksEntrySwitchBoundaries {
+                return hasStartedCopy ? .verifying : .preparing
+            }
+            return stage
+        }
+        var directoryStep: Int {
+            switch presentationStage {
+            case .waiting, .preparing, .recovering: return 0
+            case .scanning: return 1
+            case .copying, .synchronizing: return hasStartedCopy ? 2 : 0
+            case .verifying: return hasStartedCopy ? 3 : 0
+            case .switching: return hasStartedCopy || hasEnteredEntrySwitch ? 4 : 0
+            case .cleaning: return hasStartedCopy ? 5 : 0
+            }
+        }
         var startedAt: TimeInterval
         var stageStartedAt: TimeInterval
         var lastActivityAt: TimeInterval
@@ -158,6 +182,9 @@ final class DataTransferProgress: @unchecked Sendable {
                 state.unitIndex = index
                 state.unitFraction = 0
                 state.hasStartedCopy = false
+                state.tracksEntrySwitchBoundaries = false
+                state.hasEnteredEntrySwitch = false
+                state.hasEnteredCleanup = false
             }
         }
     }
@@ -173,6 +200,49 @@ final class DataTransferProgress: @unchecked Sendable {
         case .retainedCopy: verificationStart = 0.94; verificationWeight = 0.05
         }
         if state.hasStartedCopy { state.unitFraction = max(state.unitFraction, verificationStart) }
+    }
+
+    /// A resumed durable transaction can already have verified data even though
+    /// this observer never copied it. This changes presentation only.
+    func observeResumedCopy(cleanup: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        state.tracksEntrySwitchBoundaries = true
+        state.hasStartedCopy = true
+        if cleanup { state.hasEnteredCleanup = true }
+        state.unitFraction = max(state.unitFraction, cleanup ? 0.94 : 0.60)
+    }
+
+    /// Declare directory presentation before private preparation mounts. This
+    /// does not reset a predecessor's cleanup or alter execution protection.
+    func observeDirectoryWorkflow() {
+        lock.lock(); defer { lock.unlock() }
+        state.tracksEntrySwitchBoundaries = true
+    }
+
+    /// Presentation only: callers report this after final proof, immediately
+    /// before committing the effective entry. Original critical-section events
+    /// and durable transaction phases retain their existing ordering.
+    func observeEntrySwitch() {
+        lock.lock(); defer { lock.unlock() }
+        state.tracksEntrySwitchBoundaries = true
+        state.hasEnteredEntrySwitch = true
+        state.unitFraction = max(state.unitFraction, 0.88)
+    }
+
+    /// A predecessor may have been cleaned using this same observer and path.
+    /// Reset presentation at a new copy, never at an internal preparation stage.
+    /// App-bundle callers keep their existing switching events as the boundary.
+    func observeNewCopy(tracksEntrySwitchBoundaries: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        state.tracksEntrySwitchBoundaries = tracksEntrySwitchBoundaries
+        state.hasStartedCopy = false
+        state.hasEnteredEntrySwitch = false
+        state.hasEnteredCleanup = false
+        state.unitFraction = 0
+        state.copiedBytes = 0
+        state.totalBytes = 0
+        rateSampleBytes = 0
+        transition(to: .preparing, detail: "", at: clock())
     }
 
     func begin(_ stage: DataTransferStage, detail: String = "", currentFile: String = "", title: String = "") {
@@ -253,8 +323,12 @@ final class DataTransferProgress: @unchecked Sendable {
         case .copying: state.hasStartedCopy = true; floor = 0.20
         case .synchronizing: floor = state.hasStartedCopy ? 0.55 : 0.03
         case .verifying: floor = state.hasStartedCopy ? 0.60 : 0.03
-        case .switching: floor = 0.88
-        case .cleaning: floor = 0.94
+        case .switching:
+            floor = state.hasEnteredEntrySwitch || (!state.tracksEntrySwitchBoundaries && state.hasStartedCopy)
+                ? 0.88 : (state.hasStartedCopy ? state.unitFraction : 0.03)
+        case .cleaning:
+            if state.hasStartedCopy { state.hasEnteredCleanup = true }
+            floor = state.hasStartedCopy ? 0.94 : 0.03
         case .recovering: floor = state.unitFraction
         }
         state.unitFraction = max(state.unitFraction, floor)

@@ -177,6 +177,7 @@ final class MigrationSafetyRenderTests: XCTestCase {
             ("scanning", .scanning, 0, 0, 12_431, 0),
             ("copying", .copying, 18_330_000_000, 36_660_000_000, 0, 0),
             ("verifying", .verifying, 36_660_000_000, 36_660_000_000, 26_012, 0),
+            ("switching", .switching, 36_660_000_000, 36_660_000_000, 0, 0),
             ("cleaning", .cleaning, 36_660_000_000, 36_660_000_000, 41_520, 0),
             ("waiting", .synchronizing, 36_660_000_000, 36_660_000_000, 0, 25)
         ]
@@ -184,15 +185,21 @@ final class MigrationSafetyRenderTests: XCTestCase {
             LanguageManager.shared.language = language
             for scheme in [ColorScheme.light, .dark] {
                 for (name, stage, copied, total, items, age) in cases {
+                    let fractions: [DataTransferStage: Double] = [.preparing: 0.03, .scanning: 0.05,
+                        .copying: 0.375, .verifying: 0.72, .switching: 0.88, .cleaning: 0.94, .synchronizing: 0.55]
                     let snapshot = DataTransferProgress.Snapshot(stage: stage,
+                        directoryPath: "/example/msg",
                         currentFile: stage == .preparing ? "" : "Data/Documents/xwechat_files/Example Account With A Long Name/db_storage/message/message_0.db",
                         completedItems: items, readBytes: items > 0 ? 4_290_000_000 : 0,
                         copiedBytes: copied, totalBytes: total, copyBytesPerSecond: 93_000_000,
+                        unitFraction: fractions[stage] ?? 0,
+                        unitCount: 2, hasStartedCopy: copied > 0, hasEnteredEntrySwitch: stage == .switching, hasEnteredCleanup: stage == .cleaning,
                         startedAt: 0, stageStartedAt: 60, lastActivityAt: 143 - age, sampledAt: 143)
                     let title = String(format: "正在挂载迁移「%@」".localized,
                         "Containers: Data/Documents/xwechat_files/Example Account With A Long Name")
-                    try await render(DataDirProgressContent(title: title, snapshot: snapshot),
-                        size: NSSize(width: 540, height: 420),
+                    try await render(DataDirProgressContent(title: title, snapshot: snapshot,
+                        overallProgress: snapshot.overallFraction),
+                        size: NSSize(width: 540, height: 440),
                         to: output.appendingPathComponent("progress-\(language)-\(scheme)-\(name).png"), colorScheme: scheme)
                 }
             }

@@ -3,6 +3,147 @@ import Testing
 @testable import AppPorts
 
 struct DataTransferProgressTests {
+    @Test func groupedTaskDoesNotUseOverallFractionAsTheDirectoryStage() {
+        let progress = DataTransferProgress()
+        let msg = URL(fileURLWithPath: "/example/msg")
+        let business = URL(fileURLWithPath: "/example/business")
+        progress.configureUnits([msg, business])
+        progress.setDirectory(msg)
+        progress.observeDirectoryWorkflow()
+        progress.begin(.switching) // Mounting the new preparation volume.
+        #expect(progress.snapshot().presentationStage == .preparing)
+        #expect(progress.snapshot().overallFraction < 0.1)
+        #expect(progress.snapshot().directoryStep == 0)
+        progress.begin(.scanning)
+        #expect(progress.snapshot().overallFraction < 0.1)
+        #expect(progress.snapshot().directoryStep == 1)
+        progress.observeNewCopy(tracksEntrySwitchBoundaries: true)
+        progress.update(.init(copiedBytes: 100, totalBytes: 100, currentFile: "payload"))
+        progress.begin(.switching)
+        #expect(progress.snapshot().directoryStep == 3)
+        #expect(progress.snapshot().overallFraction < 0.44)
+        progress.observeEntrySwitch()
+        #expect(progress.snapshot().overallFraction == 0.44)
+        #expect(progress.snapshot().directoryStep == 4)
+        progress.begin(.cleaning)
+        progress.verify(.activeData)
+        #expect(progress.snapshot().directoryStep == 5)
+        progress.setDirectory(business)
+        progress.begin(.scanning)
+        #expect(progress.snapshot().unitIndex == 1)
+        #expect(progress.snapshot().directoryStep == 1)
+        #expect(!progress.snapshot().hasStartedCopy)
+        #expect(!progress.snapshot().hasEnteredCleanup)
+        #expect(!progress.snapshot().hasEnteredEntrySwitch)
+        #expect(progress.snapshot().overallFraction > 0.5)
+    }
+
+    @Test func privateMountsAndNestedChecksStayWithinTheEntryWorkflowStep() {
+        let progress = DataTransferProgress()
+        progress.observeNewCopy(tracksEntrySwitchBoundaries: true)
+        progress.update(.init(copiedBytes: 100, totalBytes: 100, currentFile: "payload"))
+        // The existing protective notification and private-volume unmount can
+        // precede final source/target proof; neither changes the effective entry.
+        progress.update(.init(copiedBytes: 100, totalBytes: 100, currentFile: "",
+                              showsByteProgress: false, stage: .switching))
+        #expect(progress.snapshot().stage == .switching)
+        #expect(progress.snapshot().presentationStage == .verifying)
+        #expect(progress.snapshot().directoryStep == 3)
+        #expect(progress.snapshot().unitFraction < 0.88)
+        progress.verify(.beforeSwitch)
+        progress.begin(.switching)
+        progress.verify(.sourceUnchanged)
+        #expect(progress.snapshot().directoryStep == 3)
+        #expect(progress.snapshot().unitFraction < 0.88)
+        progress.observeEntrySwitch()
+        progress.begin(.switching)
+        #expect(progress.snapshot().directoryStep == 4)
+        // Once an actual entry operation begins, an internal proof is part of
+        // completing that switch, rather than another directory workflow step.
+        progress.verify(.sourceUnchanged)
+        #expect(progress.snapshot().stage == .verifying)
+        #expect(progress.snapshot().directoryStep == 4)
+        progress.begin(.cleaning)
+        progress.begin(.switching)
+        progress.verify(.retainedCopy)
+        #expect(progress.snapshot().directoryStep == 5)
+        #expect(progress.snapshot().presentationStage == .cleaning)
+    }
+
+    @Test func preparationPresentationKeepsTheExistingCriticalSectionProtection() throws {
+        let progress = DataTransferProgress()
+        let control = MigrationTaskControl()
+        progress.observeDirectoryWorkflow()
+        try MigrationExecution.$control.withValue(control) {
+            control.pause()
+            progress.begin(.switching)
+            try control.checkpoint()
+            #expect(control.snapshot().pauseRequested)
+            #expect(!control.snapshot().paused)
+            #expect(progress.snapshot().unitFraction < 0.1)
+            #expect(progress.snapshot().presentationStage == .preparing)
+            control.resume()
+        }
+    }
+
+    @Test func appBundleSwitchingKeepsItsExistingPresentationBoundary() {
+        let progress = DataTransferProgress()
+        progress.observeNewCopy(tracksEntrySwitchBoundaries: false)
+        progress.update(.init(copiedBytes: 100, totalBytes: 100, currentFile: "application"))
+        progress.begin(.switching)
+        #expect(!progress.snapshot().tracksEntrySwitchBoundaries)
+        #expect(progress.snapshot().presentationStage == .switching)
+        #expect(progress.snapshot().directoryStep == 4)
+        #expect(progress.snapshot().unitFraction == 0.88)
+    }
+
+    @Test func sameDirectoryNewCopyResetsPredecessorCleanupWithoutChangingControl() throws {
+        let progress = DataTransferProgress()
+        let path = URL(fileURLWithPath: "/example/msg")
+        progress.setDirectory(path)
+        progress.observeResumedCopy(cleanup: true)
+        progress.begin(.cleaning)
+        progress.begin(.preparing)
+        #expect(progress.snapshot().directoryStep == 5, "Internal preparation keeps cleanup scope")
+        progress.setDirectory(path)
+        let control = MigrationTaskControl()
+        try MigrationExecution.$control.withValue(control) {
+            progress.begin(.switching)
+            control.pause()
+            progress.observeNewCopy(tracksEntrySwitchBoundaries: true)
+            try control.checkpoint()
+            #expect(!control.snapshot().paused, "Presentation reset must not release the critical section")
+            control.resume()
+        }
+        progress.begin(.scanning)
+        #expect(!progress.snapshot().hasEnteredCleanup)
+        #expect(!progress.snapshot().hasEnteredEntrySwitch)
+        #expect(!progress.snapshot().hasStartedCopy)
+        #expect(progress.snapshot().directoryStep == 1)
+        #expect(progress.snapshot().unitFraction < 0.1)
+        progress.update(.init(copiedBytes: 10, totalBytes: 100, currentFile: "new"))
+        #expect(progress.snapshot().directoryStep == 2)
+        #expect(progress.snapshot().unitFraction < 0.55)
+    }
+
+    @Test func resumedVerifiedTransactionsPresentSwitchAndCleanupWithoutRecopy() {
+        let switching = DataTransferProgress()
+        switching.observeResumedCopy(cleanup: false)
+        switching.begin(.switching)
+        #expect(switching.snapshot().directoryStep == 3)
+        switching.observeEntrySwitch()
+        #expect(switching.snapshot().directoryStep == 4)
+        #expect(switching.snapshot().unitFraction == 0.88)
+        let cleanup = DataTransferProgress()
+        cleanup.observeResumedCopy(cleanup: true)
+        cleanup.verify(.activeData)
+        #expect(cleanup.snapshot().directoryStep == 5)
+        #expect(cleanup.snapshot().unitFraction >= 0.94)
+        cleanup.begin(.cleaning)
+        #expect(cleanup.snapshot().directoryStep == 5)
+        #expect(cleanup.snapshot().copiedBytes == 0)
+    }
+
     @Test(arguments: [DataTransferStage.waiting, .preparing, .scanning, .synchronizing, .verifying, .switching, .cleaning, .recovering])
     func completedCopyDoesNotShowOverallCompletion(in stage: DataTransferStage) {
         let progress = DataTransferProgress()

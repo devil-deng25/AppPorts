@@ -124,6 +124,7 @@ actor DataDirMover {
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
         let identifier = try launchIdentifier(for: item)
         DataTransferSession.progress?.setDirectory(item.path)
+        DataTransferSession.progress?.observeDirectoryWorkflow()
         await progressHandler?(.working(.preparing))
         let source = item.path.standardizedFileURL
         let destination = externalBaseURL.appendingPathComponent(source.lastPathComponent).standardizedFileURL
@@ -179,6 +180,7 @@ actor DataDirMover {
             // the root metadata it changes; payload readback is already complete.
             transfer.phase = .switching
             try store.updateTransfer(transfer)
+            DataTransferSession.progress?.observeEntrySwitch()
             try moveTree(source, to: backup)
             try syncDirectory(at: source.deletingLastPathComponent())
             transfer.backupIdentity = try DataPathIdentity.capture(backup)
@@ -232,6 +234,7 @@ actor DataDirMover {
                                           progressHandler: FileCopier.ProgressHandler?, reusingOperationID: UUID? = nil) async throws -> UUID {
         let identifier = try launchIdentifier(for: item)
         DataTransferSession.progress?.setDirectory(item.path)
+        DataTransferSession.progress?.observeDirectoryWorkflow()
         await progressHandler?(.working(.preparing))
         let local = item.path.standardizedFileURL
         try finishUnstartedRestoreIfNeeded(at: local)
@@ -299,6 +302,7 @@ actor DataDirMover {
             try store.beginRestore(transfer: transfer, removingMount: nil)
             transfer.phase = .switching
             try requireIdentity(copyURL, transfer.destinationIdentity!)
+            DataTransferSession.progress?.observeEntrySwitch()
             try switchEntry(local: local, expectedLink: linkIdentity, replacement: copyURL, staging: staging)
             transfer.activePath = local.path
             try syncTree(at: local)
@@ -397,6 +401,8 @@ actor DataDirMover {
         let local = localPath.standardizedFileURL
         let source = currentExternalPath.standardizedFileURL
         let destination = normalizedExternalPath.standardizedFileURL
+        DataTransferSession.progress?.setDirectory(local)
+        DataTransferSession.progress?.observeDirectoryWorkflow()
         try requirePolicy(local)
         guard existingDirectory(at: source), !isSymbolicLink(at: source) else { throw DataDirError.externalNotFound(source) }
         guard isSymbolicLink(at: local), DataPathTopology.relationship(local.path, source.path) == .same else { throw DataDirError.invalidSymlink(local) }
@@ -454,6 +460,7 @@ actor DataDirMover {
             try createSymbolicLink(at: newLink, withDestinationURL: destination)
             transfer.phase = .switching
             try store.updateTransfer(transfer)
+            DataTransferSession.progress?.observeEntrySwitch()
             try switchEntry(local: local, expectedLink: linkIdentity, replacement: newLink, staging: staging)
             transfer.activePath = destination.path
             try requireIdentity(source, sourceIdentity)
@@ -723,6 +730,7 @@ actor DataDirMover {
         }
         guard try !DiskEjectionPauseStore(store: store).snapshot().blocks(transfer) else { throw DiskEjectionError.paused }
         DataTransferSession.progress?.setDirectory(URL(fileURLWithPath: transfer.originalPath))
+        DataTransferSession.progress?.observeDirectoryWorkflow()
         guard transfer.needsAutomaticCompletion else { return nil }
         if transfer.isPreparationRecoverable {
             await progressHandler?(.init(copiedBytes: 0, totalBytes: 0, currentFile: "重试".localized, showsByteProgress: false, stage: .recovering))
@@ -738,6 +746,9 @@ actor DataDirMover {
             throw DataOperationSafety.Failure.occupied(transfer.originalPath)
         }
         defer { completingPaths.remove(transfer.originalPath) }
+        if transfer.isVerifiedSwitchRecoverable || transfer.isDataSwitchComplete {
+            DataTransferSession.progress?.observeResumedCopy(cleanup: transfer.isDataSwitchComplete)
+        }
         if transfer.isDataSwitchComplete {
             return await completeSuccessfulTransfer(operationID: operationID, direction: transfer.direction,
                 progressHandler: progressHandler, requireUnchangedActive: false).cleanupWarning
@@ -773,6 +784,7 @@ actor DataDirMover {
                 throw DataOperationSafety.Failure.conflict(local.path)
             }
 
+            DataTransferSession.progress?.observeEntrySwitch()
             if transfer.direction == .migrate, transfer.stagingPath == nil {
                 if before.source == local {
                     try moveTree(local, to: backup)
@@ -1368,6 +1380,7 @@ actor DataDirMover {
         guard transfer.mode == .symlink, transfer.isDataSwitchComplete,
               let encoded = transfer.baseline, let retainedPath = transfer.backupPath,
               let retainedIdentity = transfer.backupIdentity else { throw DataOperationSafety.Failure.inspection(operationID.uuidString) }
+        DataTransferSession.progress?.observeResumedCopy(cleanup: true)
         let retained = URL(fileURLWithPath: retainedPath)
         let parent = retained.deletingLastPathComponent().resolvingSymlinksInPath()
         let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)

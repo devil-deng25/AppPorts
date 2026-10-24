@@ -18,6 +18,7 @@ actor TreeCopySession {
 
     /// Only scheduling varies; every scan still produces the same complete proof.
     @TaskLocal static var concurrentScanReads = 4
+    @TaskLocal static var concurrentSmallFileCopies = 4
     @TaskLocal private static var scanReadCancellation: ScanReadCancellation?
     @TaskLocal private static var isParallelScanRead = false
 
@@ -98,6 +99,7 @@ actor TreeCopySession {
         }
         let source = Self.canonicalRoot(source)
         DataTransferSession.progress?.setDirectory(logicalSourceRoot ?? source, onlyIfUnset: true)
+        DataTransferSession.progress?.observeNewCopy(tracksEntrySwitchBoundaries: profile.recordsContentDigests)
         let destination = Self.canonicalRoot(destination)
         let finalDestination = Self.canonicalRoot(finalDestination ?? destination)
         guard !Self.contains(source.path, destination.path), !Self.contains(destination.path, source.path) else {
@@ -647,6 +649,84 @@ actor TreeCopySession {
             destinationIgnoresOwnership = snapshot.ownershipCompatibility?.destinationIgnoresOwnership == true
             totalLogicalBytes = snapshot.logicalBytes
         }
+
+        /// Workers share only immutable values. Their mutable counters and link
+        /// inventory remain private, and no worker invokes an external callback.
+        init(workerFor context: CopyContext) {
+            snapshot = context.snapshot
+            index = context.index
+            source = context.source
+            destination = context.destination
+            progress = nil
+            created = nil
+            extentSeek = context.extentSeek
+            profile = context.profile
+            destinationIgnoresOwnership = context.destinationIgnoresOwnership
+            totalLogicalBytes = context.totalLogicalBytes
+        }
+    }
+
+    /// The wrapper transfers one context to one child task; it is never shared
+    /// between workers or read by the parent while that child is running.
+    private struct SmallFileCopy: @unchecked Sendable {
+        let path: String
+        let context: CopyContext
+    }
+
+    nonisolated private static func canBatchSmallFile(_ path: String, context: CopyContext) -> Bool {
+        guard context.profile.recordsContentDigests, let index = context.index.byPath[path] else { return false }
+        let entry = context.snapshot.entries[index]
+        // Larger batches regress write/sync latency on the tested external APFS
+        // SSD. Keep concurrency within the tiny-file range that benefits there.
+        return entry.kind == .file && entry.size <= 16_384 && entry.hardlinkGroup == nil
+            && entry.resourceFork == nil && entry.extendedAttributes[ResourceForkStream.attributeName] == nil
+    }
+
+    /// The structured group joins all writes before descriptors can be closed,
+    /// callbacks can mutate data, or the caller can start recovery/cleanup.
+    nonisolated private static func copySmallFileBatch(_ paths: [String], sourceParent: Int32,
+                                                      targetParent: Int32, context: CopyContext) async throws {
+        guard !paths.isEmpty else { return }
+        if paths.count == 1 {
+            let path = paths[0]
+            let name = (path as NSString).lastPathComponent
+            try await copyNodeContents(path: path, sourceParent: sourceParent, sourceName: name,
+                                       targetParent: targetParent, targetName: name, context: context)
+            return
+        }
+        let control = MigrationExecution.control
+        let counts = try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(of: (Int, Int64).self) { group in
+                for (index, path) in paths.enumerated() {
+                    let worker = SmallFileCopy(path: path, context: CopyContext(workerFor: context))
+                    group.addTask {
+                        let name = (worker.path as NSString).lastPathComponent
+                        try await copyNodeContents(path: worker.path, sourceParent: sourceParent, sourceName: name,
+                            targetParent: targetParent, targetName: name, context: worker.context)
+                        return (index, worker.context.copiedBytes)
+                    }
+                }
+                var counts = Array(repeating: Int64(0), count: paths.count)
+                do {
+                    while let (index, bytes) = try await group.next() { counts[index] = bytes }
+                } catch {
+                    group.cancelAll()
+                    // A sibling may already be sleeping in a paused checkpoint.
+                    // Wake the operation's control before the group joins it.
+                    control?.cancel()
+                    throw error
+                }
+                return counts
+            }
+        } onCancel: {
+            control?.cancel()
+        }
+        for (path, bytes) in zip(paths, counts) {
+            try MigrationExecution.checkpoint()
+            context.copiedBytes += bytes
+            await context.progress?(FileCopier.Progress(copiedBytes: context.copiedBytes,
+                totalBytes: context.totalLogicalBytes, currentFile: (path as NSString).lastPathComponent))
+        }
     }
 
     nonisolated private static func copyNode(path: String, sourceParent: Int32, sourceName: String,
@@ -694,11 +774,27 @@ actor TreeCopySession {
             try requireOwnership(fd: targetFD.value, path: targetName, allowingIgnored: context.destinationIgnoresOwnership)
             try setACL(nil, fd: targetFD.value, path: targetName, profile: context.profile)
             guard fchmod(targetFD.value, 0o700) == 0 else { throw posix(targetName) }
+            let parallelism = context.profile.recordsContentDigests ? min(4, max(1, concurrentSmallFileCopies)) : 1
+            var pending: [String] = []
             for child in (context.index.children[path] ?? []).sorted() {
+                if parallelism > 1, canBatchSmallFile(child, context: context) {
+                    pending.append(child)
+                    if pending.count == parallelism {
+                        try await copySmallFileBatch(pending, sourceParent: sourceFD.value,
+                            targetParent: targetFD.value, context: context)
+                        pending.removeAll(keepingCapacity: true)
+                    }
+                    continue
+                }
+                try await copySmallFileBatch(pending, sourceParent: sourceFD.value,
+                    targetParent: targetFD.value, context: context)
+                pending.removeAll(keepingCapacity: true)
                 let name = (child as NSString).lastPathComponent
                 try await copyNodeContents(path: child, sourceParent: sourceFD.value, sourceName: name,
                                            targetParent: targetFD.value, targetName: name, context: context)
             }
+            try await copySmallFileBatch(pending, sourceParent: sourceFD.value,
+                targetParent: targetFD.value, context: context)
         case .file, .namedPipe:
             if entry.hardlinkGroup != nil, let firstPath = context.hardlinks[entry.identity] {
                 // Destination traversal remains anchored and no-follow, even

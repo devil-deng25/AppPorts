@@ -2,10 +2,6 @@ import SwiftUI
 
 struct MigrationOverallProgress: View {
     let fraction: Double
-    private var stages: [(String, Double)] {
-        [("准备".localized, 0), ("扫描".localized, 0.05), ("复制".localized, 0.20),
-         ("校验".localized, 0.60), ("切换".localized, 0.88), ("收尾".localized, 0.94)]
-    }
 
     var body: some View {
         VStack(spacing: 5) {
@@ -19,16 +15,37 @@ struct MigrationOverallProgress: View {
             ProgressView(value: fraction)
                 .progressViewStyle(.linear)
                 .accessibilityLabel("总体进度".localized)
-            HStack {
-                ForEach(stages.indices, id: \.self) { index in
-                    if index > 0 { Spacer(minLength: 4) }
-                    Text(stages[index].0)
-                        .foregroundStyle(fraction >= stages[index].1 ? .primary : .secondary)
-                }
-            }
-            .font(.system(size: 10))
         }
         .help("总体进度包含准备、扫描、复制、磁盘写入、各轮校验、切换及收尾，按阶段估算；全部完成后才达到 100%。".localized)
+    }
+}
+
+/// Each step belongs to the directory named above it, not the grouped task bar.
+struct MigrationDirectorySteps: View {
+    let snapshot: DataTransferProgress.Snapshot
+    private var stages: [String] {
+        ["准备".localized, "扫描".localized, "复制".localized,
+         "校验".localized, "切换".localized, "收尾".localized]
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(stages.indices, id: \.self) { index in
+                VStack(spacing: 5) {
+                    Capsule()
+                        .fill(index == snapshot.directoryStep ? Color.accentColor : Color.secondary.opacity(0.25))
+                        .frame(height: 3)
+                    Text(stages[index])
+                        .font(.system(size: 10, weight: index == snapshot.directoryStep ? .semibold : .regular))
+                        .foregroundStyle(index == snapshot.directoryStep ? Color.accentColor : Color.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(index == snapshot.directoryStep ? .isSelected : [])
+            }
+        }
     }
 }
 

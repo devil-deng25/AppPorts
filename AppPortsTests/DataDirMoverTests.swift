@@ -386,11 +386,16 @@ final class DataDirMoverTests: XCTestCase {
         let mover = makeMover(homeDir: workspace.homeURL)
         try await mover.createLink(localPath: localDataURL, externalPath: currentExternalURL)
 
-        try await mover.normalizeManagedLink(
-            localPath: localDataURL,
-            currentExternalPath: currentExternalURL,
-            normalizedExternalPath: normalizedExternalURL
-        )
+        let observer = DataTransferProgress()
+        try await observer.track { _ in
+            try await mover.normalizeManagedLink(
+                localPath: localDataURL,
+                currentExternalPath: currentExternalURL,
+                normalizedExternalPath: normalizedExternalURL
+            )
+        }
+        XCTAssertTrue(observer.snapshot().hasEnteredEntrySwitch)
+        XCTAssertEqual(observer.snapshot().directoryStep, 4)
 
         try assertSymlink(localDataURL, pointsTo: normalizedExternalURL)
         XCTAssertTrue(fileManager.fileExists(atPath: currentExternalURL.path))

@@ -69,8 +69,14 @@ struct DataPreparationRecoveryTests {
     }
 
     @Test("A partial real copy can be cancelled or restarted after reopening its ledger",
-          arguments: ["symlink-migrate", "symlink-restore", "mount-migrate", "mount-restore"], [false, true])
-    func partialCopyHasExit(scenario: String, restart: Bool) async throws {
+          arguments: ["symlink-migrate", "symlink-restore", "mount-migrate", "mount-restore"], [1, 4])
+    func partialCopyHasExit(scenario: String, copies: Int) async throws {
+        for restart in [false, true] {
+            try await checkPartialCopyExit(scenario: scenario, restart: restart, copies: copies)
+        }
+    }
+
+    private func checkPartialCopyExit(scenario: String, restart: Bool, copies: Int) async throws {
         let fixture = try Fixture(mount: scenario.hasPrefix("mount"))
         defer { fixture.remove() }
         let restore = scenario.hasSuffix("restore")
@@ -78,8 +84,10 @@ struct DataPreparationRecoveryTests {
         let authority = fixture.authoritativeSource(restore: restore)
         let original = try TreeCopySession.snapshot(at: authority)
         let operation = Task {
-            try await fixture.perform(restore: restore) { progress in
-                if progress.currentFile == "a.txt" { withUnsafeCurrentTask { $0?.cancel() } }
+            try await TreeCopySession.$concurrentSmallFileCopies.withValue(copies) {
+                try await fixture.perform(restore: restore) { progress in
+                    if progress.currentFile == "a.txt" { withUnsafeCurrentTask { $0?.cancel() } }
+                }
             }
         }
         await #expect(throws: (any Error).self) { try await operation.value }
@@ -90,7 +98,15 @@ struct DataPreparationRecoveryTests {
         #expect(pending.destinationIdentity != nil)
         let candidate = URL(fileURLWithPath: try #require(pending.preparationPath))
         #expect(try String(contentsOf: candidate.appendingPathComponent("a.txt"), encoding: .utf8) == "first")
-        #expect(!FileManager.default.fileExists(atPath: candidate.appendingPathComponent("b.txt").path))
+        if copies == 1 {
+            #expect(!FileManager.default.fileExists(atPath: candidate.appendingPathComponent("b.txt").path))
+        } else {
+            #expect(try String(contentsOf: candidate.appendingPathComponent("b.txt"), encoding: .utf8) == "second")
+        }
+        let stopped = try TreeCopySession.snapshot(at: candidate)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        #expect(try TreeCopySession.snapshot(at: candidate) == stopped)
+        #expect(!pending.isDataSwitchComplete)
         #expect(try TreeCopySession.snapshot(at: authority) == original)
 
         let cold = ContainerMountStore(fileURL: fixture.ledger)
@@ -571,10 +587,23 @@ struct DataPreparationRecoveryTests {
         #expect(pending.baseline == nil)
         let creations = fixture.runner.commands(prefix: ["apfs", "addVolume"])
         let cold = ContainerMountStore(fileURL: fixture.ledger)
-        let warning: String?
-        if mount { warning = try await fixture.mountMover(store: cold).resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) }
-        else { warning = try await fixture.dataMover(store: cold).resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: nil) }
+        let observer = DataTransferProgress()
+        let warning = try await observer.track { update -> String? in
+            let progress: FileCopier.ProgressHandler = { value in
+                await update(value)
+                if value.stage == .switching {
+                    // This original protection callback precedes final proof;
+                    // it must not present an entry commit that has not begun.
+                    #expect(observer.snapshot().directoryStep == 3)
+                    #expect(observer.snapshot().unitFraction < 0.88)
+                }
+            }
+            if mount { return try await fixture.mountMover(store: cold).resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: progress) }
+            return try await fixture.dataMover(store: cold).resumeVerifiedTransfer(operationID: pending.operationID, progressHandler: progress)
+        }
         #expect(warning == nil)
+        #expect(observer.snapshot().directoryStep == 5)
+        #expect(observer.snapshot().hasEnteredCleanup)
         let active = mount ? fixture.local : fixture.external.appendingPathComponent("Payload")
         #expect(try DataPathIdentity.capture(active, volumeUUID: mount ? pending.createdVolumeUUID : nil).matchesFilesystemObject(identity))
         #expect(fixture.runner.commands(prefix: ["apfs", "addVolume"]) == creations)

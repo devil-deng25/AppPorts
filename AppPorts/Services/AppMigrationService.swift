@@ -578,12 +578,11 @@ struct AppMigrationService {
                 ?? "其他操作正在使用应用记录，请稍后重试。".localized, at: transferStore.directoryURL)
         }
         defer { operationLock.release() }
-        if let record = try transferStore.records().first(where: { $0.operationID == operationID }) {
-            let ejection = try DiskEjectionPauseStore(directory: transferStore.operationLockURL.deletingLastPathComponent()).snapshot()
-            guard !ejection.blocks(volumeUUIDs: [record.sourceIdentity.volumeUUID,
-                record.sourceParentIdentity.volumeUUID, record.destinationParentIdentity.volumeUUID],
-                paths: [record.sourcePath, record.destinationPath, record.stagePath]) else { throw DiskEjectionError.paused }
-        }
+        let record = try transferStore.record(operationID)
+        let ejection = try DiskEjectionPauseStore(directory: transferStore.operationLockURL.deletingLastPathComponent()).snapshot()
+        guard !ejection.blocks(volumeUUIDs: [record.sourceIdentity.volumeUUID,
+            record.sourceParentIdentity.volumeUUID, record.destinationParentIdentity.volumeUUID],
+            paths: [record.sourcePath, record.destinationPath, record.stagePath]) else { throw DiskEjectionError.paused }
         return try await transferTransaction(retrying: true).resume(operationID, progress: progressHandler)
     }
 

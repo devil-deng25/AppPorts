@@ -632,6 +632,12 @@ final class AppTransferTransactionTests: XCTestCase {
         XCTAssertEqual(Set(inspection.issues.map(\.url)), [broken, partial])
         XCTAssertEqual(try w.service().pendingTransfers().map(\.id), [pending.operationID])
         XCTAssertThrowsError(try w.store.record(brokenID), "An unreadable record never becomes a resumable operation")
+        do {
+            _ = try await w.service().retryTransfer(operationID: brokenID)
+            XCTFail("Retry must reject the selected damaged record")
+        } catch {
+            XCTAssertTrue(error is DecodingError)
+        }
 
         let other = w.local.appendingPathComponent("Independent.app")
         let otherTarget = w.external.appendingPathComponent("Independent.app")
@@ -639,6 +645,23 @@ final class AppTransferTransactionTests: XCTestCase {
         let moved = try await w.service().moveAndLink(appToMove: item(other), destinationURL: otherTarget,
             isRunning: false, progressHandler: nil)
         XCTAssertTrue(moved.isComplete, moved.pendingMessage ?? "")
+        let pendingURL = w.store.directoryURL.appendingPathComponent(pending.operationID.uuidString + ".plist")
+        let pendingBytes = try Data(contentsOf: pendingURL)
+        let targetBeforePause = try SignatureSnapshot.fingerprint(of: target)
+        let pauses = DiskEjectionPauseStore(directory: w.store.operationLockURL.deletingLastPathComponent())
+        let pause = try pauses.pause(.init(deviceIdentifier: "disk-fixture", connectionID: "fixture:1",
+            displayName: "Paused fixture", volumeUUIDs: [UUID().uuidString], containerUUIDs: [],
+            mountPaths: [target.path]))
+        do {
+            _ = try await w.service().retryTransfer(operationID: pending.operationID)
+            XCTFail("Retry must respect the selected operation's disk pause")
+        } catch DiskEjectionError.paused {} catch {
+            XCTFail("Expected a disk pause, received \(error)")
+        }
+        XCTAssertEqual(try Data(contentsOf: pendingURL), pendingBytes)
+        XCTAssertEqual(try SignatureSnapshot.fingerprint(of: target), targetBeforePause)
+        XCTAssertEqual(try pauses.snapshot().pauses, [pause])
+        try pauses.save([])
         let completed = try await w.service().retryTransfer(operationID: pending.operationID)
         XCTAssertTrue(completed.isComplete, completed.pendingMessage ?? "")
         XCTAssertEqual(try payload(target), "pending cleanup")

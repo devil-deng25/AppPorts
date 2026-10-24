@@ -22,6 +22,8 @@ Status: implemented
 - [数据进度](../../implemented/feature/2026-10-14-data-transfer-progress.md)部分重叠：显式传递现有观察器，计数对应实际完整读取，不新增扫描。
 - [同层并发应用复制](../../proposed/feature/2026-10-20-concurrent-app-tree-copy.md)属于复制调度，本篇只并发只读扫描，没有目标写入、硬链接创建或发布协议的交叉。
 
+普通小文件的写入调度见[有界小文件复制](2026-10-24-small-file-copy-batches.md)，本篇的读取证明和预算保持不变。
+
 ## Alternatives considered
 
 - 直接使用原始缓冲区更新 SHA-256：改动更窄，但本机 Release 优化微基准中 2 GiB 内存散列约 0.68–0.74 秒，与当前 ArraySlice 更新没有稳定差异，因此不把它作为主要性能方案。

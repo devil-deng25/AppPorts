@@ -6,6 +6,181 @@ import XCTest
 final class TreeCopySessionTests: XCTestCase {
     private let fm = FileManager.default
 
+    func testParallelSmallCopiesPreserveMetadataTopologyAndOrderedCallbacks() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        try fm.createDirectory(at: w.source.appendingPathComponent("nested"), withIntermediateDirectories: false)
+        for index in 0..<12 {
+            let file = w.source.appendingPathComponent(String(format: "file-%02d", index))
+            try Data(repeating: UInt8(index), count: 4096 + index).write(to: file)
+            try setXattr("org.appports.small-copy", Data("metadata".utf8), file)
+            if index == 6 { try setXattr("com.apple.ResourceFork", Data([1, 2, 3]), file) }
+            XCTAssertEqual(chmod(file.path, 0o440), 0)
+        }
+        XCTAssertEqual(link(w.source.appendingPathComponent("file-02").path,
+                            w.source.appendingPathComponent("nested/linked").path), 0)
+        XCTAssertEqual(mkfifo(w.source.appendingPathComponent("notification").path, 0o600), 0)
+        try fm.createSymbolicLink(atPath: w.source.appendingPathComponent("shortcut").path, withDestinationPath: "file-00")
+        let parallelParent = w.root.appendingPathComponent("parallel")
+        try fm.createDirectory(at: parallelParent, withIntermediateDirectories: false)
+        let parallelDestination = parallelParent.appendingPathComponent(w.destination.lastPathComponent)
+        let serialEvents = SmallCopyEvents()
+        let serial = try await TreeCopySession.$concurrentSmallFileCopies.withValue(1) {
+            try await TreeCopySession().copy(from: w.source, to: w.destination,
+                progressHandler: { await serialEvents.append($0) })
+        }
+        let parallelEvents = SmallCopyEvents()
+        let probe = SmallCopyProbe()
+        let session = DataTransferSession()
+        let parallel = try await DataTransferSession.$current.withValue(session) {
+            try await TreeCopySession.$concurrentSmallFileCopies.withValue(4) {
+                try await TreeCopySession(extentSeek: { fd, offset, kind in
+                    probe.seek(fd: fd, offset: offset, kind: kind)
+                }).copy(from: w.source, to: parallelDestination,
+                    progressHandler: { await parallelEvents.append($0) })
+            }
+        }
+        XCTAssertEqual(parallel, serial)
+        let serialRecords = await serialEvents.records
+        let parallelRecords = await parallelEvents.records
+        XCTAssertEqual(parallelRecords, serialRecords)
+        XCTAssertGreaterThan(probe.peak, 1, "Ordinary small files must actually overlap")
+        XCTAssertLessThanOrEqual(probe.peak, 4)
+        XCTAssertTrue(probe.inheritedCopyPhase)
+        XCTAssertEqual(session.measurements["hashReadBytes"], Double(serial.logicalBytes * 3))
+        try TreeCopySession.verifyCopy(at: parallelDestination, against: serial)
+    }
+
+    func testParallelSmallCopyTaskCancellationWakesPausedWorkersAndJoinsThem() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        for index in 0..<4 { try Data(repeating: 0x51, count: 4096).write(to: w.source.appendingPathComponent("file-\(index)")) }
+        let control = MigrationTaskControl()
+        let probe = SmallCopyProbe(pause: control)
+        let task = Task.detached {
+            try await MigrationExecution.$control.withValue(control) {
+                try await TreeCopySession(extentSeek: { fd, offset, kind in
+                    probe.seek(fd: fd, offset: offset, kind: kind)
+                }).copy(from: w.source, to: w.destination)
+            }
+        }
+        try await waitForScan(task: task, control: control) { control.snapshot().paused }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("Paused copy ignored Task cancellation") }
+        catch is CancellationError {}
+        catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertEqual(probe.active, 0)
+        let stopped = try TreeCopySession.snapshot(at: w.destination)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: w.destination), stopped)
+        for index in 0..<4 {
+            XCTAssertEqual(try Data(contentsOf: w.source.appendingPathComponent("file-\(index)")), Data(repeating: 0x51, count: 4096))
+        }
+    }
+
+    func testTinyCopyBoundaryKeepsLargerFilesSerial() async throws {
+        for size in [16_384, 16_385, 65_536] {
+            let w = try workspace()
+            defer { cleanup(w.root) }
+            for index in 0..<4 {
+                try Data(repeating: 0x51, count: size).write(to: w.source.appendingPathComponent("file-\(index)"))
+            }
+            let probe = SmallCopyProbe()
+            let baseline = try await TreeCopySession.$concurrentSmallFileCopies.withValue(4) {
+                try await TreeCopySession(extentSeek: { fd, offset, kind in
+                    probe.seek(fd: fd, offset: offset, kind: kind)
+                }).copy(from: w.source, to: w.destination)
+            }
+            if size == 16_384 { XCTAssertGreaterThan(probe.peak, 1) }
+            else { XCTAssertEqual(probe.peak, 1) }
+            XCTAssertEqual(probe.active, 0)
+            try TreeCopySession.verifyCopy(at: w.destination, against: baseline)
+        }
+    }
+
+    func testParallelSmallCopyFailureJoinsAllWorkersBeforeIndependentRetry() async throws {
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        for index in 0..<4 { try Data(repeating: 0x61, count: 4096).write(to: w.source.appendingPathComponent("file-\(index)")) }
+        let probe = SmallCopyProbe(failFirst: true)
+        let control = MigrationTaskControl()
+        do {
+            _ = try await MigrationExecution.$control.withValue(control) {
+                try await TreeCopySession(extentSeek: { fd, offset, kind in
+                    probe.seek(fd: fd, offset: offset, kind: kind)
+                }).copy(from: w.source, to: w.destination)
+            }
+            XCTFail("Injected I/O failure succeeded")
+        } catch { XCTAssertFalse(error is CancellationError, "The original I/O error must survive sibling cancellation") }
+        XCTAssertEqual(probe.active, 0)
+        let stopped = try TreeCopySession.snapshot(at: w.destination)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(try TreeCopySession.snapshot(at: w.destination), stopped)
+        let retry = w.root.appendingPathComponent("retry")
+        let baseline = try await TreeCopySession().copy(from: w.source, to: retry)
+        try TreeCopySession.verifyCopy(at: retry, against: baseline)
+    }
+
+    func testSmallFileCopyBenchmark() async throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["APPPORTS_SMALL_COPY_BENCHMARK_OUTPUT"],
+              let targetPath = ProcessInfo.processInfo.environment["APPPORTS_SMALL_COPY_BENCHMARK_ROOT"],
+              outputPath.hasPrefix("/"), targetPath.hasPrefix("/") else {
+            throw XCTSkip("Set the small-copy benchmark root and output to compare real storage")
+        }
+        let w = try workspace()
+        defer { cleanup(w.root) }
+        let target = URL(fileURLWithPath: targetPath).appendingPathComponent("AppPorts-small-copy-fixture-\(UUID().uuidString)")
+        try fm.createDirectory(at: target, withIntermediateDirectories: false)
+        defer { cleanup(target) }
+        let environment = ProcessInfo.processInfo.environment
+        let sizes = try (environment["APPPORTS_SMALL_COPY_BENCHMARK_SIZES"] ?? "4096,65536")
+            .split(separator: ",").map { try XCTUnwrap(Int($0)) }
+        let widths = try (environment["APPPORTS_SMALL_COPY_BENCHMARK_COPIES"] ?? "1,4,4,1")
+            .split(separator: ",").map { try XCTUnwrap(Int($0)) }
+        guard !sizes.isEmpty, sizes.allSatisfy({ (1...1_048_576).contains($0) }),
+              !widths.isEmpty, widths.allSatisfy({ (1...4).contains($0) }) else {
+            return XCTFail("Invalid small-copy benchmark parameters")
+        }
+        var results: [[String: Double]] = []
+        for size in sizes {
+            let source = w.source.appendingPathComponent("bytes-\(size)")
+            try fm.createDirectory(at: source, withIntermediateDirectories: false)
+            let payload = Data(repeating: 0x61, count: size)
+            for directory in 0..<10 {
+                let parent = source.appendingPathComponent("directory-\(directory)")
+                try fm.createDirectory(at: parent, withIntermediateDirectories: false)
+                for file in 0..<600 { try payload.write(to: parent.appendingPathComponent("file-\(file)")) }
+            }
+            for copies in widths {
+                // Complete pre-read for every sample; no content cache is used by
+                // the copier and every original proof pass remains timed.
+                _ = try TreeCopySession.snapshot(at: source)
+                let destination = target.appendingPathComponent("copy-\(UUID().uuidString)")
+                let session = DataTransferSession()
+                let progress = DataTransferProgress()
+                let start = ProcessInfo.processInfo.systemUptime
+                let baseline = try await DataTransferSession.$current.withValue(session) {
+                    try await progress.track { _ in
+                        try await TreeCopySession.$concurrentSmallFileCopies.withValue(copies) {
+                            try await TreeCopySession().copy(from: source, to: destination)
+                        }
+                    }
+                }
+                var result = session.measurements
+                result["total"] = ProcessInfo.processInfo.systemUptime - start
+                result["copies"] = Double(copies)
+                result["fileSize"] = Double(size)
+                result["fileCount"] = 6000
+                XCTAssertEqual(result["hashReadBytes"], Double(baseline.logicalBytes * 3))
+                results.append(result)
+                try fm.removeItem(at: destination)
+            }
+        }
+        let output = URL(fileURLWithPath: outputPath)
+        try fm.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["targetRoot": targetPath, "runs": results], options: [.prettyPrinted, .sortedKeys]).write(to: output)
+    }
+
     func testParallelScanPreservesManifestHardlinksResourceForkAndExactReadAccounting() throws {
         let w = try workspace()
         defer { cleanup(w.root) }
@@ -1144,5 +1319,51 @@ final class TreeCopySessionTests: XCTestCase {
     private func posix() -> NSError { NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
     private func assertFails(_ operation: () async throws -> TreeCopySnapshot, file: StaticString = #filePath, line: UInt = #line) async {
         do { _ = try await operation(); XCTFail("Unsafe copy succeeded", file: file, line: line) } catch {}
+    }
+}
+
+private actor SmallCopyEvents {
+    private(set) var records: [String] = []
+    func append(_ progress: FileCopier.Progress) {
+        records.append("\(progress.currentFile):\(progress.copiedBytes):\(progress.totalBytes)")
+    }
+}
+
+/// Hold the first batch at its real data seek so overlap, inherited TaskLocals,
+/// and in-flight cancellation are observed without a production-only hook.
+private final class SmallCopyProbe: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var started = 0
+    private var activeCount = 0
+    private var peakCount = 0
+    private var validPhase = true
+    private let pauseControl: MigrationTaskControl?
+    private let failFirst: Bool
+    init(pause: MigrationTaskControl? = nil, failFirst: Bool = false) {
+        pauseControl = pause
+        self.failFirst = failFirst
+    }
+    var active: Int { condition.lock(); defer { condition.unlock() }; return activeCount }
+    var peak: Int { condition.lock(); defer { condition.unlock() }; return peakCount }
+    var inheritedCopyPhase: Bool { condition.lock(); defer { condition.unlock() }; return validPhase }
+    func seek(fd: Int32, offset: off_t, kind: Int32) -> off_t {
+        guard kind == SEEK_DATA, offset == 0 else { return lseek(fd, offset, kind) }
+        condition.lock()
+        started += 1
+        let number = started
+        activeCount += 1
+        peakCount = max(peakCount, activeCount)
+        validPhase = validPhase && DataTransferSession.isMeasuring(.copy)
+        condition.broadcast()
+        let deadline = Date().addingTimeInterval(2)
+        while started < 4, condition.wait(until: deadline) {}
+        condition.unlock()
+        pauseControl?.pause()
+        if failFirst { Thread.sleep(forTimeInterval: number == 1 ? 0.005 : 0.05) }
+        condition.lock()
+        activeCount -= 1
+        condition.unlock()
+        if failFirst, number == 1 { errno = EIO; return -1 }
+        return lseek(fd, offset, kind)
     }
 }

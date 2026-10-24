@@ -40,6 +40,8 @@ case .directory:
 - **进度与取消语义**：并发后 `copiedBytes` 需要原子累加，取消要能中断在途任务而不只是不再发新任务。
 - **错误传播**：一个文件失败后，其余在途任务需要等待结束再抛错，否则上层会在清理时遇到仍在写入的目标（现有串行实现有同样的顾虑，`FileCopier` 里已有先例可循）。
 
+strictData 普通小文件的局部并发已由[有界小文件复制](../../implemented/architecture/2026-10-24-small-file-copy-batches.md)实现；本提案的应用包、大文件和跨目录调度仍未启用。
+
 ## Alternatives considered
 
 - **换成 `copyfile(COPYFILE_RECURSIVE)`**：实测仅 1.6 倍，且静默丢硬链接，见 Problem。
