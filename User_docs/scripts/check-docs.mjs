@@ -90,6 +90,8 @@ assert.equal(navigation.main.at(-1).name, '名词解释');
 assert.equal(navigation.main.flatMap(entry => entry.children ?? [entry]).length, 27);
 assert.deepEqual(navigation.main.filter(entry => entry.children).map(entry => entry.name), ['原理', '博客', '帮助与支持', '历史功能归档']);
 assert.equal(navigation.main.find(entry => entry.name === '历史功能归档').children.length, 4);
+assert.ok(!navigation.main.some(entry => entry.slug === 'storage-capabilities'));
+assert.ok(navigation.main.find(entry => entry.name === '帮助与支持').children.some(entry => entry.slug === 'storage-capabilities'));
 for (const slug of ['settings', 'changelog', 'sponsor', 'licenses', 'privacy']) assert.ok(navigation.main.some(entry => entry.slug === slug));
 assert.deepEqual(JSON.parse(await readFile(path.join(out, 'sponsors.json'))), JSON.parse(await readFile(path.join(root, '../sponsors.json'))));
 for (const asset of ['latest.json', 'logo.png']) assert.deepEqual(await readFile(path.join(out, asset)), await readFile(path.join(root, 'docs/public', asset)));

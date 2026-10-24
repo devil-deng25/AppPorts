@@ -16,7 +16,7 @@ Reconnect the original drive, check Finder or Disk Utility, unlock it if needed,
 
 ## Mount migration checks fail {#mount}
 
-Check permissions, connectivity, format and encryption under Readiness. Installation location and operation-specific space are checked when starting migration. Container mount migration currently requires unencrypted APFS; do not apply that requirement to all other content. Choose another destination or keep data local. See [storage preparation](/docs/storage-guide#apfs).
+Check permissions, connectivity, format and encryption under Readiness. Installation location and operation-specific space are checked when starting migration. Container mount migration currently requires APFS; do not apply that requirement to all other content. Choose another destination or keep data local. See [storage preparation](/docs/storage-guide#apfs).
 
 ## After migrating, an app says the data directory is not mine {#owners}
 
@@ -65,3 +65,15 @@ Migration runs locally. Logs and diagnostic packages are also stored locally fir
 ## Report a problem {#feedback}
 
 In [GitHub Issues](https://github.com/wzh4869/AppPorts/issues), describe AppPorts and macOS versions, drive format, the operation, the complete error message and reproducibility. Use Logs → Export Diagnostic Package to obtain records. Check for private paths or content before sharing. Packages are not uploaded automatically; do not publish messages, account details or unrelated files.
+
+## Automatic mounting stops after ejection {#eject}
+
+An explicit eject request from AppPorts pauses automatic mounting for the entire disk. Even if Finder's ejection is cancelled, unplug and reconnect the device to resume. If volumes remain mounted, quit apps using them and choose Retry Eject instead of pulling the cable. See [disk ejection](/docs/storage-guide#eject).
+
+## A task is paused, cancelling or needs attention {#tasks}
+
+Pause waits for a safe checkpoint; cancellation waits for safe cleanup. Keep the drive connected. Run in Background only closes details; return through Task Center in the toolbar. For a task needing attention, open Resolve Issues, keep the copies identified and follow [recovery](/docs/restore#recovery). Historical tasks do not automatically repeat migration after restart, and completed background cleanup does not prove the original migration succeeded.
+
+## Launching says app data is being migrated {#launch-protection}
+
+An updated native launcher asks you to wait while associated data is migrating, being restored or paused during copying. Check the task in AppPorts and wait for completion. Protection cannot stop other routes such as opening the real app directly. Do not bypass the warning; see [launch protection](/docs/datamigrae/operation#launch-protection) for its scope.

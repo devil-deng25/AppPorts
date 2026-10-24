@@ -6,7 +6,7 @@ Classic Data Migration Mode retains the earlier way of handling container data w
 
 Eligible container items can offer legacy link migration and related link-management actions. Protected directories and conflicts are still checked; enabling the option does not make every directory movable.
 
-In the current 1.9.1 development version, **migration and re-signing are separate actions**. Classic mode neither authorizes automatic re-signing nor restores the old “re-sign after migration” workflow. See [settings and permissions](/docs/settings#manual-signing) for manual signing and its restrictions.
+In the current 2.0.0 version, **migration and re-signing are separate actions**. Classic mode neither authorizes automatic re-signing nor restores the old “re-sign after migration” workflow. See [settings and permissions](/docs/settings#manual-signing) for manual signing and its restrictions.
 
 ## Why it is not the default {#why}
 

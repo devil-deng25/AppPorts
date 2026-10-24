@@ -14,7 +14,7 @@ AppPorts 是一款免费、开源的 macOS 应用与数据迁移工具。它帮�
 - **想知道为什么这样设计**：阅读“原理”；想了解实验过程与方案取舍，再看[博客](/docs/blog/overview)。
 - **遇到陌生名词或异常提示**：查[名词解释](/docs/glossary)、[徽章与状态](/docs/badges)或[常见问题与排查](/docs/faq)。
 
-当前文档按 **AppPorts 1.9.1 开发版**的界面和行为整理。正式版与开发版的区别见[更新日志](/docs/changelog)；使用较早版本时，请留意文中的版本说明。
+当前文档按 **AppPorts 2.0.0（build 50）**的界面和行为整理。正式版与开发版的区别见[更新日志](/docs/changelog)；使用较早版本时，请留意文中的版本说明。
 
 还可以参考 [DeepWiki 上的 AppPorts 文档](https://deepwiki.com/wzh4869/AppPorts)进一步了解项目。AppPorts 的来源，见[作者的博客文章](https://www.shimoko.com/p/appports/)。
 

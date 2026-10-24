@@ -14,7 +14,7 @@ You need a Mac running macOS 12 or later and a reliably connected external drive
 2. Follow the prompts to enable Full Disk Access for AppPorts in Privacy & Security. Grant App Management access if macOS requests it.
 3. Reopen AppPorts when prompted. You can then run Check under Settings → Readiness.
 
-**Only mount migration of container data requires unencrypted APFS storage.** Ordinary apps and folders have their own checks. You do not need to erase an existing disk for your first application migration. If its format is unsuitable, read [storage preparation](/docs/storage-guide#apfs).
+**Only mount migration of container data requires APFS storage.** Ordinary apps and folders have their own checks. You do not need to erase an existing disk for your first application migration. If its format is unsuitable, read [storage preparation](/docs/storage-guide#apfs).
 
 ## Complete your first move {#first-move}
 

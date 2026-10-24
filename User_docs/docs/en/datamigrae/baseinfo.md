@@ -18,7 +18,7 @@ For eligible container data directories, AppPorts creates a dedicated APFS volum
 | --- | --- | --- |
 | What remains at the original location | A link to an external location | A directory where the external volume is attached |
 | Typical use | Tool directories, custom folders and eligible ordinary data | Container data that passes the checks |
-| External storage requirements | Depend on content and filesystem capabilities | Currently requires unencrypted APFS |
+| External storage requirements | Depend on content and filesystem capabilities | Currently requires APFS |
 | Does it automatically re-sign the app? | Current migration does not automatically re-sign | Replacing the app signature is unnecessary |
 
 ## Why the whole container cannot simply move {#structure}

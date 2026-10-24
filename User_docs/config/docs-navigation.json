@@ -31,11 +31,6 @@
       "icon": "HardDrive"
     },
     {
-      "slug": "storage-capabilities",
-      "name": "目标盘存不住的应用信息",
-      "icon": "HardDrive"
-    },
-    {
       "name": "原理",
       "icon": "BookOpen",
       "children": [
@@ -100,6 +95,11 @@
           "slug": "macos-27",
           "name": "macOS 27 升级与修复",
           "icon": "RefreshCw"
+        },
+        {
+          "slug": "storage-capabilities",
+          "name": "目标盘存不住的应用信息",
+          "icon": "HardDrive"
         }
       ]
     },

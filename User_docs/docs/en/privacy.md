@@ -41,7 +41,7 @@ We do not collect, use, or disclose your personal information, or retain data ab
 - It includes no advertising or push-notification SDKs and serves no personalized advertising.
 - It does not generate or read device identifiers such as IDFA, IDFV, hardware serial numbers, or hardware UUIDs.
 - It requests no Contacts, Calendar, Reminders, Photos, microphone, camera, location, Bluetooth, Health, or similar permissions.
-- It does not access the system Keychain.
+- It accesses only its encrypted data-volume password items in the local login Keychain when you choose to save them; it does not read other apps’ passwords.
 - It does not set or read cookies for analytics or advertising.
 
 ## Article 5. Information read locally {#section-5}
@@ -72,6 +72,10 @@ Downloading releases and opening the website, documentation, repository, sponsor
 The Software stores these files and settings on your local devices without providing their contents externally:
 
 - ~/Library/Application Support/AppPorts/AppPorts_Log.txt: operations and diagnostics.
+- Local login Keychain: passwords for encrypted data volumes only when you choose to save them, without syncing; passwords are not written to logs or migration records and otherwise remain temporary process credentials;
+- App and tool-directory size caches and application search-location records: used to display sizes and cache times and maintain app libraries and local entries; file inventories are not uploaded;
+- `migration-task-history.json`: task names, categories, associated paths, times and display results; this is display history, not a queue that automatically repeats operations;
+- `disk-ejection-pauses.plist` and `launch-locks`: local mounting-pause information after an explicit eject request, and lock files used by local processes to coordinate launch protection during migration; these are not uploaded;
 - ~/Library/Application Support/AppPorts/contributors-cache.json: contributor cache to reduce repeated requests.
 - ~/Library/Application Support/AppPorts/sponsors-cache.json: sponsor cache for offline display.
 - Migration, mount, signing, and recovery records under ~/Library/Application Support/AppPorts/: app identity, paths, volume identifiers, and operation states needed for reconnection, signature restoration, and unfinished operations.
@@ -98,7 +102,7 @@ The Software may use these permissions:
 - Automation (Apple Events) to move or delete App Store apps through Finder. macOS asks for consent. You may refuse or revoke it in System Settings → Privacy & Security → Automation.
 - Administrator privileges only when re-signing or repairing ownership of root-owned app installations. Your password goes directly to macOS through its system dialog; the Software does not read, record, or store it.
 
-The Software requests no Contacts, Calendar, Photos, microphone, camera, location, Bluetooth, or similar permissions and does not access the system Keychain.
+The Software requests no Contacts, Calendar, Photos, microphone, camera, location, Bluetooth, or similar permissions and uses only its local login Keychain items when you choose to save encrypted data-volume passwords.
 
 App Sandbox is disabled because the Software must read and write apps and data across drives. Hardened Runtime is enabled. Releases are not notarized by Apple; on first launch, you may need to allow the app in System Settings → Privacy & Security.
 
