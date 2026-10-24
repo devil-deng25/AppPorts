@@ -1,121 +1,184 @@
 name: "🐛 问题反馈 / Bug Report"
-description: "提交问题反馈 / Report a bug"
+description: "报告使用中遇到的问题 / Report a problem using AppPorts"
 title: "[BUG] "
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        中文或英文填写均可，无需双语填写。不确定的环境信息可选择“不清楚”。
+        Chinese or English is welcome; you do not need to write both. Choose “Not sure” when needed.
+
+        标题请简述现象，例如“迁回应用后提示目标已存在”。
+        Summarize the symptom in the title, e.g. “Moving an app back reports an existing destination”.
+
   - type: textarea
     id: problem
     attributes:
       label: "问题描述 / Problem"
-      placeholder: "请清楚描述你遇到的问题 / Describe the issue clearly"
+      description: "说明你想完成的操作、预期结果和实际发生的情况。 / Describe the action, expected result and actual outcome."
+      placeholder: |
+        我想进行的操作 / What I was trying to do:
+        预期结果 / Expected result:
+        实际结果或完整错误提示 / Actual result or exact error:
     validations:
       required: true
 
   - type: textarea
     id: steps
     attributes:
-      label: "复现步骤 / Steps to Reproduce"
+      label: "复现步骤（选填） / Steps to reproduce (optional)"
+      description: "偶发或记不清步骤也可以反馈，请尽量说明最后一次操作。 / Intermittent issues are welcome; describe the last action if exact steps are unknown."
       placeholder: |
-        1. ...
-        2. ...
-        3. ...
-    validations:
-      required: true
-
-  - type: input
-    id: os_version
-    attributes:
-      label: "设备系统版本 / OS Version"
-      placeholder: "例如 macOS 14.2 / e.g. macOS 14.2"
-    validations:
-      required: true
-
-  - type: input
-    id: app_version
-    attributes:
-      label: "软件版本 / App Version"
-      placeholder: "例如 v1.3.0 / e.g. v1.3.0"
-    validations:
-      required: true
-
-  - type: markdown
-    attributes:
-      value: |
-        ### 诊断包 / Diagnostic Package
-
-        **AppPorts 1.6.1 及之后版本**：请优先附上诊断包。  
-        **AppPorts 1.6.1 and later**: please attach a diagnostic package first.
-
-        **导出方法 / How to export**
-        1. 打开 AppPorts
-        2. 点击 **`日志 > 导出诊断包...`**
-           或 **`设置 > 日志设置 > 导出诊断包`**
-        3. 将导出的 `.zip` 拖到下方“诊断包”区域
-        4. 如果暂时无法提供，请在下方说明原因；只有无法提供时再粘贴日志,可通过邮箱形式发送：a@shimoko.com (需注明）
-
-  - type: checkboxes
-    id: diagnostic_ack
-    attributes:
-      label: "诊断信息确认 / Diagnostics"
-      options:
-        - label: "我已附上诊断包；如无法提供，已在下方说明原因。 / I attached a diagnostic package or explained why it is unavailable."
-          required: true
-
-  - type: textarea
-    id: diagnostic_package
-    attributes:
-      label: "诊断包 / Diagnostic Package"
-      description: |
-        请将导出的 `.zip` 拖到这里；如无法提供，请说明原因。
-        Attach the exported `.zip` here. If unavailable, explain why.
-      placeholder: |
-        可拖拽导出的诊断包到这里，
-        或说明当前无法提供的原因。
-
-        Drag the exported diagnostic package here,
-        or explain why it is unavailable.
+        1. 从哪个页面开始 / Which page I opened
+        2. 选择了什么、点击了什么 / What I selected and clicked
+        3. 出现了什么提示 / What happened
     validations:
       required: false
 
-  - type: checkboxes
-    id: external_storage_type
+  - type: dropdown
+    id: operation
     attributes:
-      label: "外置存储设备类型 / External Storage Type"
-      description: "可多选 / Select all that apply"
+      label: "发生问题的操作 / Affected operation"
       options:
-        - label: "NAS"
-        - label: "移动硬盘 / Portable External Drive"
-        - label: "移动硬盘盒 / Drive Enclosure"
-        - label: "其他 / Other"
+        - "应用迁出或迁回 / Move an app out or back"
+        - "应用链接、启动或更新 / App linking, launching or updating"
+        - "容器数据挂载迁移或还原 / Container mount migration or restore"
+        - "微信账号全部或拆分迁移 / Whole or split WeChat account migration"
+        - "工具目录或自选文件夹迁移 / Tool or custom-folder migration"
+        - "接回、挂载或解锁数据卷 / Reconnect, mount or unlock data"
+        - "弹出外置盘 / Eject an external disk"
+        - "签名检查、重签或修复 / Signature check, re-signing or repair"
+        - "扫描、界面、设置或其他 / Scanning, interface, settings or other"
+        - "不清楚 / Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: app_version
+    attributes:
+      label: "AppPorts 版本 / AppPorts version"
+      description: "在“关于 AppPorts”查看；其他版本可在下方补充。 / Check About AppPorts; add unlisted versions below."
+      options:
+        - "2.0.0"
+        - "1.9.3"
+        - "1.9.2"
+        - "1.9.1"
+        - "1.9.0"
+        - "1.8.x 或更早 / 1.8.x or earlier"
+        - "其他版本或自行编译 / Other version or self-built"
+        - "不清楚 / Not sure"
     validations:
       required: true
 
   - type: input
-    id: external_storage_model
+    id: app_build
     attributes:
-      label: "外置存储设备产品名 / External Storage Product Name"
-      description: |
-        如果使用移动硬盘盒，请填写【硬盘盒型号 + 内置硬盘型号】
-        If using a drive enclosure, please provide BOTH:
-        - Enclosure model
-        - Installed drive model
-      placeholder: "例如 ORICO M.2 Enclosure + Samsung 970 EVO Plus"
+      label: "Build 号（选填） / Build number (optional)"
+      description: "“关于 AppPorts”中版本后的括号数字，找不到可留空。 / The number in parentheses after the version in About AppPorts; leave blank if unknown."
+      placeholder: "例如 50 / e.g. 50"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os_version
+    attributes:
+      label: "macOS 版本 / macOS version"
+      description: "苹果菜单 → 关于本机；小版本可在下方补充。 / Apple menu → About This Mac; add the minor version below if relevant."
+      options:
+        - "macOS 27"
+        - "macOS 26"
+        - "macOS 15"
+        - "macOS 14"
+        - "macOS 13"
+        - "macOS 12"
+        - "其他版本 / Other version"
+        - "不清楚 / Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: "Mac 芯片 / Mac processor"
+      options:
+        - "Apple Silicon（M 系列 / M-series）"
+        - "Intel"
+        - "不清楚 / Not sure"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: external_storage_type
+    attributes:
+      label: "外置存储类型 / External storage type"
+      description: "选择与本次问题相关的存储，不需要填写品牌或型号。 / Choose the storage involved; no brand or model is needed."
+      options:
+        - "外置 SSD / External SSD"
+        - "外置机械硬盘 / External HDD"
+        - "硬盘盒（不确定内部硬盘类型） / Enclosure (drive type unknown)"
+        - "U 盘或存储卡 / USB flash drive or memory card"
+        - "NAS 或网络存储 / NAS or network storage"
+        - "磁盘映像 / Disk image"
+        - "其他 / Other"
+        - "未使用外置存储 / No external storage involved"
+        - "不清楚 / Not sure"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: filesystem
+    attributes:
+      label: "目标存储的文件系统 / Destination filesystem"
+      description: "可在“磁盘工具”或 Finder 的“显示简介”查看；加密情况在下一项选择。 / Check Disk Utility or Finder’s Get Info; select encryption separately below."
+      options:
+        - "APFS"
+        - "Mac OS 扩展（HFS+） / Mac OS Extended (HFS+)"
+        - "exFAT"
+        - "FAT32 / MS-DOS (FAT)"
+        - "SMB / NFS 等网络共享 / Network share"
+        - "其他 / Other"
+        - "不适用 / Not applicable"
+        - "不清楚 / Not sure"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: encryption
+    attributes:
+      label: "相关外置卷或数据卷是否加密 / External or data volume encryption"
+      description: "若外盘与 AppPorts 数据卷的加密状态不同，可在下方补充。 / If the drive and AppPorts data volume differ, explain below."
+      options:
+        - "已加密 / Encrypted"
+        - "未加密 / Not encrypted"
+        - "不适用 / Not applicable"
+        - "不清楚 / Not sure"
+    validations:
+      required: false
+
+  - type: input
+    id: environment_details
+    attributes:
+      label: "环境补充（选填） / Additional environment details (optional)"
+      description: "仅在选项不足时填写，例如系统小版本、未列出的 AppPorts 版本、受影响应用及版本。 / Only if needed: minor OS version, an unlisted AppPorts version, or the affected app and version."
+      placeholder: "例如 macOS 27.0.1；受影响应用及版本 / e.g. macOS 27.0.1; affected app and version"
     validations:
       required: false
 
   - type: textarea
     id: screenshots
     attributes:
-      label: "截图（可选） / Screenshots (Optional)"
-      placeholder: "可直接拖拽截图 / Drag & drop images here"
+      label: "截图（选填） / Screenshots (optional)"
+      description: "可拖入完整错误提示或相关页面截图；上传前检查姓名、路径等个人信息。 / Drag in screenshots of the error or relevant page; check names, paths and other personal details first."
     validations:
       required: false
 
   - type: textarea
-    id: logs
+    id: diagnostic_package
     attributes:
-      label: "日志（可选，仅在无诊断包时填写） / Logs (Optional, only if no diagnostic package)"
-      render: shell
-      placeholder: "粘贴相关日志 / Paste logs here"
+      label: "诊断包或相关日志（选填） / Diagnostic package or relevant logs (optional)"
+      description: |
+        导出：AppPorts 菜单栏“日志 → 导出诊断包”，或“设置 → 日志设置 → 导出诊断包”，将 .zip 拖入这里。无法导出也可以提交问题，无需解释原因；没有诊断包时可粘贴相关日志。上传前检查个人信息。若选择邮件提供，可发至 a@shimoko.com 并注明 Issue 链接。
+        Export from AppPorts: menu bar Log → Export Diagnostics, or Settings → Log Settings → Export Diagnostics, then drop the .zip here. You can submit without it and do not need to explain why. Paste relevant logs if no package is available. Check personal information before uploading. If you prefer email, send it to a@shimoko.com with the issue link.
     validations:
       required: false
