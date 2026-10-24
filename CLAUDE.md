@@ -143,7 +143,7 @@ AppPorts/
 │   ├── FileCopierTests.swift
 │   ├── CodeSignerTests.swift        # Includes DataMigrationWorkflowTests
 │   └── MigrationSigningIntegrationTests.swift
-└── User_docs/                      # VitePress documentation site
+└── User_docs/                      # Standalone Fumadocs documentation site
 ```
 
 ### Build Settings
@@ -301,7 +301,7 @@ Custom directory migration stores configs in `UserDefaults` under `customDirConf
 
 ### Sandboxed Apps and Mount Migration
 
-Sandboxed apps (real app's entitlements contain `com.apple.security.app-sandbox`) cannot follow symlinks out of `~/Library/Containers/` or `~/Library/Group Containers/`: the kernel checks the resolved path. Ad-hoc re-signing removes the sandbox but also breaks container ownership, and on macOS 27 such apps may fail to launch (confirmed: WeChat, whose stored TCC code requirement no longer matches; QQ Music still runs). Verified experiments live under `User_docs/docs/research/` (`sandbox-symlink.md`, `sandbox-mountpoint.md`, `unplug-test.md`); user-facing docs are `datamigrae/mount-migration.md`, `why-apfs.md`, and `macos-27.md`.
+Sandboxed apps (real app's entitlements contain `com.apple.security.app-sandbox`) cannot follow symlinks out of `~/Library/Containers/` or `~/Library/Group Containers/`: the kernel checks the resolved path. Ad-hoc re-signing removes the sandbox but also breaks container ownership, and on macOS 27 such apps may fail to launch (confirmed: WeChat, whose stored TCC code requirement no longer matches; QQ Music still runs). Experimental background and compatibility limits are documented in [mount migration and APFS](User_docs/docs/blog/why-mount-and-apfs.md) and [data migration boundaries](User_docs/docs/blog/data-migration-boundaries.md); historical experiments are in the [mount experiments archive](User_docs/docs/archive/mount-experiments.md). User-facing guides cover [data migration methods](User_docs/docs/datamigrae/baseinfo.md) and [macOS 27 upgrade and repair](User_docs/docs/macos-27.md).
 
 - `CodeSigner.isSandboxed(at:)` / `entitlements(at:)` read entitlements via `codesign -d --entitlements`. `CodeSigner.sign` throws `sandboxedApplication` before touching the bundle; `restoreSignature` throws `identityUnavailable` instead of degrading to ad-hoc. `AppPorts-ReSign.sh` skips sandboxed apps.
 - Every migratable item under `Containers` / `Group Containers` gets `DataDirItem.requiresMountMigration = true` regardless of the main app's entitlements (the container's owner may be a sandboxed widget/extension, and already re-signed apps must not be symlinked again); the row shows “挂载迁移” instead of “迁移”. `DataDirScanner.isSandboxed(_:)` only decides whether re-signing is refused: `DataDirsView` never re-signs sandboxed apps regardless of the toggle or alert choice.

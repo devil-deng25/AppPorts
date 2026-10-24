@@ -17,7 +17,7 @@
 <img src="https://img.shields.io/badge/platform-macOS-black?style=flat-square&logo=apple&logoColor=white" alt="Platform">
 <img src="https://img.shields.io/badge/Swift-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
 <a href="https://linux.do"><img src="https://img.shields.io/badge/linux.do-%E7%A4%BE%E5%8C%BA-1f7aec?style=flat-square&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjAgMTIwIj48Y2xpcFBhdGggaWQ9ImEiPjxjaXJjbGUgY3g9IjYwIiBjeT0iNjAiIHI9IjQ3Ii8%2BPC9jbGlwUGF0aD48cGF0aCBmaWxsPSIjZmZmZmZmIiBjbGlwLXBhdGg9InVybCgjYSkiIGQ9Ik0xMCAxMGgxMDB2MzBIMTB6TTEwIDgwaDEwMHYzMEgxMHoiLz48L3N2Zz4%3D&logoColor=white" alt="linux.do"></a>
-<a href="https://docs-appports.shimoko.com/sponsor.html"><img src="https://img.shields.io/badge/%E8%B5%9E%E8%B5%8F-Sponsor-ff69b4?style=flat-square&labelColor=ff69b4&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTEyIDIxLjM1bC0xLjQ1LTEuMzJDNS40IDE1LjM2IDIgMTIuMjggMiA4LjUgMiA1LjQyIDQuNDIgMyA3LjUgM2MxLjc0IDAgMy40MS44MSA0LjUgMi4wOUMxMy4wOSAzLjgxIDE0Ljc2IDMgMTYuNSAzIDE5LjU4IDMgMjIgNS40MiAyMiA4LjVjMCAzLjc4LTMuNCA2Ljg2LTguNTUgMTEuNTRMMTIgMjEuMzV6Ii8%2BPC9zdmc%2B&logoColor=white" alt="赞赏 · Sponsor"></a>
+<a href="https://docs-appports.shimoko.com/docs/sponsor"><img src="https://img.shields.io/badge/%E8%B5%9E%E8%B5%8F-Sponsor-ff69b4?style=flat-square&labelColor=ff69b4&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTEyIDIxLjM1bC0xLjQ1LTEuMzJDNS40IDE1LjM2IDIgMTIuMjggMiA4LjUgMiA1LjQyIDQuNDIgMyA3LjUgM2MxLjc0IDAgMy40MS44MSA0LjUgMi4wOUMxMy4wOSAzLjgxIDE0Ljc2IDMgMTYuNSAzIDE5LjU4IDMgMjIgNS40MiAyMiA4LjVjMCAzLjc4LTMuNCA2Ljg2LTguNTUgMTEuNTRMMTIgMjEuMzV6Ii8%2BPC9zdmc%2B&logoColor=white" alt="赞赏 · Sponsor"></a>
 
 <div style="display:flex; justify-content:center; align-items:center; gap:10px; flex-wrap:nowrap;">
   <a href="https://www.producthunt.com/products/appports/launches/appports?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-appports" target="_blank" rel="noopener noreferrer">
@@ -53,7 +53,7 @@ Mac 的内置空间，留给正在做的事。**AppPorts** 是一款免费开源
 xattr -rd com.apple.quarantine /Applications/AppPorts.app
 ```
 
-如果是**迁移后的其他应用**无法打开，请先检查外置盘连接、数据挂载和签名状态。旧版重签名导致的问题请按 [macOS 27 升级与修复指南](https://docs-appports.shimoko.com/macos-27.html)处理。
+如果是**迁移后的其他应用**无法打开，请先检查外置盘连接、数据挂载和签名状态。旧版重签名导致的问题请按 [macOS 27 升级与修复指南](https://docs-appports.shimoko.com/docs/macos-27)处理。
 
 ## 📸 截图
 
@@ -94,7 +94,7 @@ xattr -rd com.apple.quarantine /Applications/AppPorts.app
 | **签名管理** | 内置检查、备份与恢复入口 | 需要另行处理 |
 | **孤立链接检测** | 自动标记异常状态 | 需要自行检查目标路径 |
 
-容器数据采用独立的 APFS 挂载迁移，普通数据目录按适用条件保留符号链接。不同应用的后台组件、权限和更新方式可能影响兼容性，详见[使用限制](https://docs-appports.shimoko.com/limitations.html)。
+容器数据采用独立的 APFS 挂载迁移，普通数据目录按适用条件保留符号链接。不同应用的后台组件、权限和更新方式可能影响兼容性，详见[使用限制](https://docs-appports.shimoko.com/docs/faq#compatibility)。
 
 ## 🧭 迁移策略
 
@@ -115,7 +115,7 @@ AppPorts 根据应用类型、更新行为与数据目录类型选择迁移方�
 
 经典数据迁移模式默认关闭，保留旧的容器符号链接与沙盒重签名行为，兼容性取决于具体应用和系统。默认推荐使用 APFS 挂载迁移；不满足磁盘条件时，可以将容器数据保留在本机。
 
-**准备升级 macOS 27 的旧版用户，请先更新并打开一次 AppPorts**，让新版更新后台重签名脚本。macOS 27 及以上会停用开机自动重签名并清理旧任务。若旧方式迁移的应用无法打开，请按[修复指南](https://docs-appports.shimoko.com/macos-27.html)先还原旧容器符号链接数据，再恢复原始签名或从官方渠道重装；更新 AppPorts 不会自动转换旧迁移方式或恢复签名。
+**准备升级 macOS 27 的旧版用户，请先更新并打开一次 AppPorts**，让新版更新后台重签名脚本。macOS 27 及以上会停用开机自动重签名并清理旧任务。若旧方式迁移的应用无法打开，请按[修复指南](https://docs-appports.shimoko.com/docs/macos-27)先还原旧容器符号链接数据，再恢复原始签名或从官方渠道重装；更新 AppPorts 不会自动转换旧迁移方式或恢复签名。
 
 ## 🛠️ 安装与运行
 
@@ -131,7 +131,7 @@ AppPorts 根据应用类型、更新行为与数据目录类型选择迁移方�
 
 将 AppPorts 放入 **应用程序** 文件夹后打开，按引导完成准备，连接外置盘并选择外部应用库。退出要迁移的应用后，即可在应用列表或数据目录中开始迁移。挂载迁移需要稳定的程序路径，请勿直接从 DMG 或临时路径运行。
 
-迁移后使用应用时保持外置盘连接；容器数据首次访问可移动宗卷时，按系统提示授权。拔盘前先退出相关应用并完成卸载或推出。重要数据建议提前备份，更多步骤见[快速入门](https://docs-appports.shimoko.com/faststart.html)。
+迁移后使用应用时保持外置盘连接；容器数据首次访问可移动宗卷时，按系统提示授权。拔盘前先退出相关应用并完成卸载或推出。重要数据建议提前备份，更多步骤见[快速入门](https://docs-appports.shimoko.com/docs/faststart)。
 
 ### ⚠️ 权限说明
 
@@ -170,8 +170,8 @@ AppPorts 完全免费、开源、无广告，项目由个人在业余时间维�
 
 <img src="https://pic.cdn.shimoko.com/thanks.png" alt="赞助二维码" width="220" />
 
-- 赞助时请在留言（备注）中留下你的**昵称**，也可以提供**个人链接**（GitHub 主页、博客、社交账号等），它们会展示在 AppPorts 的「关于 AppPorts」页面以及[网站赞助页](https://docs-appports.shimoko.com/sponsor.html)。
-- 赞助**没有最低金额要求**，多少随意，量力而行就好；赞助者按**金额从高到低**排序，金额相同时按**赞助时间从早到晚**排序，金额仅在[网站赞助页](https://docs-appports.shimoko.com/sponsor.html)展示。
+- 赞助时请在留言（备注）中留下你的**昵称**，也可以提供**个人链接**（GitHub 主页、博客、社交账号等），它们会展示在 AppPorts 的「关于 AppPorts」页面以及[网站赞助页](https://docs-appports.shimoko.com/docs/sponsor)。
+- 赞助**没有最低金额要求**，多少随意，量力而行就好；赞助者按**金额从高到低**排序，金额相同时按**赞助时间从早到晚**排序，金额仅在[网站赞助页](https://docs-appports.shimoko.com/docs/sponsor)展示。
 
 感谢以下赞助者（此列表与仓库根目录的 `sponsors.json` 同步）：
 

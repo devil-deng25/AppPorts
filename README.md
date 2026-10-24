@@ -7,7 +7,7 @@
 Move apps and data to an external drive. Open them as usual.
 
 
-[English](README.md)｜[简体中文](README_CN.md)｜[Official Website](https://appports.shimoko.com/)｜[Documentation](https://docs-appports.shimoko.com/)｜[DeepWiki](https://deepwiki.com/wzh4869/AppPorts)
+[English](README.md)｜[简体中文](README_CN.md)｜[Official Website](https://appports.shimoko.com/)｜[Documentation](https://docs-appports.shimoko.com/en)｜[DeepWiki](https://deepwiki.com/wzh4869/AppPorts)
 
 <a href="https://github.com/wzh4869/AppPorts/releases"><img src="https://img.shields.io/github/v/release/wzh4869/AppPorts?style=flat-square&label=release&color=blue" alt="Release"></a>
 <a href="https://github.com/wzh4869/AppPorts/stargazers"><img src="https://img.shields.io/github/stars/wzh4869/AppPorts?style=flat-square&color=yellow" alt="Stars"></a>
@@ -17,7 +17,7 @@ Move apps and data to an external drive. Open them as usual.
 <img src="https://img.shields.io/badge/platform-macOS-black?style=flat-square&logo=apple&logoColor=white" alt="Platform">
 <img src="https://img.shields.io/badge/Swift-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
 <a href="https://linux.do"><img src="https://img.shields.io/badge/linux.do-%E7%A4%BE%E5%8C%BA-1f7aec?style=flat-square&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjAgMTIwIj48Y2xpcFBhdGggaWQ9ImEiPjxjaXJjbGUgY3g9IjYwIiBjeT0iNjAiIHI9IjQ3Ii8%2BPC9jbGlwUGF0aD48cGF0aCBmaWxsPSIjZmZmZmZmIiBjbGlwLXBhdGg9InVybCgjYSkiIGQ9Ik0xMCAxMGgxMDB2MzBIMTB6TTEwIDgwaDEwMHYzMEgxMHoiLz48L3N2Zz4%3D&logoColor=white" alt="linux.do"></a>
-<a href="https://docs-appports.shimoko.com/sponsor.html"><img src="https://img.shields.io/badge/%E8%B5%9E%E8%B5%8F-Sponsor-ff69b4?style=flat-square&labelColor=ff69b4&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTEyIDIxLjM1bC0xLjQ1LTEuMzJDNS40IDE1LjM2IDIgMTIuMjggMiA4LjUgMiA1LjQyIDQuNDIgMyA3LjUgM2MxLjc0IDAgMy40MS44MSA0LjUgMi4wOUMxMy4wOSAzLjgxIDE0Ljc2IDMgMTYuNSAzIDE5LjU4IDMgMjIgNS40MiAyMiA4LjVjMCAzLjc4LTMuNCA2Ljg2LTguNTUgMTEuNTRMMTIgMjEuMzV6Ii8%2BPC9zdmc%2B&logoColor=white" alt="赞赏 · Sponsor"></a>
+<a href="https://docs-appports.shimoko.com/en/docs/sponsor"><img src="https://img.shields.io/badge/%E8%B5%9E%E8%B5%8F-Sponsor-ff69b4?style=flat-square&labelColor=ff69b4&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTEyIDIxLjM1bC0xLjQ1LTEuMzJDNS40IDE1LjM2IDIgMTIuMjggMiA4LjUgMiA1LjQyIDQuNDIgMyA3LjUgM2MxLjc0IDAgMy40MS44MSA0LjUgMi4wOUMxMy4wOSAzLjgxIDE0Ljc2IDMgMTYuNSAzIDE5LjU4IDMgMjIgNS40MiAyMiA4LjVjMCAzLjc4LTMuNCA2Ljg2LTguNTUgMTEuNTRMMTIgMjEuMzV6Ii8%2BPC9zdmc%2B&logoColor=white" alt="赞赏 · Sponsor"></a>
 
 <div style="display:flex; justify-content:center; align-items:center; gap:10px; flex-wrap:nowrap;">
   <a href="https://www.producthunt.com/products/appports/launches/appports?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-appports" target="_blank" rel="noopener noreferrer">
@@ -53,7 +53,7 @@ If an official download of AppPorts shows a “damaged” warning on first launc
 xattr -rd com.apple.quarantine /Applications/AppPorts.app
 ```
 
-If a **different app stops opening after migration**, check the drive connection, data mount status, and signature first. For problems caused by older re-signing methods, follow the [macOS 27 upgrade and repair guide](https://docs-appports.shimoko.com/en/macos-27.html).
+If a **different app stops opening after migration**, check the drive connection, data mount status, and signature first. For problems caused by older re-signing methods, follow the [macOS 27 upgrade and repair guide](https://docs-appports.shimoko.com/en/docs/macos-27).
 
 ## 📸 Screenshots
 
@@ -94,7 +94,7 @@ If a **different app stops opening after migration**, check the drive connection
 | **Signature Management** | Built-in checks, backup, and recovery | Requires separate handling |
 | **Orphaned Link Detection** | Automatically flags unavailable targets | Requires manual path checks |
 
-Container data uses APFS mount migration; suitable ordinary directories retain symbolic links. Background components, permissions, and update mechanisms can affect compatibility. See [limitations](https://docs-appports.shimoko.com/en/limitations.html).
+Container data uses APFS mount migration; suitable ordinary directories retain symbolic links. Background components, permissions, and update mechanisms can affect compatibility. See [limitations](https://docs-appports.shimoko.com/en/docs/faq#compatibility).
 
 ## 🧭 Migration Strategy
 
@@ -115,7 +115,7 @@ AppPorts selects a migration method based on the app type, update behavior, and 
 
 Classic data migration mode is off by default. It retains older container symlink and sandboxed-app re-signing behavior, with compatibility depending on the app and macOS version. APFS mount migration is the recommended default; keep container data locally if the drive does not meet its requirements.
 
-**Before upgrading to macOS 27, update and open AppPorts once** so it can update any installed background re-signing script. On macOS 27 and later, login re-signing is disabled and old tasks are cleaned up; retry from Settings if cleanup fails. For affected apps, follow the [repair guide](https://docs-appports.shimoko.com/en/macos-27.html): restore container data migrated through older symbolic links first, then restore the original signature or reinstall from an official source. Updating AppPorts does not automatically convert old migrations or restore replaced signatures.
+**Before upgrading to macOS 27, update and open AppPorts once** so it can update any installed background re-signing script. On macOS 27 and later, login re-signing is disabled and old tasks are cleaned up; retry from Settings if cleanup fails. For affected apps, follow the [repair guide](https://docs-appports.shimoko.com/en/docs/macos-27): restore container data migrated through older symbolic links first, then restore the original signature or reinstall from an official source. Updating AppPorts does not automatically convert old migrations or restore replaced signatures.
 
 ## 🛠️ Installation
 
@@ -131,7 +131,7 @@ Download the latest `AppPorts.dmg` from the [official website](https://appports.
 
 Move AppPorts into **Applications**, open it, and follow the setup checks. Connect your drive, choose an external app library, and quit the app you intend to move before starting migration. Mount migration requires a stable application path; do not run it directly from a DMG or temporary location.
 
-Keep the drive connected while using migrated apps and data. Allow removable-volume access when macOS requests it. Quit related apps before unmounting or ejecting the drive, and back up important data beforehand. See the [quick start guide](https://docs-appports.shimoko.com/en/faststart.html).
+Keep the drive connected while using migrated apps and data. Allow removable-volume access when macOS requests it. Quit related apps before unmounting or ejecting the drive, and back up important data beforehand. See the [quick start guide](https://docs-appports.shimoko.com/en/docs/faststart).
 
 ### ⚠️ Permissions
 
@@ -167,8 +167,8 @@ AppPorts is completely free, open source and free of ads. It is maintained by a 
 
 <img src="https://pic.cdn.shimoko.com/thanks.png" alt="Sponsor QR code" width="220" />
 
-- When sponsoring, please leave your **nickname** and, optionally, a **link** (GitHub profile, blog, social account, etc.) in the message. They will be shown on the **About AppPorts** page in the app and on the [sponsor page](https://docs-appports.shimoko.com/sponsor.html) of the documentation site.
-- There is **no minimum amount** — give whatever feels right. Sponsors are ordered by amount (highest first) and, for equal amounts, by sponsorship date (earliest first); the amount is only shown on the [sponsor page](https://docs-appports.shimoko.com/sponsor.html).
+- When sponsoring, please leave your **nickname** and, optionally, a **link** (GitHub profile, blog, social account, etc.) in the message. They will be shown on the **About AppPorts** page in the app and on the [sponsor page](https://docs-appports.shimoko.com/en/docs/sponsor) of the documentation site.
+- There is **no minimum amount** — give whatever feels right. Sponsors are ordered by amount (highest first) and, for equal amounts, by sponsorship date (earliest first); the amount is only shown on the [sponsor page](https://docs-appports.shimoko.com/en/docs/sponsor).
 
 Thanks to the following sponsors (this list is kept in sync with `sponsors.json` in the repository root):
 
