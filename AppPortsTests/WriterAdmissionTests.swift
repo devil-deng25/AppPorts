@@ -502,14 +502,19 @@ final class WriterAdmissionTests: XCTestCase {
         try Data(repeating: 0, count: 8).write(to: abandoned)
         try setModification(abandoned, secondsAgo: 600)
 
-        XCTAssertEqual(DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directory, now: 1_000), 1)
+        // `now` 必须和文件 mtime 同基准：静默期是 `now - mtime` 算出来的，
+        // 拿一个虚构的小时钟去减真实的 mtime 会得到巨大负数，条目会被判成
+        // 「刚写过」而全部跳过 —— 于是第一个断言拿到的是 0 而不是 1。
+        // 这里用真实时钟，只把「距基准多久」当作可控量。
+        let base = Date().timeIntervalSince1970
+        XCTAssertEqual(DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directory, now: base), 1)
         let second = directory.appendingPathComponent(DurableFileIO.temporaryNamePrefix + UUID().uuidString)
         try Data(repeating: 0, count: 8).write(to: second)
         try setModification(second, secondsAgo: 600)
-        XCTAssertEqual(DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directory, now: 1_001), 0,
+        XCTAssertEqual(DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directory, now: base + 1), 0,
                        "同一目录在节流间隔内不得重复扫描")
         XCTAssertEqual(DurableFileIO.pruneAbandonedTemporariesIfNeeded(
-            in: directory, now: 1_000 + DurableFileIO.temporaryPruneInterval + 1), 1,
+            in: directory, now: base + DurableFileIO.temporaryPruneInterval + 1), 1,
                        "超过间隔后应恢复扫描")
     }
 }
