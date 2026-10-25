@@ -386,6 +386,7 @@ final class LocalizationAuditTests: XCTestCase {
     /// and strings that consist only of placeholders or punctuation.
     private let identicalInEveryLanguage: Set<String> = [
         "%lld",
+        "%lld / %lld",
         "1 MB", "2 MB", "5 MB", "10 MB", "50 MB", "100 MB",
         "App Store", "AppPorts", "GitHub", "Mac", "WebKit",
         "Application Scripts", "Application Support", "Caches", "Containers",
