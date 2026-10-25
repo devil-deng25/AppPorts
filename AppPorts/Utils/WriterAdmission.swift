@@ -48,32 +48,47 @@ enum WriterAdmissionError: LocalizedError {
 /// registration cannot authorize a reused PID or another data directory.
 final class WriterAdmission {
     static let requiredCapability = "appports-verified-writer-v7-disk-ejection"
-    /// 登记目录超过这个文件数才触发清理，避免每次注册都扫目录。
-    static let presencePruneThreshold = 64
-    /// 单次清理上限：积压很多时分批清，不阻塞启动路径。
+    /// 单次最多删除多少条失效登记，避免积压很多时把启动路径拖成一次大删除。
     static let presencePruneLimit = 512
+    /// 单次最多查看多少个目录项。积压超过这个数时只清理窗口内的部分，
+    /// 剩余部分由后续轮次继续，任何一轮都不会全量遍历整个目录。
+    static let presenceScanLimit = 2_048
+    /// 两次清理之间的最小间隔。写入路径每次 `prepareForWrite` 都会重新登记，
+    /// 没有这个间隔就会在每次写入前重复扫描目录。
+    static let presencePruneInterval: TimeInterval = 300
+    /// 失效登记的最短静默期。判定「进程已退出」与真正删除之间，系统可能把
+    /// 同一个 PID 分配给刚启动的实例并写下新登记；新登记的时间戳是「现在」，
+    /// 落在静默期内，因此不会被误删。只有真正的历史残留才会超过这个年龄。
+    static let presenceGracePeriod: TimeInterval = 60
     static var defaultDataDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AppPorts", isDirectory: true)
     }
 
-    private static var live: WriterAdmission { WriterAdmission(dataDirectory: defaultDataDirectory) }
+    /// 主程序与挂载代理各自独立启动，共用同一个节流闸门才能避免两边同时扫目录。
+    private static let sharedPruneGate = PresencePruneGate()
+    private static var live: WriterAdmission {
+        WriterAdmission(dataDirectory: defaultDataDirectory, pruneGate: { sharedPruneGate.admit(at: $0) })
+    }
     private let dataDirectory: URL
     private let currentProcess: () throws -> WriterProcessIdentity
     private let processSnapshot: () throws -> [WriterProcessIdentity]
     private let clock: () -> TimeInterval
     private let waitForRegistration: (TimeInterval) -> Void
+    private let pruneGate: ((TimeInterval) -> Bool)?
 
     init(dataDirectory: URL,
          currentProcess: @escaping () throws -> WriterProcessIdentity = { try currentProcessIdentity() },
          processSnapshot: @escaping () throws -> [WriterProcessIdentity] = { try runningAppPortsProcesses() },
          clock: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
-         waitForRegistration: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
+         waitForRegistration: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+         pruneGate: ((TimeInterval) -> Bool)? = nil) {
         self.dataDirectory = Self.canonical(dataDirectory)
         self.currentProcess = currentProcess
         self.processSnapshot = processSnapshot
         self.clock = clock
         self.waitForRegistration = waitForRegistration
+        self.pruneGate = pruneGate
     }
 
     /// Called before main/--mount-agent startup. XCTest uses injected datasets
@@ -111,26 +126,91 @@ final class WriterAdmission {
         pruneStalePresence(keeping: process.processID)
     }
 
-    /// 退出的实例从不注销自己的登记。长期使用后登记目录会积累上万个文件，
-    /// 因此每次注册后按内核身份清理一轮：进程已不存在，或登记里的启动时间
-    /// 与当前 PID 不符（PID 复用），即为失效登记。
+    /// 退出的实例从不注销自己的登记。长期使用后登记目录会积累上万条记录，
+    /// 因此每次登记后按内核身份清理一轮。
     ///
-    /// 只删除本用户 0700 目录下、文件名为 PID 的普通 plist；每次限额，
-    /// 避免启动路径被大量 IO 拖慢。清理失败不影响本次写入。
+    /// 一条登记被判为失效，必须同时满足两个条件：
+    /// 1. 该 PID 已不存在（`kill` 返回 ESRCH），或当前占用该 PID 的进程启动时间
+    ///    与身份与登记不符（PID 被复用）；
+    /// 2. 文件已静默超过 `presenceGracePeriod`。
+    ///
+    /// 第二个条件不是保险，而是消除竞态：从「判定进程已退出」到「真正 unlink」
+    /// 之间存在窗口，系统可能在这个窗口里把该 PID 分配给刚启动的实例并写下新
+    /// 登记。新登记的时间戳是「现在」，落在静默期内，因此不会被误删；只有真正
+    /// 的历史残留才会超过这个年龄。反过来，PID 被复用后旧登记要么被新登记覆盖
+    /// （时间戳变新），要么因身份不符而被清理，两种都不会误判。
+    ///
+    /// 目录条目用 `readdir` 增量读取、按 `unlinkat` 相对目录描述符删除，不整目录
+    /// 列成 URL 数组，也不跟随符号链接。只处理本用户 0700 目录下的两种普通文件：
+    /// `<pid>.plist` 与写入中断遗留的 `.appports-write-*` 临时文件。迁移数据、
+    /// 挂载记录与恢复副本不在这个目录，也不在这个函数的作用范围内。
+    ///
+    /// 任何一步失败都按「保留」处理并直接返回：清理是可选的后台收益，既不能
+    /// 阻断启动，也不能让写入路径因为清理失败而改变判定结果。
     private func pruneStalePresence(keeping currentProcessID: Int32) {
-        let entries = (try? FileManager.default.contentsOfDirectory(at: presenceDirectory,
-                                                                    includingPropertiesForKeys: nil)) ?? []
-        // 正常情况只有个位数的活实例；数量很小说明没有需要清理的积压。
-        guard entries.count > Self.presencePruneThreshold else { return }
-        var removed = 0
-        for url in entries {
-            guard removed < Self.presencePruneLimit else { return }
-            guard url.pathExtension == "plist",
-                  let processID = Int32(url.deletingPathExtension().lastPathComponent),
-                  processID != currentProcessID,
-                  isStaleRegistration(processID: processID) else { continue }
-            if (try? FileManager.default.removeItem(at: url)) != nil { removed += 1 }
+        let now = clock()
+        if let pruneGate, !pruneGate(now) { return }
+
+        let directory = open(presenceDirectory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard directory >= 0 else { return }
+        defer { _ = close(directory) }
+        var directoryInfo = stat()
+        guard fstat(directory, &directoryInfo) == 0,
+              directoryInfo.st_mode & S_IFMT == S_IFDIR,
+              directoryInfo.st_uid == getuid() else { return }
+        let duplicate = dup(directory)
+        guard duplicate >= 0, let entries = fdopendir(duplicate) else {
+            if duplicate >= 0 { _ = close(duplicate) }
+            return
         }
+        defer { _ = closedir(entries) }
+
+        var scanned = 0
+        var removed = 0
+        while scanned < Self.presenceScanLimit, removed < Self.presencePruneLimit {
+            errno = 0
+            guard let entry = readdir(entries) else { break }
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
+            }
+            if name == "." || name == ".." { continue }
+            guard let candidate = Self.pruneCandidate(name) else { continue }
+            scanned += 1
+            // 当前实例自己的登记由本次写入维护，不参与清理。
+            if case let .presence(processID) = candidate, processID == currentProcessID { continue }
+
+            var info = stat()
+            guard fstatat(directory, name, &info, AT_SYMLINK_NOFOLLOW) == 0,
+                  info.st_mode & S_IFMT == S_IFREG,
+                  info.st_uid == getuid() else { continue }
+            let modified = TimeInterval(info.st_mtimespec.tv_sec)
+                + TimeInterval(info.st_mtimespec.tv_nsec) / 1_000_000_000
+            guard now - modified >= Self.presenceGracePeriod else { continue }
+
+            switch candidate {
+            case .abandonedWrite:
+                // 写入中断的临时文件没有登记语义，超龄即可回收。
+                if unlinkat(directory, name, 0) == 0 { removed += 1 }
+            case let .presence(processID):
+                guard isStaleRegistration(processID: processID) else { continue }
+                if unlinkat(directory, name, 0) == 0 { removed += 1 }
+            }
+        }
+    }
+
+    private enum PruneCandidate {
+        case presence(Int32)
+        case abandonedWrite
+    }
+
+    private static func pruneCandidate(_ name: String) -> PruneCandidate? {
+        if name.hasPrefix(DurableFileIO.temporaryNamePrefix) { return .abandonedWrite }
+        guard name.hasSuffix(".plist") else { return nil }
+        let stem = String(name.dropLast(".plist".count))
+        // 只接受规范十进制写法，避免把 `007.plist`、`+7.plist` 这类名字
+        // 当成合法的 PID 登记。
+        guard let processID = Int32(stem), processID > 0, String(processID) == stem else { return nil }
+        return .presence(processID)
     }
 
     private func isStaleRegistration(processID: Int32) -> Bool {
@@ -368,5 +448,20 @@ final class WriterAdmission {
         let environment = ProcessInfo.processInfo.environment
         return environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil
             || NSClassFromString("XCTestCase") != nil
+    }
+}
+
+/// 清理节流。主程序与挂载代理各自启动、各自登记，共用同一个闸门；
+/// 单次判定失败不影响状态，最坏情况是少清一轮，不会删错东西。
+private final class PresencePruneGate {
+    private let lock = NSLock()
+    private var lastPass: TimeInterval?
+
+    func admit(at now: TimeInterval) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if let lastPass, now - lastPass < WriterAdmission.presencePruneInterval { return false }
+        lastPass = now
+        return true
     }
 }

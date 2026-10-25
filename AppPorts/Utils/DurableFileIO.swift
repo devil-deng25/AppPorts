@@ -5,11 +5,15 @@ import Foundation
 /// syscall failure is reported to the caller; unsupported storage never falls
 /// back to an atomic rename without a durability barrier.
 enum DurableFileIO {
+    /// 临时记录的文件名前缀。写入中断（进程被 kill）时下面的 `defer` 不会执行，
+    /// 这个前缀的残留只能由目录所有者另行回收，因此前缀必须对外唯一且稳定。
+    static let temporaryNamePrefix = ".appports-write-"
+
     static func write(_ data: Data, to url: URL) throws {
         let parent = url.deletingLastPathComponent()
         let directory = try openDescriptor(parent.path, flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         defer { _ = close(directory) }
-        let temporaryName = ".appports-write-\(UUID().uuidString)"
+        let temporaryName = temporaryNamePrefix + UUID().uuidString
         let descriptor = openat(directory, temporaryName, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw failure(.createTemporaryRecord, url) }
         defer { _ = close(descriptor) }

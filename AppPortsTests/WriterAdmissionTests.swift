@@ -305,4 +305,108 @@ final class WriterAdmissionTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains(String(running.processID)))
         }
     }
+
+    // MARK: - 失效登记回收
+
+    /// macOS 的 PID 上限是 99998，这个号不可能有进程占用。
+    private let impossibleProcessID: Int32 = 99_999
+
+    private func presenceDirectory(_ admission: WriterAdmission) -> URL {
+        admission.presenceURL(processID: 1).deletingLastPathComponent()
+    }
+
+    private func setModification(_ url: URL, secondsAgo: TimeInterval) throws {
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-secondsAgo)],
+                                              ofItemAtPath: url.path)
+    }
+
+    func testStaleRegistrationSurvivesUntilTheGracePeriodElapses() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let stale = admission.presenceURL(processID: impossibleProcessID)
+        try Data("stale".utf8).write(to: stale)
+
+        try admission.registerCurrentProcess()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stale.path),
+                      "记录刚写下时可能落在其他实例的启动窗口内，静默期未到不得删除")
+
+        try setModification(stale, secondsAgo: WriterAdmission.presenceGracePeriod + 60)
+        try admission.registerCurrentProcess()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path),
+                       "进程已不存在且超过静默期的登记应被回收")
+    }
+
+    func testAbandonedWriteTemporariesArePrunedAfterTheGracePeriod() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let temporary = presenceDirectory(admission)
+            .appendingPathComponent(DurableFileIO.temporaryNamePrefix + UUID().uuidString)
+        try Data(repeating: 0, count: 16).write(to: temporary)
+
+        try admission.registerCurrentProcess()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: temporary.path),
+                      "正在进行中的原子写入不能被当成残留删掉")
+
+        try setModification(temporary, secondsAgo: WriterAdmission.presenceGracePeriod + 60)
+        try admission.registerCurrentProcess()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path),
+                       "写入中断遗留的临时文件应被回收")
+    }
+
+    func testPruneLeavesUnrelatedEntriesAndTheCurrentRegistrationAlone() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let directory = presenceDirectory(admission)
+        let unrelated = directory.appendingPathComponent("notes.txt")
+        try Data("keep".utf8).write(to: unrelated)
+        try setModification(unrelated, secondsAgo: 3_600)
+        let current = admission.presenceURL(processID: fixture.current.processID)
+        try setModification(current, secondsAgo: 3_600)
+
+        try admission.registerCurrentProcess()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path),
+                      "只回收本机制产生的两种文件，其他内容一律不碰")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: current.path),
+                      "当前实例自己的登记不参与清理")
+    }
+
+    func testPruneRemovesAtMostThePerRunLimitAndLeavesTheRestForLater() throws {
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let directory = presenceDirectory(admission)
+        let total = WriterAdmission.presencePruneLimit + 20
+        // 用临时文件构造积压：它们的失效只由年龄决定，不依赖某个 PID 恰好不存在。
+        for _ in 0..<total {
+            let url = directory.appendingPathComponent(DurableFileIO.temporaryNamePrefix + UUID().uuidString)
+            try Data(repeating: 0, count: 8).write(to: url)
+            try setModification(url, secondsAgo: 600)
+        }
+
+        try admission.registerCurrentProcess()
+        let survivors = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix(DurableFileIO.temporaryNamePrefix) }
+        XCTAssertEqual(survivors.count, total - WriterAdmission.presencePruneLimit,
+                       "单轮删除数量必须封顶，其余留给后续轮次")
+    }
+
+    func testPruneGateCanSkipAPassEntirely() throws {
+        let fixture = Fixture()
+        var gates = 0
+        let admission = WriterAdmission(dataDirectory: fixture.directory,
+            currentProcess: { fixture.current }, processSnapshot: { fixture.processes },
+            pruneGate: { _ in gates += 1; return false })
+        try admission.registerCurrentProcess()
+        let stale = admission.presenceURL(processID: impossibleProcessID)
+        try Data("stale".utf8).write(to: stale)
+        try setModification(stale, secondsAgo: 3_600)
+
+        try admission.registerCurrentProcess()
+        XCTAssertGreaterThan(gates, 0, "节流闸门必须被咨询")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stale.path),
+                      "闸门拒绝的轮次不得删除任何东西")
+    }
 }
