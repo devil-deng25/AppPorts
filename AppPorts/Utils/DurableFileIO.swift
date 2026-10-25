@@ -259,4 +259,91 @@ enum DurableFileIO {
             NSLocalizedDescriptionKey: String(format: "%@失败：%@\n系统错误：%@".localized, operation.localizedDescription, url.path, String(cString: strerror(code)))
         ])
     }
+
+    // MARK: - 回收写入中断遗留的临时文件
+
+    /// 同一目录两次回收之间的最小间隔。残留不会自己消失，但也不能让回收
+    /// 变成每次读取都要付的成本，因此按目录分别节流。
+    static let temporaryPruneInterval: TimeInterval = 300
+    /// 临时文件的最短静默期。刚写下的临时文件属于正在进行的写入，
+    /// 只有明显超龄的才可能是中断残留。
+    static let temporaryGracePeriod: TimeInterval = 60
+
+    private static let temporaryPruneLock = NSLock()
+    nonisolated(unsafe) private static var temporaryPrunePasses: [String: TimeInterval] = [:]
+
+    /// 回收本目录下写入中断遗留的临时文件，返回删除条数。
+    ///
+    /// `write` 用 `defer` 在失败时删除临时文件，但进程被强制退出、崩溃或断电时
+    /// `defer` 不会执行，残留只能由目录所有者另行回收。这就是这个入口存在的
+    /// 唯一理由：它清理的是「本该由自己删掉、但没机会删」的文件。
+    ///
+    /// 判定条件与写入时保持一致：本用户、普通文件、前缀完全匹配、超过静默期。
+    /// 任何一步失败都按「保留」处理，绝不向调用方抛错 —— 回收是可选的后台收益，
+    /// 不能因为清理失败而影响读取路径。
+    ///
+    /// 目录不存在（例如外置盘未挂载）时返回 0，这是正常情况而不是错误。
+    @discardableResult
+    static func pruneAbandonedTemporaries(in directory: URL,
+                                          olderThan gracePeriod: TimeInterval = temporaryGracePeriod,
+                                          limit: Int = 256,
+                                          now: TimeInterval = Date().timeIntervalSince1970) -> Int {
+        let descriptor = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { return 0 }
+        defer { _ = close(descriptor) }
+        var directoryInfo = stat()
+        guard fstat(descriptor, &directoryInfo) == 0,
+              directoryInfo.st_mode & S_IFMT == S_IFDIR,
+              directoryInfo.st_uid == getuid() else { return 0 }
+        let duplicate = dup(descriptor)
+        guard duplicate >= 0, let entries = fdopendir(duplicate) else {
+            if duplicate >= 0 { _ = close(duplicate) }
+            return 0
+        }
+        defer { _ = closedir(entries) }
+
+        var removed = 0
+        var scanned = 0
+        // 同前缀的文件正常只有几个。但异常或人为堆积时不能退化成整目录遍历，
+        // 否则一次回收就可能变成「读一遍所有记录」的代价。
+        let scanLimit = max(limit * 8, 512)
+        while removed < limit, scanned < scanLimit {
+            errno = 0
+            guard let entry = readdir(entries) else { break }
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
+            }
+            guard name.hasPrefix(temporaryNamePrefix) else { continue }
+            scanned += 1
+
+            var info = stat()
+            guard fstatat(descriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0,
+                  info.st_mode & S_IFMT == S_IFREG,
+                  info.st_uid == getuid() else { continue }
+            let modified = TimeInterval(info.st_mtimespec.tv_sec)
+                + TimeInterval(info.st_mtimespec.tv_nsec) / 1_000_000_000
+            guard now - modified >= gracePeriod else { continue }
+            if unlinkat(descriptor, name, 0) == 0 { removed += 1 }
+        }
+        return removed
+    }
+
+    /// 带进程内节流的回收入口，供各存储的读取入口调用一次。
+    ///
+    /// 节流按目录路径共享，因此同一个目录被多处调用时也只会扫一次；主程序与
+    /// 挂载代理是两个进程，各自持有一份，靠 300 秒的稀疏间隔自然错开。
+    @discardableResult
+    static func pruneAbandonedTemporariesIfNeeded(in directory: URL,
+                                                  now: TimeInterval = Date().timeIntervalSince1970) -> Int {
+        let key = directory.standardizedFileURL.path
+        temporaryPruneLock.lock()
+        let lastPass = temporaryPrunePasses[key]
+        if let lastPass, now - lastPass < temporaryPruneInterval {
+            temporaryPruneLock.unlock()
+            return 0
+        }
+        temporaryPrunePasses[key] = now
+        temporaryPruneLock.unlock()
+        return pruneAbandonedTemporaries(in: directory, now: now)
+    }
 }

@@ -238,6 +238,9 @@ struct SignatureFactStore: Sendable {
     }
 
     func inventory() throws -> Inventory {
+        // 签名事实也用 `DurableFileIO` 写入。临时文件不以 .plist 结尾，因此不会被
+        // 当成记录读，但也永远不会自己消失，需要在这里回收一次（按目录节流）。
+        DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directoryURL)
         guard try SignatureSnapshot.entryExists(directoryURL) else { return .init() }
         guard try SignatureSnapshot.info(at: directoryURL).st_mode & S_IFMT == S_IFDIR else { throw CodeSigner.SigningError.snapshotInvalid }
         // Preserve the store's spelling of ancestor symlinks. Foundation's

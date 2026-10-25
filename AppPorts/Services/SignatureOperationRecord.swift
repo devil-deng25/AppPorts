@@ -217,6 +217,9 @@ struct SignatureOperationStore: Sendable {
     }
 
     func recordURLs() throws -> [URL] {
+        // 签名操作记录也走 `DurableFileIO`，中断写入的临时文件会留在同目录。
+        // 目录本身是唯一会碰它的地方，顺手回收一次（按目录节流）。
+        DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directoryURL)
         guard try SignatureSnapshot.entryExists(directoryURL) else { return [] }
         guard try SignatureSnapshot.info(at: directoryURL).st_mode & S_IFMT == S_IFDIR else { throw CodeSigner.SigningError.snapshotInvalid }
         return try SignatureRecordFile.children(in: directoryURL)

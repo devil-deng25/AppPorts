@@ -37,12 +37,17 @@ final class AppTransferStore: @unchecked Sendable {
 
     func records() throws -> [AppTransferRecord] {
         lock.lock(); defer { lock.unlock() }
+        // 强退、崩溃或断电时，写入中断的临时记录会留在这个目录里；`recordURLs`
+        // 会把它过滤掉，所以它既不会报错，也不会自己消失。读取入口是唯一
+        // 「本来就该碰这个目录」的地方，顺手回收一次（内部按目录节流）。
+        DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directoryURL)
         return try recordURLs().map { try decodeRecord(recordData(at: $0), at: $0) }
             .sorted { $0.createdAt < $1.createdAt }
     }
 
     func inventory() throws -> Inventory {
         lock.lock(); defer { lock.unlock() }
+        DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directoryURL)
         var records: [AppTransferRecord] = []
         var issues: [AppTransferRecordIssue] = []
         for url in try recordURLs() {

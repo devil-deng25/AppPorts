@@ -143,6 +143,8 @@ struct SignatureHistoryStore: Sendable {
     }
 
     func read(bundleIdentifier: String) throws -> SignatureBackup? {
+        // 签名历史同样用 `DurableFileIO` 写入，强退会在备份目录留下临时文件。
+        DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directoryURL)
         let url = try recordURL(bundleIdentifier: bundleIdentifier)
         guard try SignatureSnapshot.entryExists(url) else { return nil }
         let backup = try read(at: url)

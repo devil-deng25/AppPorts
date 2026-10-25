@@ -874,6 +874,9 @@ final class ContainerMountStore: @unchecked Sendable {
     }
 
     private func load(validateState: Bool = true, using validation: BaselineValidation = BaselineValidation()) throws -> Document {
+        // 挂载记录的写入同样走 `DurableFileIO`，强退时会在同目录留下临时文件。
+        // 读取入口本来就是唯一会碰这个目录的地方，顺手回收一次（按目录节流）。
+        DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: fileURL.deletingLastPathComponent())
         // fileExists follows links and conflates missing state with unreadable
         // state. An existing broken link must never authorize a fresh document.
         let descriptor = open(fileURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)

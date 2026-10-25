@@ -87,6 +87,9 @@ struct DiskEjectionPauseStore: Sendable {
     }
 
     func snapshot() throws -> Snapshot {
+        // 与挂载记录共用同一个目录，节流以目录为单位，因此这里的调用不会
+        // 让同目录被扫第二遍。
+        DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: fileURL.deletingLastPathComponent())
         let fd = open(fileURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         guard fd >= 0 else {
             if errno == ENOENT { return Snapshot(pauses: []) }

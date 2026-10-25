@@ -375,7 +375,11 @@ final class WriterAdmissionTests: XCTestCase {
 
     func testPruneRemovesAtMostThePerRunLimitAndLeavesTheRestForLater() throws {
         let fixture = Fixture()
-        let admission = fixture.admission()
+        // 积压场景要的是「条数封顶」本身，时间预算在这里放大到足够，
+        // 否则慢盘上可能先撞预算、让断言变成看磁盘脸色。
+        let admission = WriterAdmission(dataDirectory: fixture.directory,
+            policy: PresencePolicy(timeBudget: 30),
+            currentProcess: { fixture.current }, processSnapshot: { fixture.processes })
         try admission.registerCurrentProcess()
         let directory = presenceDirectory(admission)
         let total = WriterAdmission.presencePruneLimit + 20
@@ -398,7 +402,7 @@ final class WriterAdmissionTests: XCTestCase {
         var gates = 0
         let admission = WriterAdmission(dataDirectory: fixture.directory,
             currentProcess: { fixture.current }, processSnapshot: { fixture.processes },
-            pruneGate: { _ in gates += 1; return false })
+            pruneGate: { _, _ in gates += 1; return false })
         try admission.registerCurrentProcess()
         let stale = admission.presenceURL(processID: impossibleProcessID)
         try Data("stale".utf8).write(to: stale)
@@ -408,5 +412,104 @@ final class WriterAdmissionTests: XCTestCase {
         XCTAssertGreaterThan(gates, 0, "节流闸门必须被咨询")
         XCTAssertTrue(FileManager.default.fileExists(atPath: stale.path),
                       "闸门拒绝的轮次不得删除任何东西")
+    }
+
+    func testPruneReclaimsNonCanonicalPresenceNames() throws {
+        // `007.plist` 读不成任何有效登记。如果只是跳过不处理，它就会永远留在
+        // 目录里 —— 这正是原实现在「非规范命名」上的泄漏点。
+        let fixture = Fixture()
+        let admission = fixture.admission()
+        try admission.registerCurrentProcess()
+        let nonCanonical = presenceDirectory(admission).appendingPathComponent("007.plist")
+        try Data("junk".utf8).write(to: nonCanonical)
+        try setModification(nonCanonical, secondsAgo: 3_600)
+
+        try admission.registerCurrentProcess()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: nonCanonical.path),
+                       "非规范命名的 .plist 不会成为有效登记，超龄后应按残留回收")
+    }
+
+    func testPruneReportCountsWhatThePassActuallyDid() throws {
+        let fixture = Fixture()
+        var reports: [PruneReport] = []
+        let admission = WriterAdmission(dataDirectory: fixture.directory,
+            currentProcess: { fixture.current }, processSnapshot: { fixture.processes },
+            pruneReport: { report, _ in reports.append(report) })
+        try admission.registerCurrentProcess()
+        let directory = presenceDirectory(admission)
+        for _ in 0..<3 {
+            let url = directory.appendingPathComponent(DurableFileIO.temporaryNamePrefix + UUID().uuidString)
+            try Data(repeating: 0, count: 8).write(to: url)
+            try setModification(url, secondsAgo: 600)
+        }
+        let unrelated = directory.appendingPathComponent("notes.txt")
+        try Data("keep".utf8).write(to: unrelated)
+        try setModification(unrelated, secondsAgo: 600)
+
+        reports.removeAll()
+        try admission.registerCurrentProcess()
+        let report = try XCTUnwrap(reports.last, "执行过的轮次必须回报结果")
+        XCTAssertEqual(report.removed, 3, "三条超龄临时文件应被回收")
+        XCTAssertGreaterThanOrEqual(report.elapsed, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path),
+                      "报告不能把无关文件算进删除数")
+    }
+
+    func testTimeBudgetStopsAPassEvenWhenNothingElseWould() throws {
+        let fixture = Fixture()
+        let admission = WriterAdmission(dataDirectory: fixture.directory,
+            policy: PresencePolicy(timeBudget: 0),
+            currentProcess: { fixture.current }, processSnapshot: { fixture.processes })
+        try admission.registerCurrentProcess()
+        let stale = admission.presenceURL(processID: impossibleProcessID)
+        try Data("stale".utf8).write(to: stale)
+        try setModification(stale, secondsAgo: 3_600)
+
+        try admission.registerCurrentProcess()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stale.path),
+                      "时间预算耗尽时必须停止，不得继续删除")
+    }
+
+    func testDurableFileIOReclaimsAbandonedTemporariesInAnyDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DurableFileIOTemporaries-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let abandoned = directory.appendingPathComponent(DurableFileIO.temporaryNamePrefix + UUID().uuidString)
+        try Data(repeating: 0, count: 8).write(to: abandoned)
+        try setModification(abandoned, secondsAgo: 600)
+        let inFlight = directory.appendingPathComponent(DurableFileIO.temporaryNamePrefix + UUID().uuidString)
+        try Data(repeating: 0, count: 8).write(to: inFlight)
+        let record = directory.appendingPathComponent("record.plist")
+        try Data("keep".utf8).write(to: record)
+
+        let removed = DurableFileIO.pruneAbandonedTemporaries(in: directory)
+        XCTAssertEqual(removed, 1, "只回收超过静默期的临时文件")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: abandoned.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inFlight.path),
+                      "静默期内的临时文件属于正在进行的写入")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: record.path),
+                      "同目录的正常记录不受影响")
+    }
+
+    func testPruneIfNeededIsThrottledPerDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DurableFileIOThrottle-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let abandoned = directory.appendingPathComponent(DurableFileIO.temporaryNamePrefix + UUID().uuidString)
+        try Data(repeating: 0, count: 8).write(to: abandoned)
+        try setModification(abandoned, secondsAgo: 600)
+
+        XCTAssertEqual(DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directory, now: 1_000), 1)
+        let second = directory.appendingPathComponent(DurableFileIO.temporaryNamePrefix + UUID().uuidString)
+        try Data(repeating: 0, count: 8).write(to: second)
+        try setModification(second, secondsAgo: 600)
+        XCTAssertEqual(DurableFileIO.pruneAbandonedTemporariesIfNeeded(in: directory, now: 1_001), 0,
+                       "同一目录在节流间隔内不得重复扫描")
+        XCTAssertEqual(DurableFileIO.pruneAbandonedTemporariesIfNeeded(
+            in: directory, now: 1_000 + DurableFileIO.temporaryPruneInterval + 1), 1,
+                       "超过间隔后应恢复扫描")
     }
 }
