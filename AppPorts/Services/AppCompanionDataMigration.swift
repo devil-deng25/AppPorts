@@ -31,6 +31,9 @@ enum AppCompanionDataMigration {
         var candidates: [DataDirItem] = []
         /// 需要挂载迁移、本次不做但应当告知用户的目录名。
         var mountRequired: [String] = []
+        /// 目录内部已有子孙项被单独迁移，父目录不能整体搬运（详见 `containsMigratedDescendant`）。
+        /// 这类项不是失败：数据已经在外部存储上，只是父目录本身没有可搬的剩余内容。
+        var blockedByMigratedDescendant: [String] = []
 
         var isEmpty: Bool { candidates.isEmpty }
     }
@@ -61,9 +64,11 @@ enum AppCompanionDataMigration {
     // MARK: - 规划
 
     /// 找出这个应用当前还能一起搬走的数据目录。
-    static func plan(for app: AppItem, externalRoot: URL) async -> Plan {
+    static func plan(for app: AppItem, externalRoot: URL,
+                     store: ContainerMountStore = .shared) async -> Plan {
         guard !app.isFolder else { return Plan() }
         let items = await DataDirScanner().scanLibraryDirs(for: app, externalRootURL: externalRoot)
+        let migratedPaths = migratedOriginalPaths(store: store)
         var plan = Plan()
         for item in items {
             // 已链接/已挂载/待完成等状态都属于「不用再动」，只有纯本地目录才参与。
@@ -78,6 +83,13 @@ enum AppCompanionDataMigration {
             guard item.pathPolicy?.canMigrate != false else { continue }
             // 空目录搬过去只会多一个符号链接。
             guard !item.isEmptyLocalDirectory else { continue }
+            // 目录里已有子孙项单独迁移过：父目录在外部存储里的规范目标，正是那个子项
+            // 数据的容器。整体搬过去会把「指向外置的子链接」再复制进同一位置，形成自指，
+            // 因此只能跳过——数据本来就已经在外部存储上了。
+            guard !containsMigratedDescendant(of: item.path, among: migratedPaths) else {
+                plan.blockedByMigratedDescendant.append(item.name)
+                continue
+            }
             plan.candidates.append(item)
         }
         AppLogger.shared.logContext(
@@ -87,10 +99,27 @@ enum AppCompanionDataMigration {
                 ("external_root", externalRoot.path),
                 ("candidate_count", String(plan.candidates.count)),
                 ("candidates", plan.candidates.map(\.name).joined(separator: ", ")),
-                ("mount_required", plan.mountRequired.joined(separator: ", "))
+                ("mount_required", plan.mountRequired.joined(separator: ", ")),
+                ("blocked_by_migrated_children", plan.blockedByMigratedDescendant.joined(separator: ", "))
             ]
         )
         return plan
+    }
+
+    /// 已被 AppPorts 接管、搬到外部存储的原始路径：受管链接 + 挂载迁移点。
+    static func migratedOriginalPaths(store: ContainerMountStore = .shared) -> [String] {
+        var paths: [String] = []
+        if let links = try? store.managedLinks() { paths += links.map(\.originalPath) }
+        if let records = try? store.recordsStrict() { paths += records.map(\.mountPointPath) }
+        return paths
+    }
+
+    /// 该目录下是否有子孙项已被单独迁移。用路径前缀判定，边界必须落在 `/` 上，
+    /// 否则 `com.foo` 会把 `com.foobar` 也算成自己的子孙。
+    static func containsMigratedDescendant(of directory: URL, among migratedPaths: [String]) -> Bool {
+        let path = directory.standardizedFileURL.path
+        let prefix = path.hasSuffix("/") ? path : path + "/"
+        return migratedPaths.contains { $0.hasPrefix(prefix) }
     }
 
     // MARK: - 执行

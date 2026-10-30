@@ -1225,6 +1225,15 @@ actor DataDirScanner {
         item.canonicalExternalDestination(under: externalRoot, homeDirectory: homeDir)
     }
 
+    /// 组织/厂商级词表。它们只能出现在 Bundle ID 的固定段或完整应用名里，
+    /// 不能单独当作「这个目录属于该应用」的证据。
+    static let organizationMatchTerms: Set<String> = [
+        "microsoft", "apple", "google", "adobe", "oracle", "amazon", "meta", "facebook",
+        "tencent", "baidu", "alibaba", "bytedance", "netease", "kingsoft", "huawei",
+        "xiaomi", "samsung", "jetbrains", "mozilla", "vmware", "parallels", "cisco",
+        "zoom", "slack", "dropbox", "openai", "anthropic", "nvidia", "intel"
+    ]
+
     private func buildMatchProfile(bundleID: String?, appName: String) -> AppMatchProfile {
         var exactMatches = Set<String>()
         var containsMatches: [String] = []
@@ -1233,8 +1242,15 @@ actor DataDirScanner {
         // 例如 Trae CN 的「CN」不是应用身份，不能因此关联 cn.wps.* 的容器。
         let genericMatchTerms: Set<String> = [
             "app", "com", "org", "net", "io", "dev", "cn", "us", "uk", "de", "fr", "jp", "kr",
-            "mac", "macos", "osx", "desktop", "client", "helper", "dmg", "pkg", "free", "pro", "lite", "beta", "ide"
+            "mac", "macos", "osx", "desktop", "client", "helper", "dmg", "pkg", "free", "pro", "lite", "beta", "ide",
+            // "shim" 是通用技术词（中间层），单靠它会把 com.shimoko.* 也算成「X Shim」应用的数据。
+            "shim"
         ]
+        // 组织/厂商级词只说明「谁做的」，不说明「是哪个应用」。让它们单独命中，
+        // 「Microsoft Defender Shim」会把整套 Office / OneDrive / VSCode 的数据算成
+        // 自己的关联目录（本机实测：Word 名下挂进了 14 条别人的数据）。
+        // 它们仍参与精确匹配，只是不再作为模糊键。
+        let organizationMatchTerms = Self.organizationMatchTerms
 
         let cleanedAppName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
         let strippedVariants = strippedNameVariants(for: cleanedAppName)
@@ -1247,7 +1263,16 @@ actor DataDirScanner {
             }
         }
 
-        for token in strippedVariants.flatMap({ tokens(from: $0) }) where !genericMatchTerms.contains(token.lowercased()) {
+        for token in strippedVariants.flatMap({ tokens(from: $0) }) {
+            let key = token.lowercased()
+            // 厂商标识只认「整名就是它」的目录：`Application Support/Google` 这类厂商共享
+            // 目录仍然关联得上，但 `com.microsoft.OneDriveStandaloneUpdater` 这种只是
+            // 「包含厂商词」的目录不再被当成当前应用的数据。
+            if organizationMatchTerms.contains(key) {
+                exactMatches.insert(token)
+                continue
+            }
+            guard !genericMatchTerms.contains(key) else { continue }
             if token.count <= 3 {
                 shortPrefixMatches.append(token)
             } else {
@@ -1264,8 +1289,11 @@ actor DataDirScanner {
                 // （如 com.termius-dmg.mac 的 "mac" 会命中 com.tencent.QQMusicMac）。
                 for index in 1..<components.count {
                     let suffix = components[index...].joined(separator: ".")
-                    // 跳过纯通用后缀（如 "app"、"mac"）和由通用词汇组成的多段后缀
-                    if components[index...].allSatisfy({ genericMatchTerms.contains($0.lowercased()) }) {
+                    // 跳过纯通用后缀（如 "app"、"mac"）和由通用词汇组成的多段后缀；
+                    // 只由组织词构成的同理（"com.microsoft" 的 "microsoft" 不是应用身份）。
+                    if components[index...].allSatisfy({
+                        genericMatchTerms.contains($0.lowercased()) || organizationMatchTerms.contains($0.lowercased())
+                    }) {
                         continue
                     }
                     // 单段后缀必须足够独特；短于 4 个字符的单词（"mac"、"ide"）几乎必然误匹配

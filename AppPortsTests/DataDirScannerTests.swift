@@ -518,6 +518,63 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertTrue(items.contains { $0.path.standardizedFileURL == ownDataURL.standardizedFileURL })
     }
 
+    /// 厂商标识不能靠「包含」建立关联。
+    ///
+    /// 回归点：`matchesDirectoryName` 曾把应用名里的 `microsoft` 当作模糊键，
+    /// 于是「Microsoft Defender Shim」把所有 `com.microsoft.*` 都算成自己的关联目录；
+    /// 本机实际记录里，Word 名下因此挂进了 VSCode、OneDrive、SharePoint 等 14 条
+    /// 别人的数据。厂商标识现在只认「整名就是它」的目录。
+    func testVendorWordAloneDoesNotAssociateAnotherProductsData() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let appURL = try createAppBundle(named: "Microsoft Defender Shim.app",
+                                         bundleID: "com.microsoft.wdav.shim", in: workspace.appsURL)
+        let ownDataURL = workspace.homeURL
+            .appendingPathComponent("Library/Application Support/com.microsoft.wdav.shim")
+        let foreignDataURLs = [
+            workspace.homeURL.appendingPathComponent("Library/Application Support/com.microsoft.OneDriveStandaloneUpdater/com.microsoft.HockeyApp"),
+            workspace.homeURL.appendingPathComponent("Library/Application Support/com.microsoft.SharePoint-mac/com.microsoft.appcenter"),
+            workspace.homeURL.appendingPathComponent("Library/Caches/com.microsoft.VSCode"),
+            workspace.homeURL.appendingPathComponent("Library/HTTPStorages/com.microsoft.SharePoint-mac")
+        ]
+        try createDirectoryWithPayload(at: ownDataURL)
+        for url in foreignDataURLs { try createDirectoryWithPayload(at: url) }
+
+        let items = await DataDirScanner(
+            homeDir: workspace.homeURL,
+            mountStore: ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("mounts.plist")),
+            isSandboxedApplication: { _ in false }
+        ).scanLibraryDirs(for: AppItem(name: "Microsoft Defender Shim.app", path: appURL, status: AppStatus.local))
+
+        XCTAssertTrue(items.contains { $0.path.standardizedFileURL == ownDataURL.standardizedFileURL },
+                      "自己的 com.microsoft.wdav.shim 仍应命中")
+        for url in foreignDataURLs {
+            XCTAssertFalse(items.contains { $0.path.standardizedFileURL == url.standardizedFileURL },
+                           "厂商词不应建立关联：\(url.lastPathComponent)")
+        }
+    }
+
+    /// 厂商共享目录仍要关联得上：目录名正好是厂商词（如 `Application Support/Google`）。
+    func testVendorSharedFolderStillAssociatesByExactName() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let appURL = try createAppBundle(named: "Google Chrome.app",
+                                         bundleID: "com.google.Chrome", in: workspace.appsURL)
+        let sharedFolderURL = workspace.homeURL.appendingPathComponent("Library/Application Support/Google")
+        try createDirectoryWithPayload(at: sharedFolderURL)
+
+        let items = await DataDirScanner(
+            homeDir: workspace.homeURL,
+            mountStore: ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("mounts.plist")),
+            isSandboxedApplication: { _ in false }
+        ).scanLibraryDirs(for: AppItem(name: "Google Chrome.app", path: appURL, status: AppStatus.local))
+
+        XCTAssertTrue(items.contains { $0.path.standardizedFileURL == sharedFolderURL.standardizedFileURL },
+                      "整名等于厂商词的共享目录仍应关联")
+    }
+
     // MARK: - 沙盒应用与挂载迁移
 
     func testSandboxedAppContainerDataRequiresMountMigration() async throws {
