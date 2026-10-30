@@ -84,6 +84,38 @@ final class DataDirMoverTests: XCTestCase {
         XCTAssertTrue(fileManager.fileExists(atPath: externalDataURL.path))
     }
 
+    /// 同名但不同类型的两个目录，必须各自落在自己的类型目录下。
+    ///
+    /// 回归点：随应用迁移曾把「外部根 + 目录名」当作目标，于是
+    /// `Caches/com.example.dual` 与 `HTTPStorages/com.example.dual` 算出同一个
+    /// 路径，第二个必然报「目标路径已存在真实目录，无法覆盖」。
+    func testSameBasenameUnderDifferentTypesMigratesToDistinctDestinations() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let cachesLocal = workspace.homeURL.appendingPathComponent("Library/Caches/com.example.dual")
+        let storagesLocal = workspace.homeURL.appendingPathComponent("Library/HTTPStorages/com.example.dual")
+        try createDirectoryWithPayload(at: cachesLocal, payload: "caches-payload")
+        try createDirectoryWithPayload(at: storagesLocal, payload: "storages-payload")
+
+        let candidates: [(URL, DataDirType)] = [(cachesLocal, .caches), (storagesLocal, .httpStorages)]
+        let mover = makeMover(homeDir: workspace.homeURL)
+        for (local, type) in candidates {
+            let item = DataDirItem(name: local.lastPathComponent, path: local, type: type,
+                                   priority: .optional, description: "Same basename, different type")
+            let destination = item.canonicalExternalDestination(under: workspace.externalRootURL,
+                                                               homeDirectory: workspace.homeURL)
+            try await mover.migrate(item: item, to: destination.deletingLastPathComponent(), progressHandler: nil)
+            try assertSymlink(local, pointsTo: destination)
+        }
+
+        let cachesExternal = workspace.externalRootURL.appendingPathComponent("Caches/com.example.dual")
+        let storagesExternal = workspace.externalRootURL.appendingPathComponent("HTTPStorages/com.example.dual")
+        XCTAssertNotEqual(cachesExternal.standardizedFileURL.path, storagesExternal.standardizedFileURL.path)
+        XCTAssertEqual(try String(contentsOf: cachesExternal.appendingPathComponent("payload.txt")), "caches-payload")
+        XCTAssertEqual(try String(contentsOf: storagesExternal.appendingPathComponent("payload.txt")), "storages-payload")
+    }
+
     func testMigrateRollsBackWhenSymlinkCreationFails() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }

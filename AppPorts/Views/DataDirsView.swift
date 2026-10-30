@@ -2134,19 +2134,7 @@ struct DataDirsView: View {
     }
 
     private func suggestedDestinationPath(for item: DataDirItem, under externalRoot: URL) -> URL {
-        guard item.type != .dotFolder else {
-            return externalRoot.appendingPathComponent(item.type.rawValue).appendingPathComponent(item.path.lastPathComponent)
-        }
-
-        let standardizedPath = item.path.standardizedFileURL.path
-        let libraryRoot = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library").standardizedFileURL.path
-
-        if standardizedPath.hasPrefix(libraryRoot + "/") {
-            let relativePath = String(standardizedPath.dropFirst(libraryRoot.count + 1))
-            return externalRoot.appendingPathComponent(relativePath)
-        }
-
-        return externalRoot.appendingPathComponent(item.type.rawValue).appendingPathComponent(item.path.lastPathComponent)
+        item.canonicalExternalDestination(under: externalRoot)
     }
 
     private func normalizedManagementDestination(for item: DataDirItem, currentTarget: URL) -> URL {

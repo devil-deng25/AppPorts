@@ -1881,7 +1881,9 @@ enum DataDirError: LocalizedError {
         case .permissionDenied(let url):
             return String(format: "没有写入权限：%@".localized, url.path)
         case .destinationExists(let url):
-            return String(format: "目标路径已存在真实目录，无法覆盖：%@".localized, url.lastPathComponent)
+            // 只报目录名时，两个同名目录（如 Caches 与 HTTPStorages 下的 com.x）
+            // 在界面上完全分不清是哪一个挡住了；把完整路径给出来。
+            return String(format: "目标路径已存在真实目录，无法覆盖：%@".localized, url.path)
         case .deletionFailed(let error):
             return String(format: "删除原目录失败：%@".localized, error.localizedDescription)
         case .symlinkFailed(let error):

@@ -340,6 +340,28 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
         nonMigratableReason = decision.reason?.localizedDescription
     }
 
+    // MARK: - 外部存储目标路径
+
+    /// 这条目录在外部存储里的**规范目标路径**。
+    ///
+    /// `~/Library` 下的目录按「Library 相对路径」镜像（`~/Library/Caches/com.x` →
+    /// `<外部根>/Caches/com.x`），其余位置退化为「类型目录/目录名」。
+    ///
+    /// 迁移目标、`待规范` 判定、随应用迁移三处必须用同一个公式。此前随应用迁移单独
+    /// 用了「外部根 + 目录名」，于是两个都叫 `com.deepseek.dsh` 的目录
+    /// （`Caches/com.deepseek.dsh` 与 `HTTPStorages/com.deepseek.dsh`）算出同一个目标，
+    /// 第二个必然报「目标路径已存在真实目录」；同时它写出的是非规范路径，
+    /// 刚落地的条目立刻又变成「待规范」，要用户手工「整理」一次。
+    func canonicalExternalDestination(under externalRoot: URL,
+                                      homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory())) -> URL {
+        let libraryRoot = homeDirectory.appendingPathComponent("Library").standardizedFileURL.path
+        let standardizedPath = path.standardizedFileURL.path
+        if type != .dotFolder, standardizedPath.hasPrefix(libraryRoot + "/") {
+            return externalRoot.appendingPathComponent(String(standardizedPath.dropFirst(libraryRoot.count + 1)))
+        }
+        return externalRoot.appendingPathComponent(type.rawValue).appendingPathComponent(path.lastPathComponent)
+    }
+
     /// 迁移警告（可迁移但有风险时显示，用户确认后仍可继续）
     var migrationWarning: String? = nil
 

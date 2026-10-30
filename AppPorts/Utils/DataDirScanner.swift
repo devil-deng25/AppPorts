@@ -1176,19 +1176,7 @@ actor DataDirScanner {
     }
 
     private func suggestedDestinationPath(for item: DataDirItem, under externalRoot: URL) -> URL {
-        guard item.type != .dotFolder else {
-            return externalRoot.appendingPathComponent(item.type.rawValue).appendingPathComponent(item.path.lastPathComponent)
-        }
-
-        let standardizedPath = item.path.standardizedFileURL.path
-        let libraryRoot = homeDir.appendingPathComponent("Library").standardizedFileURL.path
-
-        if standardizedPath.hasPrefix(libraryRoot + "/") {
-            let relativePath = String(standardizedPath.dropFirst(libraryRoot.count + 1))
-            return externalRoot.appendingPathComponent(relativePath)
-        }
-
-        return externalRoot.appendingPathComponent(item.type.rawValue).appendingPathComponent(item.path.lastPathComponent)
+        item.canonicalExternalDestination(under: externalRoot, homeDirectory: homeDir)
     }
 
     private func buildMatchProfile(bundleID: String?, appName: String) -> AppMatchProfile {

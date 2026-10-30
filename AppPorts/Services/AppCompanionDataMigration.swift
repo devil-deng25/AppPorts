@@ -106,8 +106,13 @@ enum AppCompanionDataMigration {
                 outcome.cancelled = true
                 break
             }
+            // 目标路径必须和「数据目录」页同一个公式（`<外部根>/<Library 相对路径>`）。
+            // 只把外部根交给搬运器、由它拼「根 + 目录名」，会让同名但不同类的目录
+            // （Caches 与 HTTPStorages 下都叫 com.x）抢同一个目标，第二个直接失败；
+            // 写出的还是非规范路径，落地即「待规范」。
+            let destination = item.canonicalExternalDestination(under: externalRoot)
             do {
-                _ = try await mover.migrateAndComplete(item: item, to: externalRoot,
+                _ = try await mover.migrateAndComplete(item: item, to: destination.deletingLastPathComponent(),
                                                        progressHandler: progressHandler)
                 outcome.migrated.append(item.name)
             } catch is CancellationError {
@@ -121,7 +126,8 @@ enum AppCompanionDataMigration {
                     context: [
                         ("app_name", item.associatedAppName ?? ""),
                         ("item_name", item.name),
-                        ("data_dir_type", item.type.rawValue)
+                        ("data_dir_type", item.type.rawValue),
+                        ("destination", destination.path)
                     ],
                     relatedURLs: [("path", item.path)]
                 )
