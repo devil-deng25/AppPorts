@@ -36,6 +36,8 @@ enum CustomDirRecoveryEligibility {
 @MainActor
 struct CustomDirsView: View {
     var isActive: Bool = true
+    var refreshTrigger: Int = 0
+    var onScanningChanged: ((Bool) -> Void)? = nil
     @Environment(\.locale) private var locale
     @ObservedObject private var operationState = AppOperationState.shared
     @ObservedObject private var configStore = CustomDirConfigStore.shared
@@ -106,20 +108,9 @@ struct CustomDirsView: View {
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                HStack {
-                    if let date = sizeCacheUpdatedAt {
-                        Text("上次缓存时间".localized + "：" + date.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(locale)))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("刷新缓存".localized) { refresh(forceSizeRefresh: true) }
-                        .disabled(isScanning || operationState.blocksInteraction)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-
                 // 照片图库是这类迁移里最常见、也最容易手滑的一个（包目录、体积大、
                 // 要求照片 App 保持关闭），所以单独给一张卡片，走的仍是同一条迁移通路。
+                // 刷新入口由上游统一到列表工具栏，这里不再重复放一条。
                 PhotoLibrarySection(
                     isActive: isActive,
                     configs: configs,
@@ -157,11 +148,19 @@ struct CustomDirsView: View {
             isVisible = active
             if active { refresh() } else { invalidateRefresh() }
         }
+        .onChange(of: refreshTrigger) { _ in
+            guard isActive, !isScanning, !operationState.blocksInteraction else { return }
+            refresh(forceSizeRefresh: true)
+        }
+        .onChange(of: isScanning) { scanning in
+            onScanningChanged?(scanning)
+        }
         .onChange(of: operationState.recordsRevision) { _ in refresh() }
         .onChange(of: configStore.configs) { _ in refresh() }
         .onDisappear {
             isVisible = false
             invalidateRefresh()
+            onScanningChanged?(false)
         }
         .sheet(isPresented: $showAddSheet) {
             AddCustomDirSheet(existingConfigs: configs) { config in
@@ -256,26 +255,23 @@ struct CustomDirsView: View {
                 }
             }
 
-            VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Button(action: relinkSelected) {
-                        footerLabel(title: relinkButtonTitle, icon: "link")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.blue)
-                    .disabled(relinkablePairs.isEmpty)
-
-                    Button(action: restoreSelected) {
-                        footerLabel(title: restoreButtonTitle, icon: "arrow.turn.up.left")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange.opacity(0.85))
-                    .disabled(restorablePairs.isEmpty)
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button(action: restoreSelected) {
+                    Label(restoreButtonTitle, systemImage: "arrow.turn.up.left")
+                        .frame(minWidth: 100, minHeight: 22)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .buttonStyle(.bordered)
+                .disabled(restorablePairs.isEmpty)
+
+                Button(action: relinkSelected) {
+                    Label(relinkButtonTitle, systemImage: "link")
+                        .frame(minWidth: 100, minHeight: 22)
+                }
+                .buttonStyle(AppListPrimaryButtonStyle())
+                .disabled(relinkablePairs.isEmpty)
             }
-            .background(Color(nsColor: .controlBackgroundColor))
+            .modifier(AppListFooterStyle())
         }
     }
 
@@ -298,18 +294,6 @@ struct CustomDirsView: View {
             return "还原文件夹".localized
         }
         return String(format: "还原 %lld 个文件夹".localized, Int64(restorablePairs.count))
-    }
-
-    private func footerLabel(title: String, icon: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-            Text(title)
-                .fontWeight(.medium)
-                .font(.system(size: 13))
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 28)
     }
 
     private func addConfig(_ config: CustomDirConfig) -> String? {

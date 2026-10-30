@@ -1365,15 +1365,20 @@ final class DataDirMoverTests: XCTestCase {
         try createDirectoryWithPayload(at: local, payload: "history")
         let item = DataDirItem(name: "Cache", path: local, type: .custom, priority: .optional, description: "")
         let mover = makeMover(homeDir: workspace.homeURL)
+        let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("data-transfers.plist"))
         try await mover.migrate(item: item, to: workspace.externalRootURL, progressHandler: nil)
+        let migrated = try store.transfers()
+        XCTAssertEqual(Set(DataCleanupResolution.currentDataPaths(for: migrated, store: store).values), [firstTarget.path])
         try await mover.normalizeManagedLink(localPath: local, currentExternalPath: firstTarget, normalizedExternalPath: normalized)
         try assertSymlink(local, pointsTo: normalized)
         XCTAssertTrue(fileManager.fileExists(atPath: firstTarget.path))
         try await mover.restore(item: item, progressHandler: nil)
         try assertRealDirectory(local)
         XCTAssertEqual(try String(contentsOf: local.appendingPathComponent("payload.txt")), "history")
-        let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("data-transfers.plist"))
         let history = try store.transfers()
+        let currentPaths = DataCleanupResolution.currentDataPaths(for: history, store: store)
+        XCTAssertEqual(currentPaths.count, history.count)
+        XCTAssertEqual(Set(currentPaths.values), [local.path])
         XCTAssertEqual(history.count, 3)
         XCTAssertTrue(history.allSatisfy { $0.phase == .awaitingUserVerification })
         for transfer in history {
@@ -1523,6 +1528,65 @@ final class DataDirMoverTests: XCTestCase {
         let backup = URL(fileURLWithPath: try XCTUnwrap(transfer.backupPath))
         XCTAssertEqual(try String(contentsOf: backup.appendingPathComponent(".appports-link-metadata.plist")), "unknown")
         XCTAssertEqual(transfer.phase, .needsRecovery)
+    }
+
+    func testNormalizeInPlaceAdoptsUnrecordedLinkAndAllowsRestore() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+        let local = workspace.homeURL.appendingPathComponent("Library/Caches/AlreadyNormalized")
+        let external = workspace.externalRootURL.appendingPathComponent("AlreadyNormalized")
+        try createDirectoryWithPayload(at: external, payload: "adopt-me")
+        try fileManager.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(at: local, withDestinationURL: external)
+        let before = try DataPathIdentity.capture(local)
+        let mover = makeMover(homeDir: workspace.homeURL)
+        _ = try await mover.normalizeManagedLinkAndComplete(localPath: local, currentExternalPath: external, normalizedExternalPath: external)
+        let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("data-transfers.plist"))
+        XCTAssertEqual(try store.managedLinks().count, 1)
+        XCTAssertEqual(try DataPathIdentity.capture(local), before)
+        XCTAssertTrue(fileManager.fileExists(atPath: markerURL(for: external).path))
+        // Repeating the user's action must repair a missing marker, not silently return.
+        try fileManager.removeItem(at: markerURL(for: external))
+        try await mover.normalizeManagedLink(localPath: local, currentExternalPath: external, normalizedExternalPath: external)
+        XCTAssertTrue(fileManager.fileExists(atPath: markerURL(for: external).path))
+        let item = DataDirItem(name: "Cache", path: local, type: .caches, priority: .optional, description: "")
+        try await mover.restore(item: item, progressHandler: nil)
+        try assertRealDirectory(local)
+        XCTAssertEqual(try String(contentsOf: local.appendingPathComponent("payload.txt")), "adopt-me")
+    }
+
+    func testNormalizeInPlaceRejectsConflictingMarker() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+        let local = workspace.homeURL.appendingPathComponent("Cache")
+        let external = workspace.externalRootURL.appendingPathComponent("Cache")
+        try createDirectoryWithPayload(at: external, payload: "keep")
+        try fileManager.createSymbolicLink(at: local, withDestinationURL: external)
+        let marker = markerURL(for: external)
+        try Data("foreign".utf8).write(to: marker)
+        do {
+            try await makeMover(homeDir: workspace.homeURL).normalizeManagedLink(localPath: local, currentExternalPath: external, normalizedExternalPath: external)
+            XCTFail("A conflicting marker must not be overwritten")
+        } catch { }
+        XCTAssertEqual(try String(contentsOf: marker), "foreign")
+        try assertSymlink(local, pointsTo: external)
+        let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("data-transfers.plist"))
+        XCTAssertTrue(try store.managedLinks().isEmpty)
+    }
+
+    func testContainerLinkRestoresWithoutHistoricalRecord() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+        let local = workspace.homeURL.appendingPathComponent("Library/Containers/com.example.legacy/Data/Documents/Cache")
+        let external = workspace.externalRootURL.appendingPathComponent("LegacyCache")
+        try createDirectoryWithPayload(at: external, payload: "legacy-data")
+        try fileManager.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(at: local, withDestinationURL: external)
+        let item = DataDirItem(name: "LegacyCache", path: local, type: .containers, priority: .optional, description: "", status: "现有软链")
+        let mover = makeMover(homeDir: workspace.homeURL)
+        _ = try await mover.restoreAndComplete(item: item, progressHandler: nil)
+        try assertRealDirectory(local)
+        XCTAssertEqual(try String(contentsOf: local.appendingPathComponent("payload.txt")), "legacy-data")
     }
 
     func testTakingOverMatchingExistingLinkPreservesItsEntryIdentity() async throws {

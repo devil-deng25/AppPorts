@@ -28,6 +28,7 @@ actor DataDirMover {
     private let mountMigrator: ContainerVolumeMigrator?
     private let failSymlinkCreation: Bool
     private let synchronizeDirectory: @Sendable (URL, Bool) throws -> Void
+    private let allowsAdministratorPrompt: Bool
     private var runningMigrations: Set<UUID> = []
     private var runningRestores: Set<UUID> = []
     private var runningCleanups: Set<UUID> = []
@@ -61,6 +62,7 @@ actor DataDirMover {
          failSymlinkCreation: Bool = false, failSourceBackupCleanup: Bool = false,
          store: ContainerMountStore = .shared, runner: any ShellCommandRunning = ProcessCommandRunner(),
          mountMigrator: ContainerVolumeMigrator? = nil,
+         allowsAdministratorPrompt: Bool = false,
          synchronizeDirectory: @escaping @Sendable (URL, Bool) throws -> Void = {
              try DurableFileIO.syncDirectory(at: $0, resolvingAlias: $1)
          }) {
@@ -70,6 +72,7 @@ actor DataDirMover {
         self.mountMigrator = mountMigrator
         self.failSymlinkCreation = failSymlinkCreation
         self.synchronizeDirectory = synchronizeDirectory
+        self.allowsAdministratorPrompt = allowsAdministratorPrompt
         // Kept source-compatible with older callers. Success now always retains the original.
         _ = failSourceBackupCleanup
     }
@@ -328,7 +331,6 @@ actor DataDirMover {
         if let old {
             guard old.destinationIdentity.matchesFilesystemObject(externalIdentity),
                   DataPathTopology.relationship(old.destinationPath, external.path) == .same else { throw DataOperationSafety.Failure.conflict(local.path) }
-            if isSymbolicLink(at: local), DataPathTopology.relationship(local.path, external.path) == .same { return }
         }
         let adoptedEntry: DataPathIdentity?
         if isSymbolicLink(at: local), DataPathTopology.relationship(local.path, external.path) == .same {
@@ -363,6 +365,62 @@ actor DataDirMover {
         }
         do { try createSymbolicLink(at: local, withDestinationURL: external) }
         catch { throw DataDirError.symlinkFailed(error) }
+    }
+
+    /// Discard a local link without reading or changing its target. Explicit
+    /// reset retires this entry's old symlink journals while preserving their copies.
+    func resetExistingLink(item: DataDirItem, expectedDestination: URL) async throws {
+        let identifier = try launchIdentifier(for: item)
+        if !ApplicationLaunchProtection.contains(identifier, directory: launchProtectionDirectory) {
+            return try await ApplicationLaunchProtection.run(identifier: identifier, directory: launchProtectionDirectory) {
+                try await self.resetExistingLink(item: item, expectedDestination: expectedDestination)
+            }
+        }
+        let local = item.path.standardizedFileURL
+        guard completingPaths.insert(local.path).inserted else { throw DataOperationSafety.Failure.occupied(local.path) }
+        defer { completingPaths.remove(local.path) }
+        try requirePolicy(local)
+        try safety.requireLocalRestoreParent(at: local)
+        try safety.requireApplicationStopped(at: local, bundleIdentifier: identifier)
+        guard isSymbolicLink(at: local) else { throw DataDirError.notASymlink(local) }
+        let identity = try DataPathIdentity.capture(local)
+        let rawTarget = try fileManager.destinationOfSymbolicLink(atPath: local.path)
+        let target = URL(fileURLWithPath: rawTarget, relativeTo: local.deletingLastPathComponent()).standardizedFileURL
+        guard target.path == expectedDestination.standardizedFileURL.path else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        let related = try store.transfers().filter { $0.originalPath == local.path }
+        let indexed = try store.managedLink(forOriginalPath: local.path)
+        guard related.allSatisfy({ $0.mode == .symlink }),
+              indexed == nil || indexed?.originalPath == local.path else {
+            throw DataOperationSafety.Failure.conflict(local.path)
+        }
+        try safety.requireNoOverlap(at: local, ownedTransferIDs: Set(related.map(\.operationID)),
+                                    ownedLinkPath: indexed?.originalPath)
+        try Task.checkCancellation()
+        let staging = local.deletingLastPathComponent().appendingPathComponent(".appports-unlink-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+        let replacement = staging.appendingPathComponent("empty-directory")
+        do {
+            try fileManager.createDirectory(at: replacement, withIntermediateDirectories: false)
+            try requireLocalRestoreParent(local)
+            // Commit the user's decision to end the old association first. A
+            // failed filesystem switch still leaves its link and copies intact.
+            try store.detachSymlinkHistory(at: local, transfers: related, link: indexed,
+                reason: "强制解绑只移除本地软链并创建空目录，保留外部目标数据，无需连接外置盘。".localized) {
+                    try self.requireIdentity(local, identity)
+                }
+            try safety.requireNoOverlap(at: local)
+            try switchEntry(local: local, expectedLink: identity, replacement: replacement, staging: staging)
+        } catch {
+            // Remove only empty directories. Never recursively remove a retained entry.
+            _ = rmdir(replacement.path)
+            _ = rmdir(staging.path)
+            if try entryExists(staging) {
+                throw DataOperationSafety.Failure.inspection(error.localizedDescription + "\n" + staging.path)
+            }
+            throw error
+        }
     }
 
     /// Disconnecting an entry keeps its index so the now-missing original remains recoverable.
@@ -406,7 +464,10 @@ actor DataDirMover {
         try requirePolicy(local)
         guard existingDirectory(at: source), !isSymbolicLink(at: source) else { throw DataDirError.externalNotFound(source) }
         guard isSymbolicLink(at: local), DataPathTopology.relationship(local.path, source.path) == .same else { throw DataDirError.invalidSymlink(local) }
-        if DataPathTopology.relationship(source.path, destination.path) == .same { return nil }
+        if DataPathTopology.relationship(source.path, destination.path) == .same {
+            try await createLink(localPath: local, externalPath: source)
+            return nil
+        }
         guard try !entryExists(destination) else { throw DataDirError.destinationExists(destination) }
         let old = try store.managedLink(forOriginalPath: local.path)
         let type = try managedType(for: local, external: source, indexedType: old?.dataDirType)
@@ -1386,6 +1447,7 @@ actor DataDirMover {
         let baseline = try PropertyListDecoder().decode(TreeCopySnapshot.self, from: encoded)
         let deletionPreviouslyStarted = transfer.cleanupParentIdentity != nil
         var requestedCleanup = false
+        var stage = "verify_active_data"
         do {
             let context = try await cleanupContext(for: transfer)
             guard !DiskUtility.isMountPoint(retained) else { throw DataOperationSafety.Failure.conflict(retained.path) }
@@ -1414,7 +1476,9 @@ actor DataDirMover {
                 let type = DataDirType(rawValue: transfer.dataDirType) ?? .custom
                 try requireIdentity(context.activeURL, context.identity)
                 try store.recheckWriterAdmission()
-                try TreeCopySession.removeVerifiedCopy(at: retained, against: baseline, allowPartialRemoval: deletionPreviouslyStarted,
+                stage = "remove_retained_copy"
+                do {
+                    try TreeCopySession.removeVerifiedCopy(at: retained, against: baseline, allowPartialRemoval: deletionPreviouslyStarted,
                     expectedVolumeUUID: retainedIdentity.volumeUUID, removalID: operationID, requireSourceIdentity: true,
                     prepareForRemoval: {
                         try self.requireIdentity(actual, retainedIdentity)
@@ -1444,6 +1508,9 @@ actor DataDirMover {
                         try self.requireIdentity(parent, parentIdentity)
                         try self.requireIdentity(actual, retainedIdentity)
                     })
+                } catch {
+                    try authorizeCleanupIfNeeded(error, transfer: transfer)
+                }
             } else {
                 guard let expectedParent = transfer.cleanupParentIdentity else { throw DataOperationSafety.Failure.inspection(retained.path) }
                 try requireIdentity(parent, expectedParent)
@@ -1452,18 +1519,37 @@ actor DataDirMover {
                 throw DataOperationSafety.Failure.inspection(retained.path)
             }
             try syncDirectory(at: parent)
+            stage = "finish_cleanup_record"
             try store.finishTransfer(operationID: operationID, deletionConfirmed: true)
             invalidateSizeCache(for: retained)
         } catch {
             // The switch is still complete. The immutable manifest and cleanup
             // checkpoint make another attempt safe without blocking local data.
-            if requestedCleanup {
-                transfer.recoverableReason = error.localizedDescription
+            if error is CancellationError { throw error }
+            let failure = DataCleanupFailure(transfer: transfer, stage: stage, underlying: error as NSError)
+            let reported: Error = DataCleanupFailure.isPermissionFailure(error) ? failure : error
+            AppLogger.shared.logOperationFailure(category: "data_cleanup", operationID: operationID.uuidString,
+                error: failure, stage: stage, details: [("original_path", transfer.originalPath)])
+            if requestedCleanup || transfer.cleanupParentIdentity != nil {
+                transfer.recoverableReason = reported.localizedDescription
                 do { try store.updateTransfer(transfer) }
                 catch { AppLogger.shared.logError("无法更新副本清理恢复记录，原事务仍保留", error: error) }
             }
-            throw error
+            throw reported
         }
+    }
+
+    private func authorizeCleanupIfNeeded(_ error: Error, transfer: DataTransferRecord) throws {
+        guard allowsAdministratorPrompt, transfer.cleanupParentIdentity != nil,
+              DataCleanupFailure.isPermissionFailure(error),
+              DataCleanupResolution.requiresAdministrator(transfer) else { throw error }
+        try Task.checkCancellation()
+        try store.recheckWriterAdmission()
+        let current = try store.completedLocation(after: transfer.operationID)
+        let request = PrivilegedDataCleanup.Request(transfer: transfer, currentLocation: current)
+        AppLogger.shared.logContext("旧数据副本清理需要管理员授权", details: [
+            ("operation_id", transfer.operationID.uuidString), ("retained_path", transfer.backupPath)])
+        try PrivilegedDataCleanup.authorize(request)
     }
 
     private func transferAncestors(of id: UUID, transfers: [DataTransferRecord]) -> Set<UUID> {

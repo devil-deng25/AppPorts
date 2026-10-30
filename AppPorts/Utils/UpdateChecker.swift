@@ -14,11 +14,13 @@ struct ReleaseInfo: Codable, Equatable {
     let tagName: String
     let htmlUrl: String
     let body: String
+    var assets: [GitHubUpdateAsset]? = nil
 
     enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
         case htmlUrl = "html_url"
         case body
+        case assets
     }
 }
 
@@ -41,7 +43,7 @@ struct OfficialReleaseLinks: Codable, Equatable {
 }
 
 /// 更新弹窗使用的统一模型。
-struct AppUpdateInfo: Equatable {
+struct AppUpdateInfo: Equatable, Identifiable {
     enum Source: String {
         case github
         case official
@@ -53,6 +55,10 @@ struct AppUpdateInfo: Equatable {
     let githubURL: URL?
     let chinaDownloadURL: URL
     let sha256: String?
+    var githubAsset: GitHubUpdateAsset? = nil
+    var domesticAsset: AppUpdatePackageAsset? = nil
+
+    var id: String { source.rawValue + ":" + version }
 }
 
 enum UpdateCheckResult: Equatable {
@@ -61,16 +67,26 @@ enum UpdateCheckResult: Equatable {
     case failed
 }
 
+enum UpdateChannel: String {
+    case github
+    case official
+
+    static let defaultsKey = "UpdateChannel"
+
+    static var preferred: UpdateChannel {
+        UpdateChannel(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .official
+    }
+}
+
 // MARK: - Update Checker
 
 /// 应用更新检查工具。
 ///
-/// 同时检查 GitHub Releases API 与 AppPorts 官网 latest.json。任一来源发现新版本即可提示更新；
-/// 两边都有新版本时选择版本号更高者，同版本时优先使用可访问的 GitHub release notes。
+/// 默认通过文档站 latest.json 检查版本；选择 GitHub 更新后再获取对应版本的安装附件。
 final class UpdateChecker {
     static let shared = UpdateChecker()
 
-    private static let defaultOfficialFeedURL = URL(string: "https://appports.shimoko.com/latest.json")!
+    private static let defaultOfficialFeedURL = URL(string: "https://docs-appports.shimoko.com/latest.json")!
     private static let defaultChinaDownloadURL = URL(string: "https://file.shimoko.com/AppPorts")!
 
     private let repoOwner = "wzh4869"
@@ -111,32 +127,80 @@ final class UpdateChecker {
     }
 
     /// Background checks stay silent when no update can be offered.
-    func checkForUpdates() async -> AppUpdateInfo? {
-        if case let .available(update) = await checkForUpdatesResult() { return update }
+    func checkForUpdates(channel: UpdateChannel = .official) async -> AppUpdateInfo? {
+        if case let .available(update) = await checkForUpdatesResult(channel: channel) { return update }
         return nil
     }
 
     /// Manual checks distinguish a successful check from unavailable sources.
-    func checkForUpdatesResult() async -> UpdateCheckResult {
+    func checkForUpdatesResult(channel: UpdateChannel = .official) async -> UpdateCheckResult {
         guard let currentVersion = normalizedVersion(currentVersionProvider() ?? "") else {
             return .failed
         }
-        let githubEnabled = !githubUpdatesDisabledProvider()
-        async let githubOutcome = githubEnabled
-            ? fetchGitHubUpdate(currentVersion: currentVersion)
-            : SourceFetchOutcome(update: nil, error: nil)
-        async let officialOutcome = fetchOfficialUpdate(currentVersion: currentVersion)
-        let outcomes = await (github: githubOutcome, official: officialOutcome)
-        if let update = chooseUpdate(github: outcomes.github.update, official: outcomes.official.update) {
-            return .available(update)
+        let outcome: SourceFetchOutcome
+        switch channel {
+        case .github:
+            guard !githubUpdatesDisabledProvider() else { return .failed }
+            outcome = await fetchGitHubUpdate(currentVersion: currentVersion)
+        case .official:
+            outcome = await fetchOfficialUpdate(currentVersion: currentVersion)
         }
-        if outcomes.official.error == nil || (githubEnabled && outcomes.github.error == nil) {
-            return .upToDate
+        if let update = outcome.update { return .available(update) }
+        return outcome.error == nil ? .upToDate : .failed
+    }
+
+    /// Resolve the version shown in the update sheet, rather than a possibly newer latest release.
+    func githubUpdate(for update: AppUpdateInfo) async throws -> AppUpdateInfo {
+        guard !githubUpdatesDisabledProvider() else { throw AppUpdateError.package }
+        let tag = update.githubURL?.lastPathComponent ?? update.version
+        let release = try await fetchGitHubAPIRelease(tag: tag, timeout: 30)
+        guard normalizedVersion(release.tagName) == normalizedVersion(update.version),
+              let asset = GitHubUpdateAsset.select(from: release.assets ?? []) else {
+            throw AppUpdateError.package
         }
-        return .failed
+        return AppUpdateInfo(
+            version: update.version, source: .github,
+            releaseNotesMarkdown: update.releaseNotesMarkdown,
+            githubURL: update.githubURL, chinaDownloadURL: update.chinaDownloadURL,
+            sha256: asset.sha256, githubAsset: asset
+        )
     }
 
     // MARK: - Source Fetching
+
+    /// OpenList resolves a version-specific DMG to its current storage URL. Trust the
+    /// checksum from the official feed, never OpenList's link signature or a filename alone.
+    func domesticUpdate(for update: AppUpdateInfo) async throws -> AppUpdateInfo {
+        guard let version = normalizedVersion(update.version), version == update.version else {
+            throw AppUpdateError.domesticPackage
+        }
+        guard let hash = update.sha256?.lowercased(), hash.count == 64,
+              hash.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { throw AppUpdateError.missingChecksum }
+        let name = "AppPorts\(version).dmg"
+        var request = URLRequest(url: URL(string: "https://file.shimoko.com/api/fs/get")!)
+        request.httpMethod = "POST"
+        request.httpBody = try JSONEncoder().encode(["path": "/AppPorts/" + name, "password": ""])
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("AppPorts-UpdateChecker", forHTTPHeaderField: "User-Agent")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 30
+        let response: DomesticPackageResponse
+        do {
+            response = try await fetchJSON(DomesticPackageResponse.self, request: request, sourceName: "OpenList")
+        } catch {
+            if error is URLError || error is CancellationError { throw error }
+            AppLogger.shared.logError("国内更新包查询失败", error: error)
+            throw AppUpdateError.domesticPackage
+        }
+        guard response.code == 200, let file = response.data, file.name == name, !file.isDir,
+              let url = URL(string: file.rawURL) else { throw AppUpdateError.domesticPackage }
+        let asset = AppUpdatePackageAsset(name: name, size: file.size, downloadURL: url, sha256: hash)
+        guard asset.isSupported else { throw AppUpdateError.domesticPackage }
+        // Preserve the displayed notes and version; never install an implicitly newer package.
+        return AppUpdateInfo(version: update.version, source: .official,
+            releaseNotesMarkdown: update.releaseNotesMarkdown, githubURL: update.githubURL,
+            chinaDownloadURL: update.chinaDownloadURL, sha256: hash, domesticAsset: asset)
+    }
 
     private func fetchGitHubUpdate(currentVersion: String) async -> SourceFetchOutcome {
         do {
@@ -154,7 +218,8 @@ final class UpdateChecker {
                 releaseNotesMarkdown: release.body,
                 githubURL: URL(string: release.htmlUrl),
                 chinaDownloadURL: chinaDownloadURL,
-                sha256: nil
+                sha256: nil,
+                githubAsset: GitHubUpdateAsset.select(from: release.assets ?? [])
             )
             return SourceFetchOutcome(update: update, error: nil)
         } catch {
@@ -202,10 +267,12 @@ final class UpdateChecker {
         }
     }
 
-    private func fetchGitHubAPIRelease() async throws -> ReleaseInfo {
-        let url = URL(string: "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases/latest")!
+    private func fetchGitHubAPIRelease(tag: String? = nil, timeout: TimeInterval = 3) async throws -> ReleaseInfo {
+        let baseURL = URL(string: "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases")!
+        let url = tag.map { baseURL.appendingPathComponent("tags").appendingPathComponent($0) }
+            ?? baseURL.appendingPathComponent("latest")
         var request = URLRequest(url: url)
-        request.timeoutInterval = 10
+        request.timeoutInterval = timeout
         request.addValue("AppPorts-UpdateChecker", forHTTPHeaderField: "User-Agent")
         return try await fetchJSON(ReleaseInfo.self, request: request, sourceName: "GitHub")
     }
@@ -213,7 +280,7 @@ final class UpdateChecker {
     private func fetchGitHubAtomRelease() async throws -> ReleaseInfo {
         let url = URL(string: "https://github.com/\(repoOwner)/\(repoName)/releases.atom")!
         var request = URLRequest(url: url)
-        request.timeoutInterval = 10
+        request.timeoutInterval = 3
         request.addValue("AppPorts-UpdateChecker", forHTTPHeaderField: "User-Agent")
 
         let data = try await fetchData(request: request, sourceName: "GitHub Atom")
@@ -222,7 +289,8 @@ final class UpdateChecker {
 
     private func fetchOfficialRelease() async throws -> OfficialReleaseInfo {
         var request = URLRequest(url: officialFeedURL)
-        request.timeoutInterval = 10
+        request.timeoutInterval = 3
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.addValue("AppPorts-UpdateChecker", forHTTPHeaderField: "User-Agent")
         return try await fetchJSON(OfficialReleaseInfo.self, request: request, sourceName: "Official")
     }
@@ -233,7 +301,16 @@ final class UpdateChecker {
     }
 
     private func fetchData(request: URLRequest, sourceName: String) async throws -> Data {
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+            group.addTask { try await self.session.data(for: request) }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(request.timeoutInterval * 1_000_000_000))
+                throw URLError(.timedOut)
+            }
+            defer { group.cancelAll() }
+            guard let response = try await group.next() else { throw URLError(.cancelled) }
+            return response
+        }
         guard let httpResponse = response as? HTTPURLResponse else {
             throw UpdateCheckerError.invalidResponse(source: sourceName)
         }
@@ -260,26 +337,6 @@ final class UpdateChecker {
     }
 
     // MARK: - Selection
-
-    private func chooseUpdate(github: AppUpdateInfo?, official: AppUpdateInfo?) -> AppUpdateInfo? {
-        switch (github, official) {
-        case (nil, nil):
-            return nil
-        case let (github?, nil):
-            return github
-        case let (nil, official?):
-            return official
-        case let (github?, official?):
-            switch compareVersions(github.version, official.version) {
-            case .orderedDescending:
-                return github
-            case .orderedAscending:
-                return official
-            case .orderedSame:
-                return github
-            }
-        }
-    }
 
     private func officialGitHubURL(for release: OfficialReleaseInfo) -> URL? {
         if let url = URL(string: release.links.github), !release.links.github.isEmpty {
@@ -466,6 +523,24 @@ final class UpdateChecker {
         }
 
         return result
+    }
+}
+
+private struct DomesticPackageResponse: Decodable {
+    let code: Int
+    let data: File?
+
+    struct File: Decodable {
+        let name: String
+        let size: Int64
+        let isDir: Bool
+        let rawURL: String
+
+        enum CodingKeys: String, CodingKey {
+            case name, size
+            case isDir = "is_dir"
+            case rawURL = "raw_url"
+        }
     }
 }
 

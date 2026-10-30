@@ -279,9 +279,11 @@ These are historical results from the installed builds. The review of `468c788` 
 | APFS disk image | More possible host formats and a Stickies access advantage in the tested setup. | sparsebundle unplug and reclamation results did not meet the requirements for the default; research remains documented. |
 | System mount table or daemon | Aimed to simplify fixed mounting or complete it earlier. | Did not solve all unlock, identity, authorization, and timing issues; users need not install these experimental components. |
 
-Current mount migration requires **unencrypted APFS**. This is an implementation boundary, not a claim that APFS lacks encryption. New data volumes do not automatically inherit another volume's password. Without complete password management and automatic unlocking, AppPorts cannot silently create an unencrypted data volume just because the original storage is encrypted. See [storage and encryption](/docs/storage-guide#encrypted-drives).
+At this article’s fixed `468c788` code baseline, mount migration required **unencrypted APFS**. This was the implementation boundary at that time, not a claim that APFS lacks encryption. New data volumes do not automatically inherit another volume's password. Without complete password management and automatic unlocking, AppPorts cannot silently create an unencrypted data volume just because the original storage is encrypted. See [storage and encryption](/docs/storage-guide#encrypted-drives).
 
 This approach also requires identity tracking, proper ejection, login remounting, failure recovery, and copy verification. It adds checks and implementation complexity in exchange for clearer confirmation of data location and operation results. The current workflow does not disable integrity checks to promise old-version speed.
+
+2.0.0 adds independently encrypted data volumes and optional local Keychain storage. Follow the storage guide above for current steps; the historical experiments retain their original conditions and results.
 
 ## 9. What this means in daily use {#daily-use}
 

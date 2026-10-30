@@ -55,14 +55,16 @@ final class ContainerMountStore: @unchecked Sendable {
         var transfers: [DataTransferRecord] = []
         var managedLinks: [ManagedDataLinkRecord] = []
         var remountInterventions: [String: String] = [:]
+        var manualMountPauses: [String: String] = [:]
         var preservedMaterials: [DataTransferMaterial] = []
 
-        enum CodingKeys: String, CodingKey { case schemaVersion, mounts, cleanups, transfers, managedLinks, remountInterventions, preservedMaterials }
+        enum CodingKeys: String, CodingKey { case schemaVersion, mounts, cleanups, transfers, managedLinks, remountInterventions, preservedMaterials, manualMountPauses }
         init(mounts: [ContainerMountRecord] = []) { self.mounts = mounts }
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
-            guard (2...12).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
+            guard (2...13).contains(schemaVersion) else { throw StoreError.unsupportedSchema(schemaVersion) }
+            manualMountPauses = try values.decodeIfPresent([String: String].self, forKey: .manualMountPauses) ?? [:]
             mounts = try values.decode([ContainerMountRecord].self, forKey: .mounts)
             cleanups = try values.decode([ContainerCleanupRecord].self, forKey: .cleanups)
             transfers = schemaVersion == 2 ? [] : try values.decode([DataTransferRecord].self, forKey: .transfers)
@@ -130,6 +132,28 @@ final class ContainerMountStore: @unchecked Sendable {
             AppLogger.shared.logError("挂载记录无法读取，保留原文件", error: error,
                 errorCode: "CONTAINER-MOUNT-STORE-CORRUPT", relatedURLs: [("file", fileURL)])
             return []
+        }
+    }
+
+    func isManuallyUnmounted(_ record: ContainerMountRecord) throws -> Bool {
+        try read { $0.manualMountPauses[record.volumeUUID.uppercased()] == record.mountPointPath }
+    }
+
+    /// The caller holds OperationLock across saving intent and changing mounts.
+    func setManuallyUnmounted(_ paused: Bool, record: ContainerMountRecord) throws {
+        try mutate { document in
+            guard document.mounts.contains(record) else { throw StoreError.conflict(record.mountPointPath) }
+            document.manualMountPauses[record.volumeUUID.uppercased()] = paused ? record.mountPointPath : nil
+        }
+    }
+
+    func manualMountPauseBlocks(_ transfer: DataTransferRecord) throws -> Bool {
+        try read { document in
+            document.manualMountPauses.contains { uuid, path in
+                [transfer.originalPath, transfer.activePath, transfer.destinationPath].contains(path)
+                    || [transfer.createdVolumeUUID, transfer.sourceIdentity.volumeUUID,
+                        transfer.recoveryMountRecord?.volumeUUID].compactMap { $0?.uppercased() }.contains(uuid)
+            }
         }
     }
 
@@ -229,6 +253,45 @@ final class ContainerMountStore: @unchecked Sendable {
     func transfers() throws -> [DataTransferRecord] {
         try read { $0.transfers.sorted { $0.createdAt == $1.createdAt ? $0.operationID.uuidString < $1.operationID.uuidString : $0.createdAt < $1.createdAt } }
     }
+
+    /// Explicitly detach this exact symlink entry. Old copies remain historical
+    /// material and no longer reserve the entry or participate in automatic completion.
+    func detachSymlinkHistory(at local: URL, transfers expected: [DataTransferRecord],
+                              link expectedLink: ManagedDataLinkRecord?, reason: String,
+                              verifyingFilesystem: () throws -> Void) throws {
+        try mutate { current in
+            let related = current.transfers.filter { $0.originalPath == local.path }
+            let links = current.managedLinks.filter { $0.originalPath == local.path }
+            let ids = Set(expected.map(\.operationID))
+            guard !reason.isEmpty, related.count == expected.count,
+                  related.allSatisfy({ expected.contains($0) && $0.mode == .symlink }),
+                  links == (expectedLink.map({ [$0] }) ?? []),
+                  !current.transfers.contains(where: {
+                      !ids.contains($0.operationID) && $0.priorOperationID.map(ids.contains) == true
+                  }),
+                  !current.managedLinks.contains(where: {
+                      $0.originalPath != local.path && ids.contains($0.operationID)
+                  }) else {
+                throw StoreError.conflict("Symlink history changed or belongs to another path")
+            }
+            try verifyingFilesystem()
+            for transfer in related {
+                guard !current.preservedMaterials.contains(where: { $0.id == transfer.operationID }) else {
+                    throw StoreError.conflict("Transfer already has preserved material")
+                }
+                current.preservedMaterials.append(DataTransferMaterial(transfer: transfer, reason: reason))
+            }
+            if let link = expectedLink, !ids.contains(link.operationID) {
+                guard !current.preservedMaterials.contains(where: { $0.id == link.operationID }) else {
+                    throw StoreError.conflict("Link already has preserved material")
+                }
+                current.preservedMaterials.append(DataTransferMaterial(detachedLink: link, reason: reason))
+            }
+            current.transfers.removeAll { ids.contains($0.operationID) }
+            current.managedLinks.removeAll { $0.originalPath == local.path }
+        }
+    }
+
     func managedLinks() throws -> [ManagedDataLinkRecord] { try read { $0.managedLinks.sorted { $0.originalPath < $1.originalPath } } }
     func managedLink(forOriginalPath path: String) throws -> ManagedDataLinkRecord? {
         try managedLinks().first { DataPathTopology.relationship($0.originalPath, path) == .same }
@@ -837,10 +900,13 @@ final class ContainerMountStore: @unchecked Sendable {
         } || document.preservedMaterials.contains {
             $0.recoveryRecord?.candidateActivationAttempted != nil || $0.recoveryRecord?.candidateRemovalMountPointIdentity != nil
         }
-        document.schemaVersion = max(document.schemaVersion, needsActivationSchema ? 12 : needsRetrySchema ? 11 : needsCleanupDecisionSchema ? 10 : needsRollbackSchema ? 9 : needsLocationSchema || needsResourceForkSchema ? 8 : needsPreparationSchema ? 7 : needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
+        document.schemaVersion = max(document.schemaVersion, !document.manualMountPauses.isEmpty ? 13 : needsActivationSchema ? 12 : needsRetrySchema ? 11 : needsCleanupDecisionSchema ? 10 : needsRollbackSchema ? 9 : needsLocationSchema || needsResourceForkSchema ? 8 : needsPreparationSchema ? 7 : needsCleanupSchema ? 6 : needsCompatibilitySchema ? 5 : needsOwnershipSchema ? 4 : 3)
         // Removing a mount also resolves its remount-only block; transfer recovery remains independent.
         let activeVolumes = Set(document.mounts.map { $0.volumeUUID.uppercased() })
         document.remountInterventions = document.remountInterventions.filter { activeVolumes.contains($0.key) }
+        document.manualMountPauses = document.manualMountPauses.filter { uuid, path in
+            document.mounts.contains { $0.volumeUUID.uppercased() == uuid && $0.mountPointPath == path }
+        }
         try validate(document, using: validation)
         // Remount checks may confirm an unchanged record. Do not turn those
         // checks into filesystem events and another round of UI scans.
@@ -1259,6 +1325,10 @@ final class ContainerMountStore: @unchecked Sendable {
                 throw StoreError.invalidState("Invalid remount intervention")
             }
         }
+        guard document.manualMountPauses.isEmpty || document.schemaVersion >= 13,
+              document.manualMountPauses.allSatisfy({ uuid, path in
+                  document.mounts.contains { $0.volumeUUID.uppercased() == uuid && $0.mountPointPath == path }
+              }) else { throw StoreError.invalidState("Invalid manual mount pause") }
         for mount in document.mounts {
             guard mount.schemaVersion == ContainerMountRecord.currentSchemaVersion, validPath(mount.mountPointPath),
                   validPath(mount.externalRootPath), !mount.volumeUUID.isEmpty else { throw StoreError.invalidState("Invalid mount record") }

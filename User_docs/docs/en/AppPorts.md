@@ -14,7 +14,7 @@ These guides are for everyday AppPorts users. They cover preparation, migration,
 - **Interested in the design:** read “How it works”; for experiments and tradeoffs, explore the [blog](/docs/blog/overview).
 - **Unfamiliar term or warning:** consult the [glossary](/docs/glossary), [badges and states](/docs/badges), or [troubleshooting](/docs/faq).
 
-These docs describe the interface and behavior of the **AppPorts 1.9.1 development version**. See the [changelog](/docs/changelog) for differences from released versions, and check version notes when using an older build.
+These docs describe the interface and behavior of the **AppPorts 2.0.0 (build 50)**. See the [changelog](/docs/changelog) for differences from released versions, and check version notes when using an older build.
 
 You can also consult [AppPorts on DeepWiki](https://deepwiki.com/wzh4869/AppPorts). The [author's blog post](https://www.shimoko.com/p/appports/) explains how AppPorts began.
 

@@ -44,6 +44,10 @@ enum PrivilegedAppTransfer {
     }
 
     static func authorize(_ request: Request) throws {
+        try authorize(request, argument: argument)
+    }
+
+    static func authorize<T: Encodable>(_ request: T, argument: String) throws {
         guard let executable = Bundle.main.executableURL else { throw CocoaError(.executableNotLoadable) }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AppPorts-authorization-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
@@ -74,24 +78,27 @@ enum PrivilegedAppTransfer {
         let args = CommandLine.arguments
         guard args.dropFirst().first == argument else { return false }
         do {
-            guard geteuid() == 0, args.count == 4, let owner = uid_t(args[3]), owner != 0 else {
-                throw POSIXError(.EPERM)
-            }
-            let fd = open(args[2], O_RDONLY | O_NOFOLLOW)
-            guard fd >= 0 else { throw POSIXError(.EACCES) }
-            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            defer { try? handle.close() }
-            var info = stat()
-            guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-                  info.st_uid == owner, info.st_mode & 0o777 == 0o600, info.st_nlink == 1,
-                  info.st_size > 0, info.st_size <= 256 * 1024 * 1024 else { throw POSIXError(.EPERM) }
-            let request = try PropertyListDecoder().decode(Request.self, from: handle.readToEnd() ?? Data())
-            try perform(request)
+            try perform(readRequest(Request.self, arguments: args))
             return true
         } catch {
             FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))
             exit(1)
         }
+    }
+
+    static func readRequest<T: Decodable>(_ type: T.Type, arguments: [String]) throws -> T {
+        guard geteuid() == 0, arguments.count == 4, let owner = uid_t(arguments[3]), owner != 0 else {
+            throw POSIXError(.EPERM)
+        }
+        let fd = open(arguments[2], O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { throw POSIXError(.EACCES) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+              info.st_uid == owner, info.st_mode & 0o777 == 0o600, info.st_nlink == 1,
+              info.st_size > 0, info.st_size <= 256 * 1024 * 1024 else { throw POSIXError(.EPERM) }
+        return try PropertyListDecoder().decode(type, from: handle.readToEnd() ?? Data())
     }
 
     /// Internal for isolated fixtures. The command-line entry above always requires root.
@@ -249,9 +256,11 @@ enum PrivilegedAppTransfer {
 @main
 enum AppPortsEntryPoint {
     static func main() {
-        // 两个特权入口都必须在 SwiftUI、偏好设置和写入登记初始化之前分流：
+        // 三个特权入口都必须在 SwiftUI、偏好设置和写入登记初始化之前分流：
         // 它们跑在 root 下，不能顺手拉起一整套 GUI 状态。
+        // 各自的 runIfRequested 只认自己的启动参数，顺序无关。
         if PrivilegedAppTransfer.runIfRequested() { return }
+        if PrivilegedDataCleanup.runIfRequested() { return }
         if PrivilegedHelperService.runIfRequested() { return }
         AppMoverApp.main()
     }

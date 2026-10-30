@@ -32,7 +32,7 @@ Data moves to an external location and the original directory becomes a symbolic
 
 ### Mount migration {#mount-migration}
 
-Eligible container data moves into a dedicated APFS data volume, which is then attached at the original directory. The real app keeps its signature. This currently requires unencrypted APFS storage. See [data migration methods](/docs/datamigrae/baseinfo#mount).
+Eligible container data moves into a dedicated APFS data volume, which is then attached at the original directory. The real app keeps its signature. This currently requires APFS storage. See [data migration methods](/docs/datamigrae/baseinfo#mount).
 
 ### Move back, restore {#restore}
 

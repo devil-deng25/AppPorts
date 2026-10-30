@@ -9,177 +9,6 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-// MARK: - MarkdownTextView (NSTextView wrapper for Markdown rendering)
-private struct MarkdownTextView: NSViewRepresentable {
-    let markdown: String
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        let textView = NSTextView()
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.textColor = NSColor.labelColor
-        textView.font = NSFont.systemFont(ofSize: 13)
-        textView.textContainerInset = NSSize(width: 0, height: 4)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.heightTracksTextView = false
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        let text = markdown.replacingOccurrences(of: "\r\n", with: "\n")
-        let result = NSMutableAttributedString()
-        let baseFont = NSFont.systemFont(ofSize: 13)
-        let boldFont = NSFont.boldSystemFont(ofSize: 13)
-        let monoFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        let codeBg = NSColor.separatorColor.withAlphaComponent(0.3)
-        let textColor = NSColor.labelColor
-        let linkColor = NSColor.linkColor
-        let indentStyle: NSMutableParagraphStyle = {
-            let s = NSMutableParagraphStyle()
-            s.headIndent = 16
-            s.firstLineHeadIndent = 16
-            s.paragraphSpacing = 4
-            return s
-        }()
-
-        for line in text.components(separatedBy: "\n") {
-            // Header
-            if line.hasPrefix("### ") {
-                let s = NSMutableParagraphStyle(); s.paragraphSpacing = 8
-                result.append(NSAttributedString(string: String(line.dropFirst(4)) + "\n",
-                    attributes: [.font: NSFont.boldSystemFont(ofSize: 15), .foregroundColor: textColor, .paragraphStyle: s]))
-            } else if line.hasPrefix("## ") {
-                let s = NSMutableParagraphStyle(); s.paragraphSpacing = 8
-                result.append(NSAttributedString(string: String(line.dropFirst(3)) + "\n",
-                    attributes: [.font: NSFont.boldSystemFont(ofSize: 18), .foregroundColor: textColor, .paragraphStyle: s]))
-            } else if line.hasPrefix("# ") {
-                let s = NSMutableParagraphStyle(); s.paragraphSpacing = 8
-                result.append(NSAttributedString(string: String(line.dropFirst(2)) + "\n",
-                    attributes: [.font: NSFont.boldSystemFont(ofSize: 22), .foregroundColor: textColor, .paragraphStyle: s]))
-            }
-            // Unordered list
-            else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-                let content = "• " + String(line.dropFirst(2))
-                result.append(parseInlineMarkdown(content, baseFont: baseFont, boldFont: boldFont,
-                    monoFont: monoFont, codeBg: codeBg, textColor: textColor, linkColor: linkColor, paragraphStyle: indentStyle))
-                result.append(NSAttributedString(string: "\n"))
-            }
-            // Ordered list
-            else if let dotRange = line.range(of: ". "),
-                    let firstNum = Int(line[line.startIndex..<dotRange.lowerBound]),
-                    line.startIndex != dotRange.lowerBound {
-                let content = "\(firstNum). " + String(line[dotRange.upperBound...])
-                result.append(parseInlineMarkdown(content, baseFont: baseFont, boldFont: boldFont,
-                    monoFont: monoFont, codeBg: codeBg, textColor: textColor, linkColor: linkColor, paragraphStyle: indentStyle))
-                result.append(NSAttributedString(string: "\n"))
-            }
-            // Code block separator
-            else if line.hasPrefix("```") {
-                // skip
-            }
-            // Empty line
-            else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                result.append(NSAttributedString(string: "\n"))
-            }
-            // Normal text
-            else {
-                result.append(parseInlineMarkdown(line, baseFont: baseFont, boldFont: boldFont,
-                    monoFont: monoFont, codeBg: codeBg, textColor: textColor, linkColor: linkColor))
-                result.append(NSAttributedString(string: "\n"))
-            }
-        }
-        textView.textStorage?.setAttributedString(result)
-    }
-
-    private func parseInlineMarkdown(_ text: String, baseFont: NSFont, boldFont: NSFont,
-        monoFont: NSFont, codeBg: NSColor, textColor: NSColor, linkColor: NSColor,
-        paragraphStyle: NSMutableParagraphStyle? = nil) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        var remaining = text[...]
-        let baseAttrs: [NSAttributedString.Key: Any] = {
-            var a: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: textColor]
-            if let ps = paragraphStyle { a[.paragraphStyle] = ps }
-            return a
-        }()
-        let boldAttrs: [NSAttributedString.Key: Any] = {
-            var a: [NSAttributedString.Key: Any] = [.font: boldFont, .foregroundColor: textColor]
-            if let ps = paragraphStyle { a[.paragraphStyle] = ps }
-            return a
-        }()
-
-        while !remaining.isEmpty {
-            // **bold**
-            if let r = remaining.range(of: "**") {
-                if let end = remaining[r.upperBound...].range(of: "**") {
-                    // text before bold
-                    if r.lowerBound > remaining.startIndex {
-                        result.append(NSAttributedString(string: String(remaining[..<r.lowerBound]), attributes: baseAttrs))
-                    }
-                    // bold text
-                    result.append(NSAttributedString(string: String(remaining[r.upperBound..<end.lowerBound]), attributes: boldAttrs))
-                    remaining = remaining[end.upperBound...]
-                    continue
-                }
-            }
-            // *italic*
-            if let r = remaining.range(of: "*") {
-                if let end = remaining[r.upperBound...].range(of: "*") {
-                    if r.lowerBound > remaining.startIndex {
-                        result.append(NSAttributedString(string: String(remaining[..<r.lowerBound]), attributes: baseAttrs))
-                    }
-                    let italicFont = NSFontManager.shared.convert(baseFont, toHaveTrait: .italicFontMask)
-                    var attrs = baseAttrs; attrs[.font] = italicFont
-                    result.append(NSAttributedString(string: String(remaining[r.upperBound..<end.lowerBound]), attributes: attrs))
-                    remaining = remaining[end.upperBound...]
-                    continue
-                }
-            }
-            // `code`
-            if let r = remaining.range(of: "`") {
-                if let end = remaining[r.upperBound...].range(of: "`") {
-                    if r.lowerBound > remaining.startIndex {
-                        result.append(NSAttributedString(string: String(remaining[..<r.lowerBound]), attributes: baseAttrs))
-                    }
-                    var attrs: [NSAttributedString.Key: Any] = [.font: monoFont, .foregroundColor: textColor, .backgroundColor: codeBg]
-                    if let ps = paragraphStyle { attrs[.paragraphStyle] = ps }
-                    result.append(NSAttributedString(string: String(remaining[r.upperBound..<end.lowerBound]), attributes: attrs))
-                    remaining = remaining[end.upperBound...]
-                    continue
-                }
-            }
-            // [text](url)
-            if let r = remaining.range(of: "[") {
-                if let paren = remaining[r.upperBound...].range(of: "]("),
-                   let end = remaining[paren.upperBound...].range(of: ")") {
-                    if r.lowerBound > remaining.startIndex {
-                        result.append(NSAttributedString(string: String(remaining[..<r.lowerBound]), attributes: baseAttrs))
-                    }
-                    let linkText = String(remaining[r.upperBound..<paren.lowerBound])
-                    let linkURL = String(remaining[paren.upperBound..<end.lowerBound])
-                    var attrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: linkColor, .underlineStyle: NSUnderlineStyle.single.rawValue]
-                    if let url = URL(string: linkURL) { attrs[.link] = url }
-                    if let ps = paragraphStyle { attrs[.paragraphStyle] = ps }
-                    result.append(NSAttributedString(string: linkText, attributes: attrs))
-                    remaining = remaining[end.upperBound...]
-                    continue
-                }
-            }
-            // plain text
-            result.append(NSAttributedString(string: String(remaining), attributes: baseAttrs))
-            break
-        }
-        return result
-    }
-}
-
 // NOTE: AppItem and AppMoverError are in AppModels.swift
 // NOTE: AppLogger is in Services/AppLogger.swift
 
@@ -211,7 +40,20 @@ struct ContentView: View {
     @State private var hasRestoredSizeCache = false
     
     @State private var searchText: String = ""
-    @State private var hideMigratedApps = false
+    @FocusState private var isAppSearchFocused: Bool
+    @State private var appConnectionFilter: AppConnectionFilter = .all
+
+    enum AppConnectionFilter: CaseIterable {
+        case all, linked, unlinked
+
+        var title: String {
+            switch self {
+            case .all: return "全部".localized
+            case .linked: return "已链接".localized
+            case .unlinked: return "未链接".localized
+            }
+        }
+    }
     
     private let localAppsURL = URL(fileURLWithPath: "/Applications")
     @State private var externalDriveURL: URL?
@@ -226,10 +68,7 @@ struct ContentView: View {
     @State private var alertTitle = ""
     @State private var alertMessage = ""
     
-    @State private var showUpdateAlert = false
-    @State private var updateGitHubURL: URL?
-    @State private var updateChinaDownloadURL: URL?
-    @State private var updateReleaseBody = ""
+    @State private var availableUpdate: AppUpdateInfo?
     
     // 受保护应用迁移预警（App Store / root 拥有，自动迁移可能因权限失败）
     @State private var protectedAppsRequest: WarningSheetRequest?
@@ -301,10 +140,28 @@ struct ContentView: View {
     enum SortOption {
         case name, size
     }
-    @State private var sortOption: SortOption = .name
+
+    struct AppListSort {
+        var option: SortOption = .name
+        var ascending = true
+
+        mutating func select(_ option: SortOption) {
+            if self.option == option {
+                ascending.toggle()
+            } else {
+                self.option = option
+                ascending = option != .size
+            }
+        }
+    }
+
+    @State private var localAppSort = AppListSort()
+    @State private var externalAppSort = AppListSort()
 
     // MARK: - Tab
     enum MainTab { case apps, dataDirs, customDirs }
+    @Namespace private var navigationSelection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var mainTab: MainTab = .apps
     @State private var hasOpenedDataDirs = false
     @State private var hasOpenedCustomDirs = false
@@ -314,6 +171,8 @@ struct ContentView: View {
     @State private var selectedDataDirsApp: AppItem? = nil
     @State private var isDataDirsScanning = false
     @State private var dataDirsRefreshTrigger = 0
+    @State private var customDirsRefreshTrigger = 0
+    @State private var isCustomDirsScanning = false
     @AppStorage(MigrationPreferences.classicDataMigrationKey) private var classicDataMigrationEnabled = false
 
     // 签名被替换的应用：启动提醒与修复面板
@@ -333,7 +192,7 @@ struct ContentView: View {
 
     var body: some View {
         mainContent
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 930, minHeight: 620)
         .onAppear {
             // A unit-test host must not scan apps, refresh agents, or observe real volumes.
             guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
@@ -391,10 +250,7 @@ struct ContentView: View {
                         ]
                     )
                     await MainActor.run {
-                        self.updateReleaseBody = update.releaseNotesMarkdown
-                        self.updateGitHubURL = update.githubURL
-                        self.updateChinaDownloadURL = update.chinaDownloadURL
-                        self.showUpdateAlert = true
+                        self.availableUpdate = update
                     }
                 }
             }
@@ -501,9 +357,10 @@ struct ContentView: View {
         .sheet(item: $signatureRepairApp) { app in
             signatureRepairSheet(for: app)
         }
-        .sheet(isPresented: $showUpdateAlert) {
-            updateSheetContent
-        }
+        .modifier(AppUpdatePresentation(update: $availableUpdate))
+        .modifier(AppUpdatePresentationDismissal {
+            showAppStoreSettings = false
+        })
         // 受保护应用（App Store / root）迁移预警
         .warningSheet($protectedAppsRequest)
         // 目标存储无法保存部分应用信息
@@ -570,46 +427,93 @@ struct ContentView: View {
     
     var filteredLocalApps: [AppItem] {
         let apps = localAppFilter == .signatureReplaced ? localApps.filter(\.signatureReplaced) : localApps
-        return sortApps(apps.filter(matchesAppListFilters))
+        return sortApps(apps.filter(matchesAppListFilters), sorting: localAppSort)
     }
 
     var filteredExternalApps: [AppItem] {
-        sortApps(externalApps.filter(matchesAppListFilters))
+        sortApps(externalApps.filter(matchesAppListFilters), sorting: externalAppSort)
     }
 
     private func matchesAppListFilters(_ app: AppItem) -> Bool {
         // Keep partial/broken links visible so unfinished migrations can still be handled.
-        if hideMigratedApps && app.status == AppStatus.linked { return false }
+        switch appConnectionFilter {
+        case .all: break
+        case .linked: if app.status != AppStatus.linked { return false }
+        case .unlinked: if app.status == AppStatus.linked { return false }
+        }
         return searchText.isEmpty || app.displayName.localizedCaseInsensitiveContains(searchText)
             || app.name.localizedCaseInsensitiveContains(searchText)
     }
 
-    func sortApps(_ apps: [AppItem]) -> [AppItem] {
-        switch sortOption {
-        case .name:
-            // Already sorted by name in scanner, but good to ensure
-            return apps // Scanner already sorts by Link status then Name
-        case .size:
-            return apps.sorted { 
-                 // Keep "Linked" on top? Maybe not for size sort. Let's strict size sort.
-                 // Or, if user wants size, we just sort by size.
-                 if $0.sizeBytes == $1.sizeBytes {
-                     return $0.displayName < $1.displayName
-                 }
-                 return $0.sizeBytes > $1.sizeBytes // Descending
+    func sortApps(_ apps: [AppItem], sorting: AppListSort) -> [AppItem] {
+        apps.sorted { lhs, rhs in
+            let comparison: ComparisonResult
+            switch sorting.option {
+            case .name:
+                comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
+            case .size:
+                comparison = lhs.sizeBytes == rhs.sizeBytes ? .orderedSame
+                    : (lhs.sizeBytes < rhs.sizeBytes ? .orderedAscending : .orderedDescending)
             }
+            if comparison == .orderedSame {
+                let nameOrder = lhs.displayName.localizedStandardCompare(rhs.displayName)
+                return nameOrder == .orderedSame ? lhs.id < rhs.id : nameOrder == .orderedAscending
+            }
+            return sorting.ascending ? comparison == .orderedAscending : comparison == .orderedDescending
         }
     }
-    
+
+    private func appListColumnHeader(sorting: Binding<AppListSort>) -> some View {
+        AppListColumns {
+            sortColumnButton("名称".localized, option: .name, sorting: sorting)
+        } size: {
+            sortColumnButton("大小".localized, option: .size, sorting: sorting)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.10))
+                        .frame(width: 1, height: 16)
+                        .offset(x: -10)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+        } actions: {
+            Color.clear.frame(height: 1)
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 4)
+    }
+
+    private func sortColumnButton(_ title: String, option: SortOption, sorting: Binding<AppListSort>) -> some View {
+        Button { sorting.wrappedValue.select(option) } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                if sorting.wrappedValue.option == option {
+                    Image(systemName: sorting.wrappedValue.ascending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(AppPressButtonStyle())
+        .accessibilityAddTraits(sorting.wrappedValue.option == option ? .isSelected : [])
+    }
+
     // MARK: - 辅助组件
     
     struct HeaderView: View {
-        @Environment(\.colorScheme) private var colorScheme
-
         let title: String
         let subtitle: String // subtitle 可能是路径，也可能是 "未选择"
         let icon: String
         var iconColumnWidth: CGFloat = 32
+        var appCount: Int? = nil
         var tint: Color = .accentColor
         var actionButtonText: String? = nil
         var onAction: (() -> Void)? = nil
@@ -618,21 +522,17 @@ struct ContentView: View {
         var accessory: AnyView? = nil
         
         var body: some View {
-            HStack(spacing: 14) {
+            HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 22, weight: .medium))
                     .foregroundColor(tint)
-                    .frame(width: 32, height: 32)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(tint.opacity(colorScheme == .dark ? 0.18 : 0.10))
-                    )
-                    .frame(width: iconColumnWidth, height: 40)
+                    .frame(width: 28, height: 28)
+                    .frame(width: iconColumnWidth, height: 34)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(title)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .lineLimit(1)
                             .layoutPriority(1)
                         Spacer(minLength: 8)
@@ -641,14 +541,13 @@ struct ContentView: View {
                             if let btnText = actionButtonText, let action = onAction {
                                 Button(action: action) {
                                     Text(btnText)
-                                        .font(.system(size: 12, weight: .medium))
+                                        .font(.system(size: btnText == "＋" ? 18 : 13, weight: .medium))
                                         .foregroundColor(.accentColor)
                                         .padding(.horizontal, 10)
-                                        .frame(minWidth: 28, minHeight: 26)
-                                        .background(Color.accentColor.opacity(0.10))
-                                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                        .frame(minWidth: 36, minHeight: 34)
+                                        .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(AppPressButtonStyle())
                             }
 
                             if let accessory {
@@ -663,13 +562,14 @@ struct ContentView: View {
                                                 .controlSize(.small)
                                         } else {
                                             Image(systemName: "arrow.clockwise")
-                                                .font(.system(size: 12, weight: .medium))
+                                                .font(.system(size: 16, weight: .medium))
                                                 .foregroundColor(.secondary)
                                         }
                                     }
-                                    .frame(width: 26, height: 26)
+                                    .frame(width: 34, height: 34)
+                                    .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(AppPressButtonStyle())
                                 .disabled(isRefreshing)
                                 .accessibilityLabel(isRefreshing ? "正在扫描...".localized : "刷新列表".localized)
                                 .help(isRefreshing ? "正在扫描...".localized : "刷新列表".localized)
@@ -679,26 +579,30 @@ struct ContentView: View {
                     }
                     .frame(minHeight: 24)
 
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundColor(.primary.opacity(0.65))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .help(subtitle)
+                    HStack(spacing: 6) {
+                        Text(subtitle)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(subtitle)
+                        if let appCount {
+                            Text(verbatim: "·")
+                            Text(String(format: "%lld 个应用".localized, Int64(appCount)))
+                                .fixedSize()
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .foregroundColor(.primary.opacity(0.65))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            // 列表内容起点：系统外边距 8 + 行 inset 10 + 行内边距 12。
-            .padding(.leading, 18)
-            .padding(.trailing, 10)
-            .padding(.vertical, 10)
-            .frame(minHeight: 64)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(tint.opacity(colorScheme == .dark ? 0.09 : 0.045))
-            )
+            // 与列表行图标对齐：系统外边距 8 + 行 inset 4 + 行内边距 12。
+            .padding(.leading, 12)
+            .padding(.trailing, 8)
+            .padding(.vertical, 6)
+            .frame(minHeight: 56)
+            .overlay(alignment: .bottom) { Divider() }
             .padding(.horizontal, 12)
-            .padding(.bottom, 6)
+            .padding(.bottom, 4)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
         }
@@ -711,27 +615,22 @@ struct ContentView: View {
         let action: () -> Void
 
         var body: some View {
-            VStack(spacing: 0) {
+            HStack {
+                Spacer(minLength: 0)
                 Button(action: action) {
                     HStack(spacing: 6) {
                         Text(title)
-                            .fontWeight(.medium)
-                            .font(.system(size: 13))
                         Image(systemName: icon)
-                            .font(.system(size: 12, weight: .medium))
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 28)
+                    .frame(minWidth: 112, minHeight: 22)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AppListPrimaryButtonStyle())
                 .disabled(!isEnabled)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
             }
-            .background(Color(nsColor: .controlBackgroundColor))
+            .modifier(AppListFooterStyle())
         }
     }
-    
+
     struct RowSeparatorVisibility: ViewModifier {
         @ViewBuilder
         func body(content: Content) -> some View {
@@ -798,7 +697,7 @@ struct ContentView: View {
             // Keep visited pages alive so switching tabs cannot discard an active
             // operation's progress, result alerts, or batch state. Hidden pages
             // suspend their list scans through isActive.
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 if mainTab == .dataDirs || hasOpenedDataDirs {
                     DataDirsView(
                         isActive: mainTab == .dataDirs,
@@ -815,60 +714,32 @@ struct ContentView: View {
                         onResignApp: { app in performSingleResign(app: app) },
                         resolveRealAppURL: resolveRealAppURL(for:)
                     )
-                    .opacity(mainTab == .dataDirs ? 1 : 0)
-                    .allowsHitTesting(mainTab == .dataDirs)
-                    .accessibilityHidden(mainTab != .dataDirs)
+                    .modifier(AppPageVisibility(isActive: mainTab == .dataDirs))
                 }
                 if mainTab == .customDirs || hasOpenedCustomDirs {
-                    CustomDirsView(isActive: mainTab == .customDirs)
+                    CustomDirsView(
+                        isActive: mainTab == .customDirs,
+                        refreshTrigger: customDirsRefreshTrigger,
+                        onScanningChanged: { isCustomDirsScanning = $0 }
+                    )
                         .disabled(operationState.blocksInteraction)
-                        .opacity(mainTab == .customDirs ? 1 : 0)
-                        .allowsHitTesting(mainTab == .customDirs)
-                        .accessibilityHidden(mainTab != .customDirs)
+                        .modifier(AppPageVisibility(isActive: mainTab == .customDirs))
                 }
-                if mainTab == .apps {
-                    HSplitView {
-                        localAppsPane
-                        externalAppsPane
-                    }
-                    .disabled(operationState.blocksInteraction)
+                HStack(spacing: 8) {
+                    localAppsPane
+                    externalAppsPane
                 }
+                .padding(6)
+                .disabled(operationState.blocksInteraction)
+                .modifier(AppPageVisibility(isActive: mainTab == .apps))
             }
+            .clipped()
         }
         .onChange(of: mainTab) { tab in
             if tab == .dataDirs { hasOpenedDataDirs = true }
             if tab == .customDirs { hasOpenedCustomDirs = true }
         }
         .background(Color(nsColor: .controlBackgroundColor))
-    }
-
-    private var updateSheetContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("发现新版本".localized)
-                .font(.headline)
-            MarkdownTextView(markdown: updateReleaseBody)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
-            HStack {
-                Spacer()
-                Button("GitHub".localized) {
-                    showUpdateAlert = false
-                    if let url = updateGitHubURL { NSWorkspace.shared.open(url) }
-                }
-                .disabled(updateGitHubURL == nil)
-                .keyboardShortcut(.defaultAction)
-                Button("国内下载".localized) {
-                    showUpdateAlert = false
-                    if let url = updateChinaDownloadURL { NSWorkspace.shared.open(url) }
-                }
-                Button("以后再说".localized) {
-                    showUpdateAlert = false
-                }
-                .keyboardShortcut(.cancelAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 480, height: 360)
     }
 
     // MARK: - 顶部工具栏（拆出以减轻 body 的类型推断负担）
@@ -879,6 +750,7 @@ struct ContentView: View {
                 primaryNavigation
                 Spacer(minLength: 12)
                 MigrationTaskToolbarButton()
+                cacheRefreshButton
                 if mainTab == .dataDirs {
                     dataDirsToolbarControls
                         .disabled(operationState.blocksInteraction)
@@ -906,30 +778,26 @@ struct ContentView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
             }
-            Divider()
+            if mainTab != .apps { Divider() }
         }
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private var primaryNavigation: some View {
         HStack(spacing: 2) {
-            TabButton(title: "应用".localized, systemImage: "cube", isSelected: mainTab == .apps) {
-                withAnimation { mainTab = .apps }
+            TabButton(title: "应用".localized, systemImage: "cube", isSelected: mainTab == .apps, selectionNamespace: navigationSelection) {
+                mainTab = .apps
             }
-            TabButton(title: "工具目录".localized, systemImage: "wrench.and.screwdriver", isSelected: mainTab == .dataDirs && selectedDataDirsTab == .toolDirs) {
-                withAnimation {
-                    selectedDataDirsTab = .toolDirs
-                    mainTab = .dataDirs
-                }
+            TabButton(title: "工具目录".localized, systemImage: "wrench.and.screwdriver", isSelected: mainTab == .dataDirs && selectedDataDirsTab == .toolDirs, selectionNamespace: navigationSelection) {
+                selectedDataDirsTab = .toolDirs
+                mainTab = .dataDirs
             }
-            TabButton(title: "应用数据".localized, systemImage: "cylinder", isSelected: mainTab == .dataDirs && selectedDataDirsTab == .appDirs) {
-                withAnimation {
-                    selectedDataDirsTab = .appDirs
-                    mainTab = .dataDirs
-                }
+            TabButton(title: "应用数据".localized, systemImage: "cylinder", isSelected: mainTab == .dataDirs && selectedDataDirsTab == .appDirs, selectionNamespace: navigationSelection) {
+                selectedDataDirsTab = .appDirs
+                mainTab = .dataDirs
             }
-            TabButton(title: "目录迁移".localized, systemImage: "folder.badge.gearshape", isSelected: mainTab == .customDirs) {
-                withAnimation { mainTab = .customDirs }
+            TabButton(title: "目录迁移".localized, systemImage: "folder.badge.gearshape", isSelected: mainTab == .customDirs, selectionNamespace: navigationSelection) {
+                mainTab = .customDirs
             }
         }
         .padding(4)
@@ -937,70 +805,65 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.primary.opacity(0.03))
         )
+        .animation(reduceMotion ? nil : AppMotion.page, value: mainTab)
+        .animation(reduceMotion ? nil : AppMotion.page, value: selectedDataDirsTab)
     }
 
     private var appListToolbar: some View {
-        VStack(spacing: 8) {
-            appListFilters
-            appSizeCacheControls
-        }
+        appListFilters
     }
 
     private var appListFilters: some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
+                Button { isAppSearchFocused = true } label: {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(AppPressButtonStyle())
+                .keyboardShortcut("f", modifiers: .command)
+                .accessibilityLabel("搜索应用 (本地 / 外部)...".localized)
                 TextField("搜索应用 (本地 / 外部)...".localized, text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
+                    .focused($isAppSearchFocused)
+                Text(verbatim: "⌘F")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
             .background(Color.primary.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
 
-            Menu {
-                Button(action: { sortOption = .name }) {
-                    HStack {
-                        Text("按名称".localized)
-                        Spacer()
-                        if sortOption == .name { Image(systemName: "checkmark") }
+            HStack(spacing: 2) {
+                ForEach(AppConnectionFilter.allCases, id: \.self) { filter in
+                    Button { appConnectionFilter = filter } label: {
+                        Text(filter.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(appConnectionFilter == filter ? Color.white : .secondary)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(appConnectionFilter == filter ? Color.accentColor : .clear)
+                            .clipShape(Capsule())
+                            .contentShape(Capsule())
                     }
+                    .buttonStyle(AppPressButtonStyle())
+                    .accessibilityAddTraits(appConnectionFilter == filter ? .isSelected : [])
                 }
-                Button(action: { sortOption = .size }) {
-                    HStack {
-                        Text("按大小".localized)
-                        Spacer()
-                        if sortOption == .size { Image(systemName: "checkmark") }
-                    }
-                }
-            } label: {
-                Label("排序".localized, systemImage: "line.3.horizontal.decrease.circle")
             }
-            .menuStyle(.borderlessButton)
+            .padding(3)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(Capsule())
             .fixedSize()
-            .help("排序方式".localized)
-
-            Button { hideMigratedApps.toggle() } label: {
-                Label("隐藏已迁移应用".localized, systemImage: "eye.slash")
-                    .font(.system(size: 13))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .foregroundColor(hideMigratedApps ? .accentColor : .primary)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(hideMigratedApps ? Color.accentColor.opacity(0.12) : .clear)
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(hideMigratedApps ? "开启".localized : "关闭".localized)
-            .accessibilityAddTraits(hideMigratedApps ? .isSelected : [])
-            .fixedSize()
-            .onChange(of: hideMigratedApps) { enabled in
-                guard enabled else { return }
+            .onChange(of: appConnectionFilter) { _ in
                 selectedLocalApps.formIntersection(Set(filteredLocalApps.map(\.id)))
                 selectedExternalApps.formIntersection(Set(filteredExternalApps.map(\.id)))
             }
@@ -1016,34 +879,51 @@ struct ContentView: View {
         }
     }
 
-    private var appSizeCacheControls: some View {
-        HStack {
+    private var isCurrentPageRefreshing: Bool {
+        switch mainTab {
+        case .apps: return localScanState.isScanning || externalScanState.isScanning
+        case .dataDirs: return isDataDirsScanning
+        case .customDirs: return isCustomDirsScanning
+        }
+    }
+
+    private var cacheRefreshButton: some View {
+        Button {
+            switch mainTab {
+            case .apps: scanBothAppsAtomic(forceSizeRefresh: true)
+            case .dataDirs: dataDirsRefreshTrigger += 1
+            case .customDirs: customDirsRefreshTrigger += 1
+            }
+        } label: {
             Group {
-                if let sizeCacheUpdatedAt {
-                    Text("上次缓存时间".localized + "：" + sizeCacheUpdatedAt.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(locale)))
+                if isCurrentPageRefreshing {
+                    ProgressView().controlSize(.small)
                 } else {
-                    Text("尚无大小缓存".localized)
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 14, weight: .medium))
                 }
             }
-            .font(.system(size: 12))
-            .foregroundColor(.secondary)
-            Spacer()
-            Button("刷新缓存".localized) {
-                scanBothAppsAtomic(forceSizeRefresh: true)
-            }
-            .disabled(operationState.isBusy || localScanState.isScanning || externalScanState.isScanning)
+            .frame(width: 32, height: 30)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(AppPressButtonStyle())
+        .foregroundColor(.secondary)
+        .disabled(operationState.blocksInteraction || isCurrentPageRefreshing)
+        .help("刷新缓存".localized)
+        .accessibilityLabel("刷新缓存".localized)
     }
 
     // MARK: - 应用页两个面板（拆出以减轻 body 的类型推断负担）
 
     private var localAppsPane: some View {
-        VStack(spacing: 0) {
+        let entries = filteredLocalApps.enumerated().map { AppListEntry(app: $0.element, index: $0.offset) }
+        return VStack(spacing: 0) {
             HeaderView(
                 title: "Mac 本地应用".localized,
                 subtitle: localAppsSubtitle,
                 icon: "desktopcomputer",
                 iconColumnWidth: 40,
+                appCount: entries.count,
                 actionButtonText: "＋",
                 onAction: addCustomLocalScanPath,
                 onRefresh: { scanLocalApps(forceSizeRefresh: true) },
@@ -1055,20 +935,23 @@ struct ContentView: View {
                 signatureReplacedFilterBanner
             }
 
+            appListColumnHeader(sorting: $localAppSort)
+
             ZStack {
                 Color(nsColor: .controlBackgroundColor).ignoresSafeArea()
 
-                if filteredLocalApps.isEmpty {
+                if entries.isEmpty {
                     if localScanState.isScanning && localApps.isEmpty {
                         EmptyStateView(icon: "magnifyingglass", text: "正在扫描...".localized)
                     } else {
                         EmptyStateView(icon: "doc.text.magnifyingglass", text: "未找到匹配应用".localized)
                     }
                 } else {
-                    List(filteredLocalApps, selection: $selectedLocalApps) { app in
+                    List(entries, selection: $selectedLocalApps) { entry in
+                        let app = entry.app
                         AppRowView(
                             app: app,
-                            isSelected: selectedLocalApps.contains(app.id),
+                            isSelected: selectedLocalApps.contains(entry.id),
                             showDeleteLinkButton: true,
                             showMoveBackButton: false,
                             onDeleteLink: performDeleteLink,
@@ -1079,8 +962,12 @@ struct ContentView: View {
                             onRepairDock: performRepairDockShortcuts,
                             onRepairSignature: { signatureRepairApp = $0 }
                         )
-                        .tag(app.id)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10)) // Add spacing around rows
+                        .tag(entry.id)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+                        .modifier(AppListRowAppearance(
+                            isSelected: selectedLocalApps.contains(entry.id),
+                            index: entry.index
+                        ))
                         .modifier(RowSeparatorVisibility())
                     }
                     .listStyle(.plain)
@@ -1097,17 +984,20 @@ struct ContentView: View {
                 action: performMoveOut
             )
         }
-        .frame(minWidth: 320, maxWidth: .infinity)
+        .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+        .modifier(AppListPanelStyle())
 
     }
 
     private var externalAppsPane: some View {
-        VStack(spacing: 0) {
+        let entries = filteredExternalApps.enumerated().map { AppListEntry(app: $0.element, index: $0.offset) }
+        return VStack(spacing: 0) {
             HeaderView(
                 title: "外部应用库".localized,
                 subtitle: externalDriveURL?.path ?? "未选择".localized,
                 icon: "externaldrive.fill",
                 iconColumnWidth: 40,
+                appCount: entries.count,
                 tint: .teal,
                 actionButtonText: "选择文件夹".localized,
                 onAction: { _ = openPanelForExternalDrive() },
@@ -1115,6 +1005,8 @@ struct ContentView: View {
                 isRefreshing: externalScanState.isScanning,
                 accessory: AnyView(DiskEjectionControls(externalURL: externalDriveURL))
             )
+
+        appListColumnHeader(sorting: $externalAppSort)
 
         ZStack {
             Color(nsColor: .controlBackgroundColor).ignoresSafeArea()
@@ -1136,7 +1028,7 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 }
-            } else if filteredExternalApps.isEmpty {
+            } else if entries.isEmpty {
                 if externalScanState.isScanning && externalApps.isEmpty {
                     EmptyStateView(icon: "magnifyingglass", text: "正在扫描...".localized)
                 } else if !externalApps.isEmpty || !searchText.isEmpty {
@@ -1145,10 +1037,11 @@ struct ContentView: View {
                     EmptyStateView(icon: "folder", text: "空文件夹".localized)
                 }
             } else {
-                List(filteredExternalApps, selection: $selectedExternalApps) { app in
+                List(entries, selection: $selectedExternalApps) { entry in
+                    let app = entry.app
                     AppRowView(
                         app: app,
-                        isSelected: selectedExternalApps.contains(app.id),
+                        isSelected: selectedExternalApps.contains(entry.id),
                         showDeleteLinkButton: false,
                         showMoveBackButton: false,
                         onDeleteLink: performDeleteLink,
@@ -1157,8 +1050,12 @@ struct ContentView: View {
                         onRestoreSignature: performRestoreSignature,
                         onRepairSignature: { signatureRepairApp = $0 }
                     )
-                    .tag(app.id)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10))
+                    .tag(entry.id)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+                    .modifier(AppListRowAppearance(
+                        isSelected: selectedExternalApps.contains(entry.id),
+                        index: entry.index
+                    ))
                     .modifier(RowSeparatorVisibility())
                 }
                 .listStyle(.plain)
@@ -1166,49 +1063,26 @@ struct ContentView: View {
             }
         }
 
-        // 双按钮底部栏
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button(action: performLinkIn) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "link")
-                            .font(.system(size: 12, weight: .medium))
-                        Text(getLinkButtonTitle())
-                            .fontWeight(.medium)
-                            .font(.system(size: 13))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 28)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.blue)
-                .disabled(!canLinkIn)
-
-                Button(action: performBatchMoveBack) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.turn.up.left")
-                            .font(.system(size: 12, weight: .medium))
-                        Text(getMoveBackButtonTitle())
-                            .fontWeight(.medium)
-                            .font(.system(size: 13))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 28)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange.opacity(0.85))
-                .disabled(selectedExternalApps.isEmpty)
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            Button(action: performBatchMoveBack) {
+                Label(getMoveBackButtonTitle(), systemImage: "arrow.turn.up.left")
+                    .frame(minWidth: 100, minHeight: 22)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .buttonStyle(.bordered)
+            .disabled(selectedExternalApps.isEmpty)
+
+            Button(action: performLinkIn) {
+                Label(getLinkButtonTitle(), systemImage: "link")
+                    .frame(minWidth: 100, minHeight: 22)
+            }
+            .buttonStyle(AppListPrimaryButtonStyle())
+            .disabled(!canLinkIn)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .modifier(AppListFooterStyle())
     }
-    .frame(minWidth: 320, maxWidth: .infinity)
+    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+    .modifier(AppListPanelStyle())
     }
 
     private var signatureReplacedFilterBanner: some View {
@@ -1238,27 +1112,7 @@ struct ContentView: View {
                 .help("恢复选中应用的原始代码签名".localized)
             }
 
-            Button(action: { dataDirsRefreshTrigger += 1 }) {
-                Group {
-                    if isDataDirsScanning {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                }
-                .frame(width: 16, height: 16)
-                .frame(width: 30, height: 30)
-                .background(Color.primary.opacity(0.03))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .disabled(isDataDirsScanning)
-            .help("刷新列表".localized)
-            .accessibilityLabel(isDataDirsScanning ? "正在扫描...".localized : "刷新列表".localized)
+
         }
     }
 
@@ -1267,6 +1121,7 @@ struct ContentView: View {
         let title: String
         var systemImage: String? = nil
         let isSelected: Bool
+        let selectionNamespace: Namespace.ID
         let action: () -> Void
 
         @State private var isHovered = false
@@ -1286,18 +1141,22 @@ struct ContentView: View {
                 .foregroundColor(isSelected ? .accentColor : .secondary)
                 .padding(.horizontal, 12)
                 .frame(height: 30)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(isSelected
-                              ? Color.accentColor.opacity(0.12)
-                              : (isHovered ? Color.primary.opacity(0.04) : .clear))
-                )
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.12))
+                            .matchedGeometryEffect(id: "navigationSelection", in: selectionNamespace)
+                    } else {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isHovered ? Color.primary.opacity(0.04) : .clear)
+                    }
+                }
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AppPressButtonStyle())
             .accessibilityAddTraits(isSelected ? .isSelected : [])
             .onHover { isHovered = $0 }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isHovered)
+            .animation(reduceMotion ? nil : AppMotion.interaction, value: isHovered)
         }
     }
 
@@ -2657,8 +2516,9 @@ struct ContentView: View {
             } catch is CancellationError {
                 // A committed result is returned by the service, not reported as cancellation.
             } catch {
-                AppLogger.shared.logError("手动重签名失败", error: error,
-                    errorCode: "RESIGN-FAILED", relatedURLs: [("target_app", app.displayURL)])
+                AppLogger.shared.logOperationFailure(category: "manual_sign",
+                    operationID: AppLogger.shared.makeOperationID(prefix: "manual-sign"), error: error,
+                    details: [("application_path", app.displayURL.path)], relatedURLs: [("target_app", app.displayURL)])
                 showError(title: "签名失败".localized, message: error.localizedDescription)
             }
         }
@@ -2720,6 +2580,9 @@ struct ContentView: View {
                 offerOriginalApplication(for: app, reason: CodeSigner.SigningError.snapshotInvalid.localizedDescription)
             } catch {
                 await MainActor.run {
+                    AppLogger.shared.logOperationFailure(category: "signature_restore",
+                        operationID: AppLogger.shared.makeOperationID(prefix: "signature-restore"), error: error,
+                        details: [("application_path", app.displayURL.path)])
                     showError(title: "恢复签名失败".localized, message: error.localizedDescription)
                 }
             }
@@ -2977,7 +2840,7 @@ struct ContentView: View {
             onOpenDataDirs: { target in
                 selectedDataDirsApp = target
                 selectedDataDirsTab = .appDirs
-                withAnimation { mainTab = .dataDirs }
+                mainTab = .dataDirs
             },
             onDismiss: { signatureRepairApp = nil },
             onChooseOfficialOriginal: { target in
@@ -3025,7 +2888,7 @@ struct ContentView: View {
             actions: [
                 WarningAction("查看".localized, style: .preferred) {
                     localAppFilter = .signatureReplaced
-                    withAnimation { mainTab = .apps }
+                    mainTab = .apps
                 }
             ]
         )

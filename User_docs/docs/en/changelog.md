@@ -1,10 +1,28 @@
 # Changelog
 
-These entries describe changes at the time of each release. **Historical features may have been retired and should not be treated as current instructions.** Current guides describe the 1.9.1 development version. Older behavior, versions, and alternatives remain in the [historical feature archive](/docs/archive/overview).
+These entries describe changes at the time of each release. **Historical features may have been retired and should not be treated as current instructions.** Current guides describe 2.0.0 (build 50). Older behavior, versions, and alternatives remain in the [historical feature archive](/docs/archive/overview).
 
-## v1.9.1 (in development) {#v1-9-1}
+## v2.0.0 {#v2-0-0}
 
-The following describes **1.9.1 build 31**, not a promise about a released version:
+These entries describe the code and interface of **2.0.0 build 50**. The version number does not establish availability through download channels.
+
+- Support whole-account or media-only split migration for WeChat, keeping databases and configuration local in split mode. Restore fully before changing modes.
+- Support encrypted APFS destinations with an independent password for new data volumes and optional local Keychain storage. Unlock manually without saved credentials.
+- Add external-app indexing exclusion and size-cache refresh controls to reduce duplicate search entries and check cache timestamps.
+- Add Task Center for apps, app data, tools and custom directories, with background execution inside AppPorts, pause, continue, cancel and history controls. Tasks with conflicting resources wait in the queue.
+- Show estimated overall progress across stages and separate preparation, scan, copy, verification, switch and cleanup steps for the current directory. Multi-directory totals no longer stand in for the current stage.
+- Distinguish retry, deciding later and keeping old copies. App recovery also offers explicit confirmation for ending an incomplete task or moving back without content verification.
+- Add whole-disk ejection: pause automatic mounting before asking Finder to eject, and resume after the device is reconnected.
+- Updated native macOS launchers ask users to wait during app-data migration or restoration. Other routes, including directly launching the real app, are outside this protection.
+- Destination capability warnings explain app file attributes that cannot be preserved and link to the relevant help page. Ordinary app migration and container mount migration have distinct storage requirements.
+- Adjust concurrent reads for data scans and small-file copying while retaining content verification, pre-switch checks and safe cleanup. No fixed speedup is promised across storage devices.
+- Continue to separate migration from manual signing, store official originals externally and disable automatic login re-signing on all systems. Complete multilingual prompts for the new interface.
+
+Guides: [Task Center](/docs/datamigrae/operation#task-center), [recovery](/docs/restore#recovery), [disk ejection](/docs/storage-guide#eject) and [launch protection](/docs/datamigrae/operation#launch-protection).
+
+## v1.9.1 (development history) {#v1-9-1}
+
+The following preserves the earlier **1.9.1 build 31** development record. These behaviors continue in 2.0.0:
 
 - App data hides locked, non-migratable structures by default. “Show locked directory structure” reveals their reasons. Status summaries support filtering. Personal-folder shortcuts are identified separately, excluded from app-data sizes, and unavailable for migration.
 - Progress distinguishes preparation, copying, verification, and finalization. Reaching 100% copying still requires waiting for the whole operation to finish. Extended inactivity displays the last activity.

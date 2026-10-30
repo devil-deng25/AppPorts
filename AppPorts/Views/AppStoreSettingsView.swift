@@ -83,14 +83,14 @@ struct AppStoreSettingsView: View {
             Divider()
 
             // 正文放进 ScrollView：设置项比窗口高时不再把表头（含关闭按钮）顶出可视区域。
-            ScrollView(.vertical) {
+            ScrollView(.vertical, showsIndicators: false) {
                 settingsContent
             }
             .frame(minHeight: 320)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 20)
-        .frame(minWidth: 420, idealWidth: 520, maxWidth: 520)
+        .frame(minWidth: 560, idealWidth: 560, maxWidth: 560)
         .sheet(isPresented: $showReadinessCheck) {
             ReadinessCheckSheet()
         }
@@ -171,6 +171,10 @@ struct AppStoreSettingsView: View {
     /// 可滚动的设置正文。
     private var settingsContent: some View {
         VStack(alignment: .leading, spacing: 24) {
+            UpdateSettingsSection()
+
+            Divider()
+
             readinessSection
 
             if isMASExternalSupported {
@@ -188,6 +192,7 @@ struct AppStoreSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.green.opacity(0.06))
                 .cornerRadius(12)
                 .onAppear {
@@ -235,7 +240,7 @@ struct AppStoreSettingsView: View {
                     }
                 }
                 .padding()
-                .frame(minHeight: 110)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.primary.opacity(0.03))
                 .cornerRadius(12)
 
@@ -262,7 +267,7 @@ struct AppStoreSettingsView: View {
                     }
                 }
                 .padding()
-                .frame(minHeight: 110)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.primary.opacity(0.03))
                 .cornerRadius(12)
             }
@@ -400,6 +405,7 @@ struct AppStoreSettingsView: View {
                 }
             }
             .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.primary.opacity(0.03))
             .cornerRadius(12)
 
@@ -469,6 +475,7 @@ struct AppStoreSettingsView: View {
             }
         }
         .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.03))
         .cornerRadius(12)
     }
@@ -524,6 +531,7 @@ struct AppStoreSettingsView: View {
             }
         }
         .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.03))
         .cornerRadius(12)
     }

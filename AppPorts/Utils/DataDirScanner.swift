@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Darwin
 
 // MARK: - 已知 dotFolder 描述结构
 
@@ -104,18 +105,19 @@ func clearSizeCache() {
 func fastDirectorySize(
     at url: URL,
     fileManager: FileManager = .default,
-    isMountPoint: (URL) -> Bool = { DiskUtility.isMountPoint($0) }
+    isMountPoint: @escaping (URL) -> Bool = { DiskUtility.isMountPoint($0) }
 ) -> Int64 {
     measureDirectorySize(at: url, fileManager: fileManager, isMountPoint: isMountPoint).bytes
 }
 
 /// A split account row represents only its migrated media, not the local database.
-func measureDataDirectorySize(for item: DataDirItem, useCache: Bool = false) -> DirectorySizeResult {
+func measureDataDirectorySize(for item: DataDirItem, useCache: Bool = false,
+                              pausedMountDirectories: Set<URL> = []) -> DirectorySizeResult {
     let sources = item.weChatSplitMembers.isEmpty ? [item] : item.weChatSplitMembers
     var result = DirectorySizeResult()
     for source in sources {
         guard let url = source.sizeMeasurementURL else { continue }
-        let measured = measureDirectorySize(at: url, useCache: useCache)
+        let measured = measureDirectorySize(at: url, useCache: useCache, pausedMountDirectories: pausedMountDirectories)
         result.bytes += measured.bytes
         result.readIssues += measured.readIssues
     }
@@ -127,20 +129,37 @@ func measureDirectorySize(
     at url: URL,
     fileManager: FileManager = .default,
     useCache: Bool = true,
-    isMountPoint: (URL) -> Bool = { DiskUtility.isMountPoint($0) }
+    pausedMountDirectories: Set<URL> = [],
+    isMountPoint: @escaping (URL) -> Bool = { DiskUtility.isMountPoint($0) }
 ) -> DirectorySizeResult {
+    func readIssue(at failedURL: URL, error: Error) -> DataDirReadIssue {
+        DataDirReadIssue(url: failedURL, error: error, pausedMountDirectories: pausedMountDirectories,
+                         isMountPoint: isMountPoint)
+    }
     let cacheKey = sizeCacheKey(for: url.standardizedFileURL.path, isMountPoint: isMountPoint(url))
-    if useCache, let cached = directorySizeCache.object(forKey: cacheKey) {
+    let relevantPausedMounts = pausedMountDirectories.filter {
+        let path = url.standardizedFileURL.path
+        return $0.path == path || $0.path.hasPrefix(path + "/")
+    }
+    let includesPausedMount = !relevantPausedMounts.isEmpty
+    if useCache, !includesPausedMount, let cached = directorySizeCache.object(forKey: cacheKey) {
         return DirectorySizeResult(bytes: cached.int64Value)
     }
     directorySizeCache.removeObject(forKey: cacheKey)
+    let pausedIssues = relevantPausedMounts.compactMap {
+        DataDirReadIssue.pausedMountIssue(at: $0, pausedMountDirectories: pausedMountDirectories,
+                                         isMountPoint: isMountPoint)
+    }
+    if pausedIssues.contains(where: { $0.url == url.standardizedFileURL }) {
+        return DirectorySizeResult(readIssues: pausedIssues)
+    }
 
     let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .isSymbolicLinkKey, .isDirectoryKey]
     let values: URLResourceValues
     do {
         values = try url.resourceValues(forKeys: Set(resourceKeys))
     } catch {
-        return DirectorySizeResult(readIssues: [DataDirReadIssue(url: url, error: error)])
+        return DirectorySizeResult(readIssues: [readIssue(at: url, error: error)])
     }
 
     // 单文件：直接返回大小
@@ -153,7 +172,7 @@ func measureDirectorySize(
     guard values.isDirectory == true else { return DirectorySizeResult() }
 
     // 枚举器遍历（单次批量遍历，替代手动递归的 contentsOfDirectory）
-    var result = DirectorySizeResult()
+    var result = DirectorySizeResult(readIssues: pausedIssues)
     guard let enumerator = fileManager.enumerator(
         at: url,
         includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .isSymbolicLinkKey],
@@ -163,17 +182,21 @@ func measureDirectorySize(
             // progress. A missing child is no longer part of the measured tree.
             if failedURL.standardizedFileURL != url.standardizedFileURL,
                DataDirReadIssue.isMissingFile(error) { return true }
-            result.readIssues.append(DataDirReadIssue(url: failedURL, error: error))
+            result.readIssues.append(readIssue(at: failedURL, error: error))
             return true
         }
     ) else {
-        return DirectorySizeResult(readIssues: [DataDirReadIssue(url: url, error: CocoaError(.fileReadUnknown))])
+        return DirectorySizeResult(readIssues: [readIssue(at: url, error: CocoaError(.fileReadUnknown))])
     }
 
     for case let fileURL as URL in enumerator {
         guard !Task.isCancelled else {
-            result.readIssues.append(DataDirReadIssue(url: url, error: CancellationError()))
+            result.readIssues.append(readIssue(at: url, error: CancellationError()))
             return result
+        }
+        if pausedIssues.contains(where: { $0.url == fileURL.standardizedFileURL }) {
+            enumerator.skipDescendants()
+            continue
         }
         do {
             let attrs = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .isSymbolicLinkKey])
@@ -182,7 +205,7 @@ func measureDirectorySize(
             result.bytes += Int64(fileSize)
         } catch {
             if DataDirReadIssue.isMissingFile(error) { continue }
-            result.readIssues.append(DataDirReadIssue(url: fileURL, error: error))
+            result.readIssues.append(readIssue(at: fileURL, error: error))
         }
     }
     // 0 不写缓存：未挂载的挂载点就是一个空目录，算出来同样是 0；缓存下来会让卷挂好之后
@@ -212,6 +235,7 @@ actor DataDirScanner {
     private var mountRecordsByPath: [String: ContainerMountRecord] = [:]
     private var recoveryInspection: ContainerMountStore.Inspection?
     private var readIssues: [DataDirReadIssue] = []
+    private var pausedMountDirectories: Set<URL> = []
     private let partialWeChatMigrationEnabled: Bool
     private let weChatContainerIdentifier: String
 
@@ -630,6 +654,7 @@ actor DataDirScanner {
 
     func scanLibraryDirsWithDiagnostics(for app: AppItem, externalRootURL: URL? = nil) -> DataDirScanResult {
         readIssues = []
+        guard !Task.isCancelled else { return DataDirScanResult(items: [], readIssues: []) }
         guard !app.isFolder else { return DataDirScanResult(items: [], readIssues: []) }
         let scanID = AppLogger.shared.makeOperationID(prefix: "scanner-library-dirs")
         let identity: ResolvedAppIdentity?
@@ -670,6 +695,7 @@ actor DataDirScanner {
         var resultsByPath: [String: DataDirItem] = [:]
 
         for config in appDataSearchConfigs() {
+            guard !Task.isCancelled else { return DataDirScanResult(items: [], readIssues: []) }
             // Ordinary sandbox containers are keyed by application identity. Product-name
             // similarities are insufficient evidence that another container belongs to this app.
             let localCandidates = config.type == .containers
@@ -677,6 +703,7 @@ actor DataDirScanner {
                 : findMatchingDirs(in: config.localBaseURL, matchProfile: matchProfile)
 
             for candidateURL in localCandidates {
+                guard !Task.isCancelled else { return DataDirScanResult(items: [], readIssues: []) }
                 let inspection = inspectItem(at: candidateURL, type: config.type)
 
                 if config.type == .containers || config.type == .groupContainers {
@@ -704,6 +731,7 @@ actor DataDirScanner {
             // rediscovered by fuzzy product names in an external mirror.
             if config.type == .containers { continue }
             for externalBaseURL in externalBaseURLs(for: config.localBaseURL, externalRootURL: externalRootURL) {
+                guard !Task.isCancelled else { return DataDirScanResult(items: [], readIssues: []) }
                 let externalCandidates = findMatchingDirs(in: externalBaseURL, matchProfile: matchProfile)
 
                 for externalCandidate in externalCandidates {
@@ -736,6 +764,7 @@ actor DataDirScanner {
             }
         }
 
+        guard !Task.isCancelled else { return DataDirScanResult(items: [], readIssues: []) }
         for item in scanSpecialAssociatedDirs(for: app, bundleID: bundleID, appName: appName, externalRootURL: externalRootURL) {
             resultsByPath[item.path.standardizedFileURL.path] = item
         }
@@ -764,7 +793,7 @@ actor DataDirScanner {
                 updated.applyPathPolicy(.init(role: updated.pathPolicy?.role ?? .businessData, reason: .runtimeConflict,
                                               canMigrate: false, mayDiscoverChildren: false))
             }
-            if readIssues.contains(where: { $0.url.standardizedFileURL == item.path.standardizedFileURL }) {
+            if readIssues.contains(where: { $0.requiresAttention && $0.url.standardizedFileURL == item.path.standardizedFileURL }) {
                 updated.applyPathPolicy(.init(role: updated.pathPolicy?.role ?? .businessData, reason: .readFailure,
                                               canMigrate: false, mayDiscoverChildren: false))
                 updated.sizeIsIncomplete = true
@@ -806,7 +835,8 @@ actor DataDirScanner {
             ],
             level: "TRACE"
         )
-        return DataDirScanResult(items: sortedResults, readIssues: readIssues, identityIssue: identityIssue)
+        return DataDirScanResult(items: sortedResults, readIssues: readIssues, identityIssue: identityIssue,
+                                 pausedMountDirectories: pausedMountDirectories)
     }
 
     /// 异步计算单个目录大小
@@ -839,6 +869,7 @@ actor DataDirScanner {
 
     private func refreshMountRecords(for bundleID: String?) {
         mountRecordsByPath = [:]
+        pausedMountDirectories = []
         recoveryInspection = nil
         guard let bundleID else { return }
         let records: [ContainerMountRecord]
@@ -873,6 +904,19 @@ actor DataDirScanner {
             guard record.bundleIdentifier == bundleID || legacyIdentityMatches else { continue }
             mountRecordsByPath[url.path] = record
             mountRecordsByPath[path] = record
+            // Offline guards hide external data even when automatic mounting is not paused.
+            if recoveryInspection?.validationError == nil,
+               !isMountPoint(url) || (try? mountStore.isManuallyUnmounted(record)) == true {
+                pausedMountDirectories.insert(url)
+                // Foundation may report the /private/var spelling for a /var fixture.
+                // Resolve only the parent so the leaf cannot become a symlink exemption.
+                pausedMountDirectories.insert(url.deletingLastPathComponent().resolvingSymlinksInPath()
+                    .appendingPathComponent(url.lastPathComponent).standardizedFileURL)
+                if let issue = DataDirReadIssue.pausedMountIssue(at: url, pausedMountDirectories: pausedMountDirectories,
+                                                               isMountPoint: isMountPoint) {
+                    readIssues.append(issue)
+                }
+            }
         }
     }
 
@@ -1052,6 +1096,7 @@ actor DataDirScanner {
         var results: [DataDirItem] = []
 
         func visit(_ url: URL, depth: Int) {
+            guard !Task.isCancelled else { return }
             let inspection = inspectItem(at: url, type: type)
             let decision = policy.evaluate(url)
             var item = makeAppDataItem(name: containerRelativeSuffix(of: url, in: rootURL), path: url,
@@ -1138,6 +1183,7 @@ actor DataDirScanner {
         externalRootURL: URL?
     ) {
         item.status = inspection.status
+        item.autoMountPaused = mountRecord(for: item.path).map { (try? mountStore.isManuallyUnmounted($0)) == true } ?? false
         item.linkedDestination = inspection.linkedDestination
 
         guard inspection.status == "已链接",
@@ -1519,57 +1565,63 @@ actor DataDirScanner {
         }
     }
 
-    /// 在指定目录中查找与应用匹配的子目录。
-    ///
-    /// 使用 enumerator 仅遍历至多 2 层深度，单次批量遍历替代逐层 contentsOfDirectory。
-    /// 对非匹配的顶层目录自动下钻一层，匹配后跳过子树。
+    /// Discover at most two levels without letting a recursive enumerator open deeper nodes.
     private func findMatchingDirs(in baseURL: URL, matchProfile: AppMatchProfile) -> [URL] {
-        guard fileManager.fileExists(atPath: baseURL.path) else { return [] }
-
+        guard !Task.isCancelled, fileManager.fileExists(atPath: baseURL.path) else { return [] }
         var matched: [URL] = []
-        guard let enumerator = fileManager.enumerator(
-            at: baseURL,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles],
-            errorHandler: { failedURL, error in
-                // 不将其他应用目录的访问限制算成当前应用的扫描失败。
-                let path = failedURL.standardizedFileURL.path
-                if path == baseURL.standardizedFileURL.path
-                    || matched.contains(where: { path == $0.path || path.hasPrefix($0.path + "/") })
-                    || self.matchesDirectoryName(failedURL.lastPathComponent, profile: matchProfile) {
-                    self.recordReadIssue(at: failedURL, error: error)
-                }
-                return true
-            }
-        ) else { return [] }
 
-        let baseDepth = baseURL.standardizedFileURL.pathComponents.count
-
-        for case let itemURL as URL in enumerator {
-            let depth = itemURL.standardizedFileURL.pathComponents.count - baseDepth
-            guard depth <= 2 else {
-                enumerator.skipDescendants()
-                continue
-            }
-
-            guard let values = try? itemURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
-                  (values.isDirectory == true || values.isSymbolicLink == true) else { continue }
-
-            if matchesDirectoryName(itemURL.lastPathComponent, profile: matchProfile) {
-                matched.append(itemURL)
-                if depth >= 2 {
-                    enumerator.skipDescendants()
-                }
-            } else if depth >= 2 {
-                // 非匹配的二级目录不再深入
-                enumerator.skipDescendants()
+        func recordRelatedReadIssue(at url: URL, error: Error) {
+            let path = url.standardizedFileURL.path
+            if path == baseURL.standardizedFileURL.path
+                || matched.contains(where: { path == $0.path || path.hasPrefix($0.path + "/") })
+                || matchesDirectoryName(url.lastPathComponent, profile: matchProfile) {
+                recordReadIssue(at: url, error: error)
             }
         }
 
+        func entries(in directory: URL) -> [URL] {
+            guard !Task.isCancelled else { return [] }
+            do {
+                // Do not prefetch metadata for unrelated files, sockets or named pipes.
+                return try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil,
+                                                           options: [.skipsHiddenFiles])
+            } catch {
+                // Preserve diagnostics for the search root and matching app directories only.
+                recordRelatedReadIssue(at: directory, error: error)
+                return []
+            }
+        }
+
+        func inspect(_ url: URL) -> Bool {
+            guard !Task.isCancelled else { return false }
+            // Read the entry itself without opening special files or following links.
+            var metadata = stat()
+            guard lstat(url.path, &metadata) == 0 else {
+                let error = NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                recordRelatedReadIssue(at: url, error: error)
+                return false
+            }
+            let kind = metadata.st_mode & mode_t(S_IFMT)
+            guard kind == mode_t(S_IFDIR) || kind == mode_t(S_IFLNK) else { return false }
+            if matchesDirectoryName(url.lastPathComponent, profile: matchProfile) {
+                matched.append(url)
+            }
+            return kind == mode_t(S_IFDIR)
+        }
+
+        for firstLevelURL in entries(in: baseURL) {
+            guard !Task.isCancelled else { return [] }
+            guard inspect(firstLevelURL) else { continue }
+            for secondLevelURL in entries(in: firstLevelURL) {
+                guard !Task.isCancelled else { return [] }
+                _ = inspect(secondLevelURL)
+            }
+        }
         return deduplicate(urls: matched)
     }
 
     private func directoryEntries(at baseURL: URL, includeHidden: Bool = false) -> [URL] {
+        guard !Task.isCancelled else { return [] }
         let contents: [URL]
         do {
             contents = try fileManager.contentsOfDirectory(
@@ -1589,6 +1641,7 @@ actor DataDirScanner {
             baseURL.appendingPathComponent($0.lastPathComponent, isDirectory: false).standardizedFileURL
         } : contents
         return entries.filter { itemURL in
+            guard !Task.isCancelled else { return false }
             do {
                 let values = try itemURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 return values.isDirectory == true || values.isSymbolicLink == true
@@ -1602,9 +1655,15 @@ actor DataDirScanner {
     private func recordReadIssue(at url: URL, error: Error) {
         // 不存在的可选目录很常见；只有实际的读取失败影响统计完整性。
         guard !DataDirReadIssue.isMissingFile(error) else { return }
-        let issue = DataDirReadIssue(url: url, error: error)
-        guard !readIssues.contains(where: { $0.url == issue.url }) else { return }
-        readIssues.append(issue)
+        let issue = DataDirReadIssue(url: url, error: error, pausedMountDirectories: pausedMountDirectories,
+                                     isMountPoint: isMountPoint)
+        if let existing = readIssues.firstIndex(where: { $0.url == issue.url }) {
+            guard issue.requiresAttention, !readIssues[existing].requiresAttention else { return }
+            readIssues[existing] = issue
+        } else {
+            readIssues.append(issue)
+        }
+        guard issue.requiresAttention else { return }
         AppLogger.shared.logError(
             "应用数据目录读取失败，空间统计不完整",
             error: error,

@@ -32,7 +32,7 @@
 
 ### 挂载迁移 {#mount-migration}
 
-把适用的容器数据放入专用 APFS 数据卷，再将卷接到原目录。它保留真实应用签名，当前需要未加密 APFS 存储。见[数据迁移方式](/docs/datamigrae/baseinfo#mount)。
+把适用的容器数据放入专用 APFS 数据卷，再将卷接到原目录。它保留真实应用签名，当前需要APFS 存储。见[数据迁移方式](/docs/datamigrae/baseinfo#mount)。
 
 ### 迁回、还原 {#restore}
 

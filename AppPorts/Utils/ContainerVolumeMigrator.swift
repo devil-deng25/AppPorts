@@ -17,7 +17,7 @@ import Foundation
 /// ## 操作流程
 /// - **迁移**：建卷 → 复制并核验 → 切换原路径 → 持久化记录 → 自动清理已核验的旧数据
 /// - **还原**：定位当前卷 → 复制最新数据并核验 → 切回原路径 → 自动清理旧卷
-/// - **挂载 / 卸载**：只处理已有记录。未挂载期间挂载点保持 000 权限，
+/// - **挂载 / 卸载**：只处理已有记录。未挂载期间挂载点保持 500 权限，
 ///   应用在盘不在时只会看到空目录，不会把新数据写进本地形成分叉。
 actor ContainerVolumeMigrator {
 
@@ -164,7 +164,6 @@ actor ContainerVolumeMigrator {
     /// mds 就会跳过整个卷；标记写在卷上，跟着卷走，不需要任何系统设置。
     static let neverIndexFileName = ".metadata_never_index"
     private static let managedIdentifier = "com.shimoko.AppPorts"
-    private static let lockedMountPointMode: mode_t = 0o000
     private static let openMountPointMode: mode_t = 0o700
     /// 挂载动作的尝试轮数：命令报告成功但挂载点没出现时（被系统自动挂载抢先）重来。
     static let maximumMountAttempts = 3
@@ -640,17 +639,17 @@ actor ContainerVolumeMigrator {
             var before = stat()
             guard lstat(local.path, &before) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             guard before.st_mode & S_IFMT == S_IFDIR else { throw DataOperationSafety.Failure.conflict(local.path) }
-            if before.st_mode & 0o7777 == Self.lockedMountPointMode {
-                // Normal unmount leaves an empty 000 placeholder. Its existing
+            if MountPointLease.isProtectedMode(before.st_mode & 0o7777) {
+                // Normal unmount leaves an empty read-only placeholder. Its existing
                 // lease checks the anchored contents while keeping it locked;
-                // ordinary path enumeration would reject every offline cancel.
+                // legacy 000 entries must also remain recoverable.
                 try store.recheckWriterAdmission()
                 let lease = try makeMountPointLease(local)
                 try lease.verifyBeforeMount()
                 var current = stat()
                 guard !isMountPoint(local), lstat(local.path, &current) == 0,
                       current.st_dev == before.st_dev, current.st_ino == before.st_ino,
-                      current.st_mode == before.st_mode else {
+                      current.st_mode & 0o7777 == MountPointLease.protectedMode else {
                     throw DataOperationSafety.Failure.conflict(local.path)
                 }
             } else if try !fileManager.contentsOfDirectory(atPath: local.path).isEmpty {
@@ -1704,20 +1703,24 @@ actor ContainerVolumeMigrator {
 
     /// 把记录对应的卷重新挂到容器内挂载点上；已挂载则直接返回。
     func mount(record: ContainerMountRecord) async throws {
+        try await mount(record: record, resumingManualPause: false)
+    }
+
+    func mount(record: ContainerMountRecord, resumingManualPause: Bool) async throws {
+        if !resumingManualPause, try store.isManuallyUnmounted(record) {
+            throw ManualMountPauseError.paused
+        }
+        try await mountRecordedVolume(record)
+        if resumingManualPause { try store.setManuallyUnmounted(false, record: record) }
+    }
+
+    private func mountRecordedVolume(_ record: ContainerMountRecord) async throws {
         let mountPoint = record.mountPointURL
         guard try !DiskEjectionPauseStore(store: store).snapshot().blocks(volumeUUIDs: [record.volumeUUID],
             paths: [record.mountPointPath, record.externalRootPath]) else { throw DiskEjectionError.paused }
         guard try store.recordsStrict().contains(record) else { throw DataOperationSafety.Failure.conflict(mountPoint.path) }
         try safety.requireExistingMigrationPolicy(at: mountPoint, bundleIdentifier: record.bundleIdentifier)
-        let history = try store.transfers()
-        let related = history.filter {
-            $0.mode == .mount && $0.direction == .migrate
-                && $0.createdVolumeUUID?.caseInsensitiveCompare(record.volumeUUID) == .orderedSame
-                && $0.originalPath == record.mountPointPath && [.awaitingUserVerification, .cleanupRequested].contains($0.phase)
-        }
-        let ownedIDs = try related.reduce(into: Set<UUID>()) { result, transfer in
-            result.formUnion(try transferAncestors(of: transfer, in: history))
-        }
+        let ownedIDs = try ownedMigrationTransferIDs(for: record)
         if !isMountPoint(mountPoint),
            let pending = try pendingMountTransfer(at: record.mountPointPath, direction: .restore),
            pending.isPreparationRecoverable, !pending.isUnstartedMountRestore {
@@ -1730,7 +1733,7 @@ actor ContainerVolumeMigrator {
             try requirePreparationLedger(pending)
             try requireUnswitchedMountEntry(pending)
             _ = try await recoverWithIndependentBudget(pending, finishPreparedRestore: false)
-            return try await mount(record: record)
+            return try await mountRecordedVolume(record)
         }
         let compatibleRestores = try await remountCompatibleRestoreIDs(record: record)
         let requiresOwnership = record.ownershipPolicy == .owners
@@ -1821,6 +1824,7 @@ actor ContainerVolumeMigrator {
     func unmount(record: ContainerMountRecord, force: Bool = false) async throws {
         let mountPoint = record.mountPointURL
         guard try store.recordsStrict().contains(record) else { throw DataOperationSafety.Failure.conflict(mountPoint.path) }
+        try store.setManuallyUnmounted(true, record: record)
         guard isMountPoint(mountPoint) else {
             if fileManager.fileExists(atPath: mountPoint.path) {
                 let lease = try makeMountPointLease(mountPoint)
@@ -1866,6 +1870,16 @@ actor ContainerVolumeMigrator {
             return []
         }
         for record in records {
+            do {
+                try await upgradeLegacyOfflineGuard(for: record)
+                if try store.isManuallyUnmounted(record) {
+                    outcomes.append(RemountOutcome(record: record, state: .requiresIntervention(ManualMountPauseError.paused.localizedDescription)))
+                    continue
+                }
+            } catch {
+                outcomes.append(RemountOutcome(record: record, state: .failed(error.localizedDescription)))
+                continue
+            }
             if ejection.blocks(volumeUUIDs: [record.volumeUUID], paths: [record.mountPointPath, record.externalRootPath]) {
                 outcomes.append(RemountOutcome(record: record, state: .requiresIntervention(DiskEjectionError.paused.localizedDescription)))
                 continue
@@ -1907,6 +1921,40 @@ actor ContainerVolumeMigrator {
             NotificationCenter.default.post(name: .appPortsRecordsDidChange, object: store)
         }
         return outcomes
+    }
+
+    private func ownedMigrationTransferIDs(for record: ContainerMountRecord) throws -> Set<UUID> {
+        let history = try store.transfers()
+        let related = history.filter {
+            $0.mode == .mount && $0.direction == .migrate
+                && $0.createdVolumeUUID?.caseInsensitiveCompare(record.volumeUUID) == .orderedSame
+                && $0.originalPath == record.mountPointPath && [.awaitingUserVerification, .cleanupRequested].contains($0.phase)
+        }
+        return try related.reduce(into: Set<UUID>()) { result, transfer in
+            result.formUnion(try transferAncestors(of: transfer, in: history))
+        }
+    }
+
+    private func upgradeLegacyOfflineGuard(for record: ContainerMountRecord) async throws {
+        let url = record.mountPointURL
+        guard !isMountPoint(url) else { return }
+        var info = stat()
+        guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
+              info.st_mode & 0o7777 == 0 else { return }
+        // A started restore owns its placeholder and upgrades it through its
+        // existing recovery path, rather than through background maintenance.
+        guard try !store.transfers().contains(where: {
+            $0.mode == .mount && $0.direction == .restore && $0.originalPath == url.path && !$0.isUnstartedMountRestore
+        }) else { return }
+        try safety.requireExistingMigrationPolicy(at: url, bundleIdentifier: record.bundleIdentifier)
+        let ownedIDs = try ownedMigrationTransferIDs(for: record)
+        let restores = try await remountCompatibleRestoreIDs(record: record)
+        try safety.requireNoOverlap(at: url, ownedMount: record, ownedTransferIDs: ownedIDs.union(restores))
+        try safety.requireNoManagedFileSystemAncestor(at: url)
+        try safety.requireMountPointParentAccess(at: url)
+        try store.recheckWriterAdmission()
+        let lease = try makeMountPointLease(url)
+        try lease.verifyBeforeMount()
     }
 
     // MARK: - 还原
@@ -2274,7 +2322,7 @@ actor ContainerVolumeMigrator {
                     }
                     try store.recheckWriterAdmission()
                     try TreeCopySession.removeVerifiedCopy(at: backup, against: baseline, allowPartialRemoval: deletionPreviouslyStarted,
-                        expectedVolumeUUID: expectedBackup.volumeUUID, removalID: operationID, requireSourceIdentity: true) {
+                        expectedVolumeUUID: expectedBackup.volumeUUID, removalID: operationID, requireSourceIdentity: true, willRemove: {
                         guard try self.store.transfer(operationID: operationID) == transfer,
                               try DataPathIdentity.capture(parent).matchesFilesystemObject(parentIdentity),
                               try DataPathIdentity.capture(retained).matchesFilesystemObject(expectedBackup) else {
@@ -2296,7 +2344,7 @@ actor ContainerVolumeMigrator {
                               self.isMountPoint(active) == (location.mode == .mount && location.direction == .migrate) else {
                             throw DataOperationSafety.Failure.conflict(active.path)
                         }
-                    }
+                    })
                 } else {
                     guard transfer.cleanupParentIdentity != nil else { throw DataOperationSafety.Failure.inspection(backup.path) }
                     try await requireActiveData(for: transfer, matching: location)

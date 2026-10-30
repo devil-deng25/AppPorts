@@ -70,3 +70,9 @@ Open AppPorts once after moving or updating it so the background program's locat
 Enable or disable logging, adjust maximum log size, reveal logs in Finder, or clear them. To report a problem, use Logs → Export Diagnostic Package in the menu bar. Export does not send the package automatically.
 
 Inspect the contents before sharing, and include macOS and AppPorts versions, the action you took and the displayed message. See [reporting a problem](/docs/faq#feedback) and the [privacy policy](/docs/privacy).
+
+## Task history {#task-history}
+
+Clear the completed task list on quit is enabled by default. Disable it to keep successful tasks in display history. Clear Completed and row removal in Task Center likewise affect display only: they do not delete apps, data or migration records needed for recovery.
+
+Background tasks still need AppPorts to be running. On reopening, inspect records for unfinished tasks; history does not automatically repeat migration. See [Task Center](/docs/datamigrae/operation#task-center) and [recovery](/docs/restore#recovery) for pause, cancellation and issue handling.
