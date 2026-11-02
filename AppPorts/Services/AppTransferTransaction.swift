@@ -1259,6 +1259,15 @@ final class AppTransferTransaction {
         try store.recheckWriterAdmission()
         AppLogger.shared.logContext("应用位置操作需要管理员授权", details: [
             ("operation_id", request.record.operationID.uuidString), ("action", request.action.rawValue)])
+        // 授权弹窗期间没有任何字节进度，界面必须显示「在等密码」，否则与卡死无异。
+        DataTransferSession.progress?.waitingForAuthorization()
+        let promptStarted = ProcessInfo.processInfo.systemUptime
+        defer {
+            AppLogger.shared.logContext("管理员授权返回", details: [
+                ("action", request.action.rawValue),
+                ("waited_seconds", String(format: "%.1f", ProcessInfo.processInfo.systemUptime - promptStarted))
+            ])
+        }
         let prepared = try request.preparedForAuthorization()
         try (hooks.administratorOperation ?? PrivilegedAppTransfer.authorize)(prepared)
     }

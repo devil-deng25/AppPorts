@@ -259,6 +259,18 @@ final class DataTransferProgress: @unchecked Sendable {
         }
     }
 
+    /// 等待系统管理员授权。
+    ///
+    /// 授权弹窗期间没有任何字节进度，界面若还是原来的阶段说明，看起来与卡死无异
+    /// （本机实测：第二次授权（删除旧副本）曾停在那里 3 分 15 秒，用户以为程序挂了，
+    /// 取消后重试，每试一次在外置盘多留一份应用镜像）。
+    /// 这里只改阶段说明与「最近活动」时间，不换阶段、不重置阶段计时。
+    func waitingForAuthorization() {
+        lock.lock(); defer { lock.unlock() }
+        state.detail = "正在等待取得磁盘操作权限。".localized
+        state.lastActivityAt = clock()
+    }
+
     func update(_ progress: FileCopier.Progress) {
         lock.lock(); defer { lock.unlock() }
         let now = clock()
